@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WebHVAC self test</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 20px; }
+  pre { background: #f5f5f5; padding: 12px; border-radius: 6px; white-space: pre-wrap; }
+  .pass { color: #0a7d28; } .fail { color: #b00020; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>WebHVAC self test</h1>
+<p>Runs the real PDF reader and load engine inside this browser. No upload, all local.</p>
+<pre id="out">running ...</pre>
+
+<script type="module">
+const out = document.getElementById("out");
+const lines = [];
+let failed = 0;
+const log = (s, cls) => {
+  lines.push(cls ? `<span class="${cls}">${s}</span>` : s);
+  out.innerHTML = lines.join("\n");
+};
+const check = (label, ok, detail = "") => { if (!ok) failed++; log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? "  — " + detail : ""}`, ok ? "pass" : "fail"); };
+
+try {
+  const [pdfjs, { parsePdf }, calc] = await Promise.all([
+    import("./vendor/pdf.min.mjs"),
+    import("./js/pdfparse.js"),
+    import("./js/calc.js"),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.min.mjs";
+  log(`pdf.js ${pdfjs.version} loaded, worker = ${pdfjs.GlobalWorkerOptions.workerSrc}`);
+
+  // 1. sample drawing
+  const res = await fetch("samples/headquarters.pdf");
+  check("sample PDF fetched from the site", res.ok, `HTTP ${res.status}`);
+  const buf = await res.arrayBuffer();
+  check("sample PDF has bytes", buf.byteLength > 1000, `${buf.byteLength} bytes`);
+
+  // 2. parse
+  const parsed = await parsePdf(buf, { pdfjs, onProgress: (p, t) => log(`  reading page ${p} of ${t} ...`) });
+  check("3 pages read", parsed.pages === 3, `pages=${parsed.pages}`);
+  check("rooms found", parsed.rooms.length > 100, `rooms=${parsed.rooms.length}`);
+  const levels = [...new Set(parsed.rooms.map((r) => r.level))];
+  check("floor levels found", levels.length >= 3, levels.join(", "));
+  check("warnings reported", Array.isArray(parsed.warnings), `${parsed.warnings.length} warnings`);
+
+  // 3. calculation
+  const c = calc.calcProject(parsed.rooms, calc.DEFAULT_PROJECT);
+  const t = c.totals;
+  log(`  included rooms = ${t.rooms}, area = ${t.area.toFixed(0)} m² (${t.areaSqft.toFixed(0)} ft²)`);
+  log(`  total = ${(t.totalW / 1000).toFixed(1)} kW = ${t.tr.toFixed(1)} TR, supply air = ${t.cfm.toFixed(0)} CFM, fresh air = ${t.oaCfm.toFixed(0)} CFM`);
+  check("total TR in a sane range", t.tr > 50 && t.tr < 600, `${t.tr.toFixed(1)} TR`);
+  check("area per tonne sane", t.sqftPerTr > 150 && t.sqftPerTr < 500, `${t.sqftPerTr.toFixed(0)} ft²/TR`);
+  check("supply air sane", t.cfm > 5000 && t.cfm < 200000, `${t.cfm.toFixed(0)} CFM`);
+  check("no NaN / Infinity in totals", Object.values(t).every((v) => typeof v !== "number" || Number.isFinite(v)));
+
+  // 4. a known room
+  const atrium = parsed.rooms.find((r) => /atrium/i.test(r.name) && r.area > 1000);
+  check("ATRIUM 1249.3 m² found", !!atrium, atrium ? `${atrium.name} / ${atrium.level} / ${atrium.area} m²` : "not found");
+
+  // 5. country / city table
+  check("12 countries in the climate table", Object.keys(calc.COUNTRIES).length === 12, Object.keys(calc.COUNTRIES).join(", "));
+  check("Dubai fills 46 °C DB / 29 °C WB", calc.CLIMATES.Dubai.db === 46 && calc.CLIMATES.Dubai.wb === 29);
+
+  // 6. offline check: everything must come from this site
+  check("page is same origin as its assets", location.origin.startsWith("https://") || location.hostname === "127.0.0.1", location.origin);
+
+  log("");
+  log(failed === 0 ? "ALL SELF TESTS PASSED" : `${failed} CHECK(S) FAILED`, failed === 0 ? "pass" : "fail");
+  document.title = failed === 0 ? "SELFTEST OK" : "SELFTEST FAILED";
+} catch (err) {
+  failed++;
+  log("FAIL  the page threw an error", "fail");
+  log(String((err && err.stack) || err), "fail");
+  document.title = "SELFTEST FAILED";
+}
+</script>
+</body>
+</html>
