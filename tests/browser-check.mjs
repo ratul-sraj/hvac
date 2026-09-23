@@ -19,6 +19,7 @@ const browser = await puppeteer.launch({
   executablePath: EDGE,
   headless: "new",
   args: ["--no-sandbox", "--disable-gpu", "--window-size=1400,1000"],
+  protocolTimeout: 120000,
 });
 const page = await browser.newPage();
 await page.setViewport({ width: 1400, height: 1000 });
@@ -113,33 +114,44 @@ try {
   await page.click("#filterLevel");
   await new Promise((r) => setTimeout(r, 200));
 
-  // 7. CSV export
-  const csvBefore = fs.readdirSync(OUT).length;
-  const client = await page.createCDPSession();
-  await client.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: `${process.cwd()}/${OUT}` });
+  // 7. CSV export (capture the generated Blob instead of a real file download)
+  await page.evaluate(() => {
+    window.__csv = null;
+    const orig = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => { try { blob.text().then((t) => { window.__csv = t; }); } catch (e) {} return orig(blob); };
+  });
   await page.click("#btnCsv");
-  await new Promise((r) => setTimeout(r, 2500));
-  const downloaded = fs.readdirSync(OUT).filter((f) => f.endsWith(".csv"));
-  ok("CSV downloads", downloaded.length > 0, downloaded.join(", "));
-  if (downloaded.length) {
-    const lines = fs.readFileSync(`${OUT}/${downloaded[0]}`, "utf8").split("\n");
-    ok("CSV has a row per room", lines.length > 100, `${lines.length} lines`);
-  }
+  await page.waitForFunction(() => window.__csv !== null, { timeout: 20000 }).catch(() => {});
+  const csv = await page.evaluate(() => window.__csv);
+  const csvLines = csv ? csv.split(/\r?\n/) : [];
+  ok("CSV export produces a file", !!csv && csv.length > 1000, `${csv ? csv.length : 0} characters, ${csvLines.length} lines`);
+  ok("CSV has a row per room and the totals", csvLines.length > 100 && /TR/i.test(csv || ""),
+    (csvLines[0] || "").slice(0, 140));
 
-  // 8. print report opens a window with content
-  const pagesBefore = (await browser.pages()).length;
-  await page.click("#btnPrint");
-  await new Promise((r) => setTimeout(r, 2500));
-  const pagesNow = await browser.pages();
-  ok("report window opens", pagesNow.length > pagesBefore, `${pagesBefore} -> ${pagesNow.length} pages`);
-  const report = pagesNow.find((p) => p !== page);
-  if (report) {
-    const text = await report.evaluate(() => document.body.innerText);
-    ok("report has design conditions + room table",
-      /Design conditions/i.test(text) && /Total cooling load/i.test(text) && /Country/i.test(text),
-      text.slice(0, 120).replace(/\s+/g, " "));
-    await report.screenshot({ path: `${OUT}/live-report.png`, fullPage: true }).catch(() => {});
-    await report.close();
+  // 8. print report: capture the generated HTML instead of leaving a real popup open
+  try {
+    await page.evaluate(() => {
+      window.__html = null;
+      window.__printed = false;
+      window.open = () => ({
+        document: { write: (h) => { window.__html = h; }, close: () => {}, open: () => {}, },
+        focus: () => {}, print: () => { window.__printed = true; }, close: () => {},
+      });
+    });
+    await page.click("#btnPrint");
+    await page.waitForFunction(() => window.__html !== null, { timeout: 20000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 1200)); // app calls print() 500 ms after opening
+    const html = await page.evaluate(() => window.__html);
+    const printed = await page.evaluate(() => window.__printed);
+    ok("print report is generated", !!html && html.length > 5000, `${html ? html.length : 0} characters of report HTML`);
+    ok("print is called on the report", printed === true, String(printed));
+    const text = (html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    ok("report has design conditions, country and room totals",
+      /Design conditions/i.test(text) && /Total cooling load/i.test(text) && /India/i.test(text) && /TR/.test(text),
+      text.slice(0, 160));
+    fs.writeFileSync(`${OUT}/report.html`, html || "");
+  } catch (e) {
+    ok("print report is generated", false, "driver error: " + (e && e.message));
   }
 
   // 9. reload restores state
@@ -172,15 +184,18 @@ try {
   ok("no console errors during the whole flow", consoleErrors.length === 0, consoleErrors.slice(0, 4).join(" | ") || "none");
 
   // 12. selftest page (real pdf.js worker + engine in the browser)
-  await page.goto(URL_ + "selftest.html", { waitUntil: "networkidle2", timeout: 60000 });
-  await page.waitForFunction(() => /ALL SELF TESTS PASSED|FAILED/.test(document.title), { timeout: 120000 });
-  const selfOut = await page.$eval("#out", (e) => e.innerText);
-  const selfPass = (await page.title()) === "SELFTEST OK";
-  ok("in-browser self test (PDF reader + engine)", selfPass, selfOut.split("\n").slice(-4).join(" | "));
+  await page.goto(URL_ + "selftest.html", { waitUntil: "load", timeout: 90000 });
+  let selfOut = "";
+  for (let i = 0; i < 60; i++) {
+    selfOut = await page.$eval("#out", (e) => e.innerText).catch(() => "");
+    if (/ALL SELF TESTS PASSED|CHECK\(S\) FAILED|threw an error/.test(selfOut)) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  ok("in-browser self test (PDF reader + engine)", /ALL SELF TESTS PASSED/.test(selfOut),
+      selfOut.split("\n").slice(-3).join(" | "));
   fs.writeFileSync(`${OUT}/selftest.txt`, selfOut);
 } catch (err) {
   ok("browser run completed without throwing", false, String(err && err.message));
-  await page.screenshot({ path: `${OUT}/error.png` }).catch(() => {});
 } finally {
   await browser.close();
 }
