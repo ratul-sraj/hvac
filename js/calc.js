@@ -68,7 +68,7 @@ export const SPACE_TYPES = {
   general:    { label: "General",           m2pp: 10,  light: 10, equip: 10, ps: 75, pl: 55, oap: 2.5, oaa: 0.3 },
 };
 
-export const NON_AC_WORDS = /\b(toilet|wc|w\.c|bath|washroom|lavatory|store|storage|shaft|duct|stair|staircase|lift|elevator|corridor|passage|utility|balcony|sit[- ]?out|verandah|veranda|porch|parking|garage|electrical|elec\.|janitor|jan\.|pantry|kitchen|wash|dress|dressing|court|terrace|open|void|ramp|drive)\b/i;
+export const NON_AC_WORDS = /\b(toilet|wc|w\.c|bath|washroom|lavatory|store|storage|shaft|duct|stair|staircase|lift|elevator|corridor|passage|utility|balcony|sit[- ]?out|verandah|veranda|porch|parking|garage|electrical|elec\.|janitor|jan\.|pantry|kitchen|wash|dress|dressing|court\s*yard|terrace|open(?!\s+(plan|office))|void|ramp|drive)\b/i;
 
 export function guessSpaceType(name) {
   const n = (name || "").toLowerCase();

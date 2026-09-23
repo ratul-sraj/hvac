@@ -2,11 +2,13 @@
 //   cd D:/webhvac && node tests/run.mjs
 // Prints PASS/FAIL per test and exits 1 on the first failing run.
 import { writeSample } from "./make-sample.mjs";
+import * as calc from "./test-calc.mjs";
 import * as headquarters from "./test-headquarters.mjs";
 import * as parseText from "./test-parseText.mjs";
 import * as samplePdf from "./test-sample-pdf.mjs";
 
 const suites = [
+  ["engine/calc", calc],
   ["text/parseText", parseText],
   ["pdf/sample", samplePdf],
   ["pdf/headquarters", headquarters],
