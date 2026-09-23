@@ -1,0 +1,1 @@
+{"type":"module","name":"webhvac","private":true,"scripts":{"test":"node tests/run.mjs"},"devDependencies":{"pdfjs-dist":"4.10.38"}}
