@@ -1,4 +1,4 @@
 node_modules/
-samples/
+/samples/
 _*.mjs
 tests/_*.mjs
