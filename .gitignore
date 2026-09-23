@@ -1,4 +1,5 @@
 node_modules/
 /samples/
+tests/qa/
 _*.mjs
 tests/_*.mjs

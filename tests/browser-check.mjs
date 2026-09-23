@@ -1,0 +1,192 @@
+// Real-browser check of the deployed WebHVAC site with the Edge already on this PC.
+//   cd D:/webhvac && node tests/browser-check.mjs [url]
+// Default url = the live GitHub Pages site. Uses puppeteer-core (no browser download).
+import fs from "node:fs";
+import puppeteer from "puppeteer-core";
+
+const URL_ = process.argv[2] || "https://ratul-sraj.github.io/hvac/";
+const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
+const OUT = "tests/qa";
+fs.mkdirSync(OUT, { recursive: true });
+
+const results = [];
+const ok = (label, pass, detail = "") => {
+  results.push({ label, pass, detail });
+  console.log(`${pass ? "PASS" : "FAIL"}  ${label}${detail ? "  — " + detail : ""}`);
+};
+
+const browser = await puppeteer.launch({
+  executablePath: EDGE,
+  headless: "new",
+  args: ["--no-sandbox", "--disable-gpu", "--window-size=1400,1000"],
+});
+const page = await browser.newPage();
+await page.setViewport({ width: 1400, height: 1000 });
+
+const consoleErrors = [];
+page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
+page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message));
+const failedRequests = [];
+page.on("requestfailed", (r) => failedRequests.push(`${r.url()} ${r.failure()?.errorText}`));
+
+try {
+  // 1. load
+  const resp = await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
+  ok("site loads", resp && resp.status() === 200, `HTTP ${resp && resp.status()} in ${URL_}`);
+  ok("title", (await page.title()).includes("WebHVAC"), await page.title());
+
+  // 2. no console errors on load
+  ok("no console errors on load", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
+
+  // 3. sample drawing -> rooms
+  const t0 = Date.now();
+  await page.click("#btnSample");
+  await page.waitForFunction(() => {
+    const b = document.querySelector("#roomsBody");
+    return b && b.querySelectorAll("tr").length > 100;
+  }, { timeout: 120000 });
+  const roomRows = await page.$$eval("#roomsBody tr", (r) => r.length);
+  ok("sample drawing parsed in a real browser", roomRows > 100, `${roomRows} room rows in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+
+  const summary = await page.$$eval("#summaryCards .card, #summaryCards > *", (cards) =>
+    cards.map((c) => c.innerText.replace(/\s+/g, " ").trim()).filter(Boolean));
+  const tr = await page.$eval("#summaryCards", (e) => {
+    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+    return m ? parseFloat(m[1]) : NaN;
+  });
+  ok("total cooling load shown", tr > 20 && tr < 2000, `${tr} TR`);
+  const levels = await page.$$eval("#levelBody tr", (rows) =>
+    rows.map((r) => r.innerText.replace(/\s+/g, " ")).slice(0, 5));
+  ok("level-wise subtotals", levels.length >= 3, levels.join(" || ").slice(0, 200));
+
+  await page.screenshot({ path: `${OUT}/live-rooms.png`, fullPage: false });
+
+  // 4. country / city dropdowns
+  const countries = await page.$$eval("#proj-country option", (o) => o.map((x) => x.value));
+  ok("country list present", countries.length >= 12, countries.length + " countries");
+  const indiaCities = await page.$$eval("#proj-city option", (o) => o.map((x) => x.value));
+  ok("India city list sorted A-Z", JSON.stringify(indiaCities) === JSON.stringify([...indiaCities].sort()),
+    indiaCities.slice(0, 6).join(", ") + " ...");
+  await page.select("#proj-country", "United Arab Emirates");
+  const uaeCities = await page.$$eval("#proj-city option", (o) => o.map((x) => x.value));
+  ok("UAE cities only after switching country", uaeCities.every((c) => ["Dubai", "Abu Dhabi", "Sharjah", "Ajman", "Ras Al Khaimah", "Fujairah", "Al Ain"].includes(c)),
+    uaeCities.join(", "));
+  await page.select("#proj-city", "Dubai");
+  const db = await page.$eval("#proj-outDb", (e) => e.value);
+  const wb = await page.$eval("#proj-outWb", (e) => e.value);
+  ok("Dubai fills 46 / 29", Number(db) === 46 && Number(wb) === 29, `DB=${db} WB=${wb}`);
+  const trAfterCity = await page.$eval("#summaryCards", (e) => {
+    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+    return m ? parseFloat(m[1]) : NaN;
+  });
+  ok("changing the city recalculates", trAfterCity > tr * 1.05, `${tr} TR -> ${trAfterCity} TR (hotter)`);
+
+  // back to Kochi
+  await page.select("#proj-country", "India");
+  await page.select("#proj-city", "Kochi");
+
+  // 5. edit a room area -> totals update
+  const before = tr;
+  const areaSel = "#roomsBody tr:not(.excluded) input[data-field='area']";
+  await page.$eval(areaSel, (inp) => {
+    inp.focus();
+    inp.value = "200";
+    inp.dispatchEvent(new Event("input", { bubbles: true }));
+    inp.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 400));
+  const afterEdit = await page.$eval("#summaryCards", (e) => {
+    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+    return m ? parseFloat(m[1]) : NaN;
+  });
+  ok("editing a room area updates the total", Number.isFinite(afterEdit) && afterEdit !== before, `${before} -> ${afterEdit} TR`);
+  ok("focus kept while typing", await page.evaluate(() => document.activeElement && document.activeElement.tagName === "INPUT"),
+    await page.evaluate(() => document.activeElement && document.activeElement.tagName));
+
+  // 6. filter + sort + include toggle
+  await page.type("#filterName", "MEETING");
+  await new Promise((r) => setTimeout(r, 300));
+  const filtered = await page.$$eval("#roomsBody tr", (r) => r.length);
+  ok("name filter narrows the table", filtered > 0 && filtered < roomRows, `${roomRows} -> ${filtered} rows`);
+  await page.$eval("#filterName", (e) => { e.value = ""; e.dispatchEvent(new Event("input", { bubbles: true })); });
+  await new Promise((r) => setTimeout(r, 200));
+  await page.click("#filterLevel");
+  await new Promise((r) => setTimeout(r, 200));
+
+  // 7. CSV export
+  const csvBefore = fs.readdirSync(OUT).length;
+  const client = await page.createCDPSession();
+  await client.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: `${process.cwd()}/${OUT}` });
+  await page.click("#btnCsv");
+  await new Promise((r) => setTimeout(r, 2500));
+  const downloaded = fs.readdirSync(OUT).filter((f) => f.endsWith(".csv"));
+  ok("CSV downloads", downloaded.length > 0, downloaded.join(", "));
+  if (downloaded.length) {
+    const lines = fs.readFileSync(`${OUT}/${downloaded[0]}`, "utf8").split("\n");
+    ok("CSV has a row per room", lines.length > 100, `${lines.length} lines`);
+  }
+
+  // 8. print report opens a window with content
+  const pagesBefore = (await browser.pages()).length;
+  await page.click("#btnPrint");
+  await new Promise((r) => setTimeout(r, 2500));
+  const pagesNow = await browser.pages();
+  ok("report window opens", pagesNow.length > pagesBefore, `${pagesBefore} -> ${pagesNow.length} pages`);
+  const report = pagesNow.find((p) => p !== page);
+  if (report) {
+    const text = await report.evaluate(() => document.body.innerText);
+    ok("report has design conditions + room table",
+      /Design conditions/i.test(text) && /Total cooling load/i.test(text) && /Country/i.test(text),
+      text.slice(0, 120).replace(/\s+/g, " "));
+    await report.screenshot({ path: `${OUT}/live-report.png`, fullPage: true }).catch(() => {});
+    await report.close();
+  }
+
+  // 9. reload restores state
+  await page.reload({ waitUntil: "networkidle2", timeout: 60000 });
+  await new Promise((r) => setTimeout(r, 1500));
+  const rowsAfterReload = await page.$$eval("#roomsBody tr", (r) => r.length);
+  ok("rooms restored after reload (localStorage)", rowsAfterReload > 100, `${rowsAfterReload} rows`);
+
+  // 10. mobile layout
+  await page.setViewport({ width: 390, height: 844 });
+  await new Promise((r) => setTimeout(r, 600));
+  const overflow = await page.evaluate(() => {
+    const t = document.querySelector("#roomsTable");
+    const w = document.querySelector(".table-wrap") || t.parentElement;
+    return { scrollable: w.scrollWidth > w.clientWidth, bodyOverflow: document.body.scrollWidth > window.innerWidth + 2 };
+  });
+  ok("table scrolls on a narrow screen", overflow.scrollable, JSON.stringify(overflow));
+  ok("page does not overflow sideways on mobile", !overflow.bodyOverflow, JSON.stringify(overflow));
+  await page.screenshot({ path: `${OUT}/live-mobile.png` });
+  await page.setViewport({ width: 1400, height: 1000 });
+
+  // 11. no NaN / undefined shown anywhere
+  const junk = await page.evaluate(() => {
+    const t = document.body.innerText;
+    return ["NaN", "undefined", "Infinity", "null"].filter((w) => new RegExp("\\b" + w + "\\b").test(t));
+  });
+  ok("no NaN / undefined / Infinity on screen", junk.length === 0, junk.join(", ") || "none");
+
+  ok("no failed network requests", failedRequests.length === 0, failedRequests.slice(0, 3).join(" | ") || "none");
+  ok("no console errors during the whole flow", consoleErrors.length === 0, consoleErrors.slice(0, 4).join(" | ") || "none");
+
+  // 12. selftest page (real pdf.js worker + engine in the browser)
+  await page.goto(URL_ + "selftest.html", { waitUntil: "networkidle2", timeout: 60000 });
+  await page.waitForFunction(() => /ALL SELF TESTS PASSED|FAILED/.test(document.title), { timeout: 120000 });
+  const selfOut = await page.$eval("#out", (e) => e.innerText);
+  const selfPass = (await page.title()) === "SELFTEST OK";
+  ok("in-browser self test (PDF reader + engine)", selfPass, selfOut.split("\n").slice(-4).join(" | "));
+  fs.writeFileSync(`${OUT}/selftest.txt`, selfOut);
+} catch (err) {
+  ok("browser run completed without throwing", false, String(err && err.message));
+  await page.screenshot({ path: `${OUT}/error.png` }).catch(() => {});
+} finally {
+  await browser.close();
+}
+
+const failed = results.filter((r) => !r.pass);
+console.log(`\n${results.length - failed.length}/${results.length} browser checks passed`);
+fs.writeFileSync(`${OUT}/browser-report.json`, JSON.stringify(results, null, 1));
+if (failed.length) { console.log("failed:\n" + failed.map((f) => "  - " + f.label + " :: " + f.detail).join("\n")); process.exit(1); }
+console.log("ALL BROWSER CHECKS PASSED");

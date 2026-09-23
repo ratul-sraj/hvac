@@ -24,7 +24,7 @@ jobs:
       - name: Build site folder
         run: |
           mkdir _site
-          cp -r index.html selftest.html css js vendor _site/
+          cp -r index.html selftest.html favicon.svg css js vendor _site/
           mkdir -p _site/samples && cp tests/samples/*.pdf _site/samples/ || true
           ls -la _site _site/samples
           touch _site/.nojekyll
