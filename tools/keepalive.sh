@@ -32,11 +32,14 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 # ------------------------------------------------------------ 2. server keepalive
-CODE="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null || echo 000)"
+# note: curl on this host can exit 23 after printing the code, so take the first 3 chars
+CODE="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null)"
+CODE="${CODE:0:3}"; [ -n "$CODE" ] || CODE="000"
 if [ "$CODE" != "200" ]; then
   ( nohup node server.js >> "$LOG" 2>&1 & echo $! > tools/server.pid ) >/dev/null 2>&1
   sleep 2
-  NEW="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null || echo 000)"
+  NEW="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null)"
+  NEW="${NEW:0:3}"; [ -n "$NEW" ] || NEW="000"
   echo "${STAMP}  server: was ${CODE}, restarted (pid $(cat tools/server.pid 2>/dev/null)) -> ${NEW}" >> "$LOG"
   if [ "$NEW" = "200" ]; then
     echo "WebHVAC server was down (${CODE}) and has been restarted - live again at http://localhost:${PORT}/ (${STAMP})"
