@@ -163,6 +163,12 @@ pdf.js reads the whole PDF in memory.
 Unchanged: Pages keeps serving the static version from `index.html`, `css/`, `js/`, `vendor/`.
 That version parses PDFs in the browser, so nothing breaks if you never run this server.
 
+## Contributors
+
+Built by **ratul-sraj** (project owner) together with **Hermes Agent** (Nous Research) —
+see [CONTRIBUTORS.md](CONTRIBUTORS.md) for who did what. Commits written by the agent carry a
+`Co-authored-by: Hermes Agent <hermes-agent@nousresearch.com>` trailer.
+
 ## Limits — please read
 
 - **Text-layer PDFs and room schedules.** The best input is a text-layer PDF (exported from CAD) or

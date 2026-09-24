@@ -17,7 +17,9 @@ mkdir -p tools
 if [ -n "$(git status --porcelain)" ]; then
   git add -A
   if git -c user.name="ratul-sraj" -c user.email="ratul-sraj@users.noreply.github.com" \
-       commit -q -m "backup: automatic snapshot ${STAMP}"; then
+       commit -q -m "backup: automatic snapshot ${STAMP}
+
+Co-authored-by: Hermes Agent <hermes-agent@nousresearch.com>"; then
     if GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/hvac_deploy -o IdentitiesOnly=yes" \
          git push -q git@github.com:ratul-sraj/hvac.git HEAD:main 2>>"$LOG"; then
       echo "${STAMP}  backup: committed and pushed" >> "$LOG"
