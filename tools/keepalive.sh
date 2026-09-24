@@ -21,8 +21,10 @@ if [ -n "$(git status --porcelain)" ]; then
     if GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/hvac_deploy -o IdentitiesOnly=yes" \
          git push -q git@github.com:ratul-sraj/hvac.git HEAD:main 2>>"$LOG"; then
       echo "${STAMP}  backup: committed and pushed" >> "$LOG"
+      echo "WebHVAC backup: committed and pushed to GitHub (${STAMP})"
     else
       echo "${STAMP}  backup: committed locally, PUSH FAILED" >> "$LOG"
+    echo "PROBLEM: WebHVAC backup committed locally but the git push FAILED (${STAMP})"
     fi
   else
     echo "${STAMP}  backup: commit failed" >> "$LOG"
@@ -36,6 +38,11 @@ if [ "$CODE" != "200" ]; then
   sleep 2
   NEW="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null || echo 000)"
   echo "${STAMP}  server: was ${CODE}, restarted (pid $(cat tools/server.pid 2>/dev/null)) -> ${NEW}" >> "$LOG"
+  if [ "$NEW" = "200" ]; then
+    echo "WebHVAC server was down (${CODE}) and has been restarted - live again at http://localhost:${PORT}/ (${STAMP})"
+  else
+    echo "PROBLEM: WebHVAC server was down (${CODE}) and did NOT come back after a restart (now ${NEW}) - check tools/keepalive.log"
+  fi
 else
   echo "${STAMP}  server: ok (200)" >> "$LOG"
 fi
