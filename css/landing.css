@@ -325,6 +325,48 @@ table.num-table { border-collapse: separate; border-spacing: 0; width: 100%; fon
   .hero-cta .btn { flex: 1 1 100%; text-align: center; }
 }
 
+/* ------------------------------------------- hamburger menu on narrow screens
+   js/nav.js adds .js-nav and the button; without JavaScript the links stay visible. */
+.nav-burger {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.nav-burger:hover { background: var(--accent-soft); }
+.nav-burger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-burger-bars { display: inline-flex; flex-direction: column; gap: 3px; }
+.nav-burger-bars span { display: block; width: 16px; height: 2px; background: currentColor; border-radius: 2px; }
+
+@media (max-width: 700px) {
+  header.site-nav.js-nav .nav-burger { display: inline-flex; }
+  header.site-nav.js-nav .nav-links { display: none; }
+  header.site-nav.js-nav.nav-open .nav-links {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    margin: 4px 0 6px;
+    gap: 2px;
+  }
+  header.site-nav.js-nav.nav-open .nav-links a {
+    flex: 0 0 auto;
+    width: 100%;
+    text-align: left;
+    padding: 11px 12px;
+    font-size: 15px;
+  }
+}
+
 @media (max-width: 400px) {
   h1 { font-size: 23px; }
   .brand .brand-sub { display: none; }

@@ -22,7 +22,7 @@ Numbers to remember before you speak (real, from `tests/samples/headquarters.pdf
 | Pages / floors | 3 — Ground Floor, L1 Floor, L2 Floor |
 | Rooms read from the PDF | **149** |
 | Rooms air-conditioned (included in the load) | **93** |
-| Conditioned area | **5,609 m²** (60,369 ft²) |
+| Conditioned area | **5,608.5 m²** (60,369 ft²) |
 | Total cooling load | **233.8 TR** (822,190 W) |
 | Supply air | **76,234 CFM**; fresh air **8,420 CFM** |
 | Area per tonne | **258 ft²/TR** |

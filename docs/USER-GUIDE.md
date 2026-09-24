@@ -84,7 +84,7 @@ CFM, fresh-air CFM, conditioned area in m² and ft², area per tonne (ft²/TR), 
 sensible heat and room latent heat. Under it, the **level-wise subtotal** table shows the same
 numbers floor by floor — which is how you normally report a job.
 
-For the sample the totals are: **5,609 m² conditioned**, **233.8 TR**, **76,234 CFM supply air**,
+For the sample the totals are: **5,608.5 m² conditioned**, **233.78 TR**, **76,234 CFM supply air**,
 **8,420 CFM fresh air**, about **258 ft²/TR**.
 
 ### Step 4 — fix the wrong rooms

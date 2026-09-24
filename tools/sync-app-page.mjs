@@ -44,6 +44,9 @@ if (!/class="app-nav"/.test(html)) html = html.replace(/<body([^>]*)>\s*/, (m) =
 if (!html.includes("css/style.css")) {
   html = html.replace("</head>", `<link rel="stylesheet" href="css/style.css">\n</head>`);
 }
+if (!html.includes("js/nav.js")) {
+  html = html.replace("</body>", `<script src="js/nav.js" defer></script>\n</body>`);
+}
 
 const before = fs.existsSync(dst) ? fs.readFileSync(dst, "utf8") : "";
 fs.writeFileSync(dst, html);

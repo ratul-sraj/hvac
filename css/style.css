@@ -404,3 +404,38 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .app-nav-links a:hover { background: rgba(255, 255, 255, .14); color: #fff; }
 .app-nav-links a.here { background: rgba(255, 255, 255, .2); color: #fff; font-weight: 600; }
 @media print { .app-nav { display: none; } }
+
+/* ------------------------------------------- hamburger menu on narrow screens */
+.nav-burger {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 7px 11px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.nav-burger:hover { background: rgba(255, 255, 255, .22); }
+.nav-burger:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.nav-burger-bars { display: inline-flex; flex-direction: column; gap: 3px; }
+.nav-burger-bars span { display: block; width: 16px; height: 2px; background: currentColor; border-radius: 2px; }
+.nav-burger-text { font-size: 13px; }
+
+@media (max-width: 700px) {
+  nav.app-nav.js-nav .nav-burger { display: inline-flex; }
+  nav.app-nav.js-nav .app-nav-links { display: none; }
+  nav.app-nav.js-nav.nav-open .app-nav-links {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    margin: 2px 0 6px;
+    gap: 2px;
+  }
+  nav.app-nav.js-nav.nav-open .app-nav-links a { padding: 10px 12px; font-size: 15px; }
+}
