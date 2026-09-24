@@ -1,10 +1,11 @@
-// Real-browser check of the deployed WebHVAC site with the Edge already on this PC.
-//   cd D:/webhvac && node tests/browser-check.mjs [url]
-// Default url = the live GitHub Pages site. Uses puppeteer-core (no browser download).
+// Real-browser check of a WebHVAC deployment using the Edge already on this PC.
+//   cd D:/webhvac && node tests/browser-check.mjs [url-of-the-calculator-page]
+// Default = the local Express server's calculator page. Uses puppeteer-core (no download).
 import fs from "node:fs";
 import puppeteer from "puppeteer-core";
 
-const URL_ = process.argv[2] || "https://ratul-sraj.github.io/hvac/";
+const URL_ = process.argv[2] || "http://127.0.0.1:3000/app.html";
+const BASE = new URL(".", URL_).href;   // directory the pages live in
 const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const OUT = "tests/qa";
 fs.mkdirSync(OUT, { recursive: true });
@@ -184,7 +185,7 @@ try {
   ok("no console errors during the whole flow", consoleErrors.length === 0, consoleErrors.slice(0, 4).join(" | ") || "none");
 
   // 12. selftest page (real pdf.js worker + engine in the browser)
-  await page.goto(URL_ + "selftest.html", { waitUntil: "load", timeout: 90000 });
+  await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
   for (let i = 0; i < 60; i++) {
     selfOut = await page.$eval("#out", (e) => e.innerText).catch(() => "");
