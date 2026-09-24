@@ -12,6 +12,45 @@ import * as pdfjs from '../vendor/pdf.min.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 
 /* ------------------------------------------------------------------ */
+/* the two new readers: room schedules (js/schedule.js) and OCR        */
+/* (js/ocr.js). Both are loaded on demand, NOT with a top-level        */
+/* static import:                                                      */
+/*   1. a browser that never ticks the OCR box must never download     */
+/*      the tesseract wasm (the spec asks for that);                   */
+/*   2. if one of those two files is not in this build yet, the page   */
+/*      still loads and the upload panel says so instead of dying.     */
+/* Nothing is requested until a schedule file is dropped or the box    */
+/* is ticked.                                                          */
+/* ------------------------------------------------------------------ */
+
+const MISSING_SCHEDULE = 'the room-schedule reader (js/schedule.js) is not in this build';
+const MISSING_OCR = 'the OCR reader (js/ocr.js) is not in this build';
+
+// vendored tesseract files, served from the site (no CDN at runtime)
+const OCR_VENDOR = new URL('../vendor/tesseract/', import.meta.url).href;
+
+let scheduleMod = null, scheduleTried = false;
+let ocrMod = null, ocrTried = false;
+
+async function loadScheduleModule() {
+  if (!scheduleMod && !scheduleTried) {
+    scheduleTried = true;
+    try { scheduleMod = await import('./schedule.js'); } catch (e) { scheduleMod = null; }
+  }
+  if (!scheduleMod || typeof scheduleMod.parseSchedule !== 'function') throw new Error(MISSING_SCHEDULE);
+  return scheduleMod;
+}
+
+async function loadOcrModule() {
+  if (!ocrMod && !ocrTried) {
+    ocrTried = true;
+    try { ocrMod = await import('./ocr.js'); } catch (e) { ocrMod = null; }
+  }
+  if (!ocrMod || typeof ocrMod.ocrPdf !== 'function') throw new Error(MISSING_OCR);
+  return ocrMod;
+}
+
+/* ------------------------------------------------------------------ */
 /* state                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -60,6 +99,8 @@ const el = {
   bulkOrient: $('#bulkOrient'),
   bulkRoof: $('#bulkRoof'),
   jsonInput: $('#jsonInput'),
+  ocrCheck: $('#chkOcr'),
+  ocrOption: $('#ocrOption'),
 };
 
 const PROJ_FIELDS = [
@@ -286,6 +327,7 @@ function sortedIndices(calc) {
       case 'number': return String(room.number || '');
       case 'type': return typeLabel(room.type).toLowerCase();
       case 'orient': return String(room.orient || '');
+      case 'source': return String(room.source || '').toLowerCase();
       case 'sensible': return r.rsh;
       case 'latent': return r.rlh;
       case 'total': return r.totalW;
@@ -307,6 +349,20 @@ function sortedIndices(calc) {
 /* ------------------------------------------------------------------ */
 /* table rendering                                                    */
 /* ------------------------------------------------------------------ */
+
+// Where a row came from, in plain words. Anything unknown shows nothing.
+const SOURCE_LABEL = {
+  schedule: 'CSV/Excel',
+  ocr: 'OCR',
+  label: 'PDF',
+  table: 'PDF',
+  pdf: 'PDF',
+  manual: 'manual',
+};
+
+function sourceLabel(src) {
+  return SOURCE_LABEL[String(src || '').toLowerCase()] || '';
+}
 
 function defaultText(key, rn) {
   switch (key) {
@@ -367,6 +423,7 @@ function rowHtml(idx, calc) {
     <td class="res hi v-tr">${fmt(r.tr, 2)}</td>
     <td class="res v-ls">${fmt(r.supplyLs, 0)}</td>
     <td class="res v-sqftPerTr">${fmt(r.sqftPerTr, 0)}</td>
+    <td class="c-src" title="Where this room came from">${esc(sourceLabel(raw.source))}</td>
     <td class="c-del"><button type="button" class="btn-del" data-act="del"
       title="Delete ${esc(nm)}" aria-label="Delete ${esc(nm)}">&times;</button></td>
   </tr>`;
@@ -690,6 +747,149 @@ function pushWarnings(list) {
   el.warnList.innerHTML = state.warnings.map((w) => `<li>${esc(w)}</li>`).join('');
 }
 
+/* ------------------------------------------------------------------ */
+/* the new readers: which file is which, and who read it              */
+/* ------------------------------------------------------------------ */
+
+// Plain words for the status line: who read the file.
+const READER_LABEL = {
+  server: 'the server',
+  browser: 'your browser',
+  ocr: 'OCR in your browser',
+  schedule: 'the room-schedule reader',
+};
+
+const NO_FILES_MSG = 'No supported file found. Please choose a floor plan .pdf drawing, ' +
+  'or a room schedule in .csv, .tsv or .xlsx.';
+
+// Exactly one clear line, shown when a PDF has no text layer and OCR is off.
+const SCANNED_MSG = "This PDF looks scanned (no text layer). " +
+  "Tick 'Read scanned drawings with OCR' and try again.";
+
+// ".csv" / ".tsv" / ".xlsx" -> the room-schedule reader; ".pdf" -> pdf.js or OCR.
+const isScheduleUpload = (f) => /\.(csv|tsv|xlsx)$/i.test(f.name || '');
+const isPdfUpload = (f) => /\.pdf$/i.test(f.name || '') || f.type === 'application/pdf';
+
+// Keep the source a reader already set ("label", "table", "schedule", "ocr", …)
+// and only fill it in when it is missing, so the table can show where a row came from.
+function withSource(rooms, source) {
+  return (rooms || [])
+    .filter((r) => r && typeof r === 'object')
+    .map((r) => (r.source ? r : { ...r, source }));
+}
+
+function joinWords(list) {
+  if (list.length < 2) return list[0] || '';
+  return list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+}
+
+// Short reason for the status line (the full text stays in the warnings box).
+function shortReason(msg) {
+  const s = String(msg == null ? '' : msg).replace(/\s+/g, ' ').trim();
+  return s.length > 140 ? s.slice(0, 137) + '...' : s;
+}
+
+/* --- one .csv / .tsv / .xlsx room schedule, always here in the browser ---- */
+
+// The worker accepts a string or an ArrayBuffer. Try the natural one for the
+// file type first (.xlsx is binary, .csv / .tsv is text) and the other one if
+// that throws, so either shape of parseSchedule() works.
+async function parseScheduleFile(file) {
+  const mod = await loadScheduleModule();
+  const buf = await file.arrayBuffer();
+  const text = new TextDecoder('utf-8').decode(buf).replace(/^\uFEFF/, '');
+  const binary = /\.xlsx$/i.test(file.name || '');
+  const opts = { filename: file.name };
+  try {
+    return await mod.parseSchedule(binary ? buf : text, opts);
+  } catch (err) {
+    try { return await mod.parseSchedule(binary ? text : buf, opts); } catch (e2) { throw err; }
+  }
+}
+
+/* --- OCR, only when the user ticks the box ------------------------ */
+
+// onProgress({ phase: 'render'|'ocr'|'rotate', page, pages, progress }) from js/ocr.js
+const OCR_PHASE = {
+  render: 'making the page image of',
+  ocr: 'reading with OCR',
+  rotate: 'checking the rotation of',
+};
+
+function onOcrProgress(info, fileName, fileIdx, fileCount) {
+  const i = (info && typeof info === 'object') ? info : {};
+  const phase = OCR_PHASE[i.phase] || 'reading with OCR';
+  const page = i.page || 0;
+  const pages = i.pages || 0;
+  const inner = typeof i.progress === 'number' ? Math.max(0, Math.min(1, i.progress)) : 0;
+  const part = pages ? ((page ? page - 1 : 0) + inner) / pages : inner;
+  setProgress(
+    `File ${fileIdx + 1} of ${fileCount}: ${fileName} — ${phase}${page ? ` page ${page}${pages ? ` of ${pages}` : ''}` : ''}`.replace(/\s+/g, ' '),
+    part * 100,
+  );
+}
+
+// The tesseract worker, its wasm core and eng.traineddata.gz are served from the
+// repo under vendor/tesseract/ (see js/ocr.js), so nothing comes from a CDN.
+// This runs at most once, and only after the user asked for OCR.
+let ocrConfigured = false;
+async function configureOcrOnce(mod) {
+  if (ocrConfigured) return;
+  ocrConfigured = true;
+  const opts = {
+    workerPath: OCR_VENDOR + 'worker.min.js',
+    corePath: OCR_VENDOR,   // folder: the OCR worker picks the wasm core inside it
+    langPath: OCR_VENDOR,   // folder holding eng.traineddata.gz
+    // js/ocr.js does `import(cfg.moduleURL)` in the browser, and that value is
+    // only set when the caller names the file, so we pass the vendored bundle.
+    tesseractModuleURL: OCR_VENDOR + 'tesseract.esm.min.js',
+  };
+  // That bundle exports tesseract.js as a *default* export (it is the CommonJS
+  // build), while js/ocr.js looks for named exports such as createWorker. Load it
+  // here as well — still only now, never for a user who leaves the box off — and
+  // hand the module in, so the first OCR run does not fail with
+  // "createWorker is not a function". Harmless once js/ocr.js unwraps .default.
+  try {
+    const bundle = await import(/* webpackIgnore: true */ opts.tesseractModuleURL);
+    const tess = bundle && (typeof bundle.createWorker === 'function' ? bundle : bundle.default);
+    if (tess && typeof tess.createWorker === 'function') opts.tesseract = tess;
+  } catch (e) {
+    /* js/ocr.js tries its own import; a failure is reported by the upload path */
+  }
+  if (typeof mod.configureOcr === 'function') mod.configureOcr(opts);
+}
+
+async function parseOneWithOcr(arrayBuffer, fileName, fileIdx, fileCount) {
+  const mod = await loadOcrModule();
+  await configureOcrOnce(mod);
+  return mod.ocrPdf(arrayBuffer, {
+    pdfjs,
+    onProgress: (info) => onOcrProgress(info, fileName, fileIdx, fileCount),
+  });
+}
+
+// A PDF with no text layer is a scan (or an image-only export). The browser
+// path has the whole text, the server path only its warnings. Used only to
+// decide about the one clear OCR line — the OCR run itself always comes from
+// isProbablyScanned() inside js/ocr.js.
+async function pdfLooksScanned(out) {
+  if (!out) return false;
+  const empty = typeof out.text === 'string'
+    ? out.text.trim().length === 0
+    : (out.warnings || []).some((w) => /no text items/i.test(String(w)));
+  if (!empty) return false;
+  let mod = null;
+  try { mod = await loadOcrModule(); } catch (e) { mod = null; }
+  if (mod && typeof mod.isProbablyScanned === 'function') {
+    // no text layer at all -> the item list for the check is empty
+    const items = String(out.text || '').trim()
+      ? String(out.text).trim().split(/\s+/).map((str) => ({ str }))
+      : [];
+    return mod.isProbablyScanned(items) === true;
+  }
+  return true;   // nothing was read from the page: it is a scan or an image-only PDF
+}
+
 /* --- the Express server (server.js) is used only when it answers ---------- */
 
 // One GET /api/health on load, with a short timeout. A static host answers 404
@@ -720,12 +920,20 @@ async function probeServer() {
   updateParseWhere();
 }
 
-// The short honest line in the upload panel saying where the PDF is read.
+// The short honest line in the upload panel saying where a file is read.
+// The Express server parses text-layer PDFs only; room schedules and OCR
+// always run here in the browser.
 function updateParseWhere() {
   if (!el.parseWhere) return;
+  const ocrOn = !!(el.ocrCheck && el.ocrCheck.checked);
+  if (ocrOn) {
+    el.parseWhere.textContent = 'PDF drawings: OCR in your browser (slow). ' +
+      'CSV / TSV / Excel room schedules: in your browser.';
+    return;
+  }
   el.parseWhere.textContent = state.server.available
-    ? 'Reading PDFs on the server (faster)'
-    : 'Reading PDFs in your browser';
+    ? 'PDF drawings: on the server (faster). CSV / TSV / Excel room schedules: in your browser.'
+    : 'PDF drawings and CSV / TSV / Excel room schedules: in your browser.';
 }
 
 // The server takes at most 10 files per request, so a bigger selection is split.
@@ -755,8 +963,10 @@ async function parseFilesOnServer(files) {
   return { rooms, warnings, files: fileInfos };
 }
 
-// Same ending for both paths, so the status wording stays the same.
-function finishUpload(added, skipped, failed, notes, serverError) {
+// Same ending for all readers, so the status wording stays the same.
+// `readers` = who read the files (server / browser / OCR / room schedule),
+// `scanned` = a PDF came back with 0 rooms and no text layer while OCR was off.
+function finishUpload(added, skipped, failed, notes, serverError, readers, scanned) {
   state.ui.busy = false;
   el.dropzone.classList.remove('busy');
   setProgress(null);
@@ -766,16 +976,24 @@ function finishUpload(added, skipped, failed, notes, serverError) {
   const parts = [`${added} room(s) added`];
   if (skipped) parts.push(`${skipped} looked like duplicates and were skipped`);
   if (failed) parts.push(`${failed} file(s) could not be read`);
-  let msg = `${parts.join(', ')}. ${notes.join(' | ')}`;
+  let msg = parts.join(', ') + '. ';
+  const readerWords = [...(readers || [])].map((k) => READER_LABEL[k] || k);
+  if (readerWords.length) msg += `Read by ${joinWords(readerWords)}. `;
+  msg += notes.join(' | ');
+  if (scanned) msg += ` ${SCANNED_MSG}`;
   if (serverError) msg = `Server: ${serverError}. These files were read in your browser. ${msg}`;
-  setStatus(failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok'), msg);
+  setStatus(scanned ? 'warn' : (failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok')), msg);
 }
 
 async function handleFiles(fileList) {
   if (state.ui.busy) return;
-  const files = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
-  if (!files.length) {
-    setStatus('err', 'No PDF file found. Please choose a .pdf drawing file.');
+  const all = [...fileList];
+  // Route by extension: room schedules (.csv / .tsv / .xlsx) go to js/schedule.js,
+  // PDF drawings to the server-or-browser path (or to OCR when the box is ticked).
+  const schedules = all.filter(isScheduleUpload);
+  const pdfs = all.filter(isPdfUpload);
+  if (!pdfs.length && !schedules.length) {
+    setStatus('err', NO_FILES_MSG);
     return;
   }
   state.ui.busy = true;
@@ -783,68 +1001,108 @@ async function handleFiles(fileList) {
   setStatus(null);
   let added = 0, skipped = 0, failed = 0;
   const notes = [];
+  const readers = new Set();
   let serverError = '';
+  let scanned = false;
+  // OCR is a choice for this upload: with it on, PDFs are read here in the
+  // browser with tesseract, also when the Express server is there.
+  const useOcr = !!(el.ocrCheck && el.ocrCheck.checked);
 
-  // --- server path: send the files to POST /api/parse and merge the answer ---
-  if (state.server.available) {
-    setProgress(files.length === 1
-      ? `Uploading file 1 of 1: ${files[0].name} …`
-      : `Uploading ${files.length} files to the server …`, 10);
+  // --- 1. room schedules: always read here in the browser ------------------
+  for (let i = 0; i < schedules.length; i++) {
+    const f = schedules[i];
+    setProgress(`File ${i + 1} of ${schedules.length}: ${f.name} — reading the room schedule`, 8);
+    try {
+      const out = await parseScheduleFile(f);
+      const res = addRooms(withSource(out.rooms, 'schedule'));
+      added += res.added;
+      skipped += res.skipped;
+      if (out.warnings && out.warnings.length) {
+        pushWarnings(out.warnings.map((w) => `${f.name}: ${w}`));
+      }
+      readers.add('schedule');
+      const bits = [`${res.added} room(s) from the schedule`];
+      if (out.rowCount) bits.push(`${out.rowCount} row(s) read`);
+      if (out.sheetName) bits.push(`sheet "${out.sheetName}"`);
+      notes.push(`${f.name}: ${bits.join(', ')}`);
+    } catch (err) {
+      failed += 1;
+      const msg = (err && err.message) ? err.message : String(err);
+      pushWarnings([`${f.name}: could not be read — ${msg}`]);
+      notes.push(`${f.name}: FAILED — ${shortReason(msg)}`);
+    }
+  }
+
+  // --- 2. PDF drawings -----------------------------------------------------
+  // Server path: text-layer PDFs only, and never when the user asked for OCR.
+  if (pdfs.length && !useOcr && state.server.available) {
+    setProgress(pdfs.length === 1
+      ? `Uploading file 1 of 1: ${pdfs[0].name} …`
+      : `Uploading ${pdfs.length} files to the server …`, 10);
     // the server reads the whole file at once and answers in one piece,
     // so after the upload we only have one line left to show
     const readingTimer = setTimeout(() => setProgress('Reading PDF on the server …', 60), 500);
     try {
-      const out = await parseFilesOnServer(files);
+      const out = await parseFilesOnServer(pdfs);
       clearTimeout(readingTimer);
       // merge exactly like the local path: addRooms() for the rooms
       // (same duplicate guard), pushWarnings() for the notes
-      const res = addRooms(out.rooms);
+      const res = addRooms(withSource(out.rooms, 'pdf'));
       added = res.added;
       skipped = res.skipped;
       if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
+      readers.add('server');
       if (out.files && out.files.length) {
         for (const info of out.files) {
           const n = (typeof info.roomCount === 'number')
             ? info.roomCount
             : (Array.isArray(info.rooms) ? info.rooms.length : 0);
           notes.push(`${info.name}: ${n} room(s)${info.pages ? ` from ${info.pages} page(s)` : ''}`);
+          if (!n && await pdfLooksScanned(info)) scanned = true;
         }
       } else {
-        notes.push(`${files.length} file(s) read on the server`);
+        notes.push(`${pdfs.length} file(s) read on the server`);
       }
-      finishUpload(added, skipped, failed, notes, '');
+      finishUpload(added, skipped, failed, notes, '', readers, scanned);
       return;
     } catch (err) {
       clearTimeout(readingTimer);
       serverError = (err && err.message) ? err.message : String(err);
       setStatus('warn', `Server: ${serverError}. Reading the file(s) in your browser instead.`);
-      // fall through to the local pdf.js path below, the user still gets a result
+      // fall through to the local path below, the user still gets a result
     }
   }
 
-  // --- local path (unchanged): pdf.js reads the PDF in this browser ----------
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    setProgress(`File ${i + 1} of ${files.length}: ${f.name} — opening`, 3);
+  // --- local path: pdf.js, or tesseract OCR when the box is ticked ---------
+  for (let i = 0; i < pdfs.length; i++) {
+    const f = pdfs[i];
+    setProgress(`File ${i + 1} of ${pdfs.length}: ${f.name} — ${useOcr ? 'preparing OCR' : 'opening'}`, 3);
     try {
       const buf = await f.arrayBuffer();
-      const out = await parseOne(buf, f.name, i, files.length);
-      const res = addRooms(out.rooms);
+      const out = useOcr
+        ? await parseOneWithOcr(buf, f.name, i, pdfs.length)
+        : await parseOne(buf, f.name, i, pdfs.length);
+      const res = addRooms(withSource(out.rooms, useOcr ? 'ocr' : 'pdf'));
       added += res.added;
       skipped += res.skipped;
+      readers.add(useOcr ? 'ocr' : 'browser');
       if (out.warnings && out.warnings.length) {
         pushWarnings(out.warnings.map((w) => `${f.name}: ${w}`));
       }
-      notes.push(`${f.name}: ${res.added} room(s)${out.pages ? ` from ${out.pages} page(s)` : ''}`);
+      const ocrPages = (useOcr && Array.isArray(out.usedOcr) && out.usedOcr.length)
+        ? `, OCR on page(s) ${out.usedOcr.join(', ')}` : '';
+      notes.push(`${f.name}: ${res.added} room(s)${out.pages ? ` from ${out.pages} page(s)` : ''}${ocrPages}`);
+      // no rooms and no text layer: one clear line about the OCR box
+      if (!useOcr && (!out.rooms || !out.rooms.length) && await pdfLooksScanned(out)) scanned = true;
     } catch (err) {
       failed += 1;
       const msg = (err && err.message) ? err.message : String(err);
       pushWarnings([`${f.name}: could not be read — ${msg}`]);
-      notes.push(`${f.name}: FAILED`);
+      notes.push(`${f.name}: FAILED — ${shortReason(msg)}`);
     }
   }
 
-  finishUpload(added, skipped, failed, notes, serverError);
+  finishUpload(added, skipped, failed, notes, serverError, readers, scanned);
 }
 
 async function loadSample() {
@@ -1010,6 +1268,16 @@ function wire() {
   });
 
   // upload
+  // The OCR box is off by default. Ticking it only changes the wording here:
+  // the tesseract files are fetched the first time a PDF is read with OCR.
+  if (el.ocrCheck) {
+    el.ocrCheck.addEventListener('change', () => {
+      updateParseWhere();
+      setStatus(el.ocrCheck.checked ? 'warn' : 'ok', el.ocrCheck.checked
+        ? 'OCR is on. PDF drawings will be read with OCR in this browser — slow, and the first run fetches the OCR files.'
+        : 'OCR is off. PDF drawings are read normally.');
+    });
+  }
   el.dropzone.addEventListener('click', () => el.fileInput.click());
   el.dropzone.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.fileInput.click(); }

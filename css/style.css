@@ -156,6 +156,31 @@ details.adv[open] > summary::before { content: "\25BE "; }
 .dz-sub { color: var(--ink-soft); margin: 0; }
 .linkish { color: var(--accent); text-decoration: underline; }
 
+/* ---------- OCR option (upload panel) ---------- */
+.check-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafcfe;
+  font-size: 13px;
+  cursor: pointer;
+}
+.check-line:hover { border-color: var(--accent); background: var(--accent-soft); }
+.check-line input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.check-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.check-note { color: var(--ink-soft); font-size: 12px; }
+
 /* ---------- progress / status ---------- */
 .progress-box {
   margin-top: 12px;
@@ -265,6 +290,12 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .rooms-table td.c-type select { min-width: 135px; }
 .rooms-table th.th-include, .rooms-table td.c-include { width: 34px; text-align: center; }
 .rooms-table th.th-del, .rooms-table td.c-del { width: 34px; text-align: center; border-right: none; }
+.rooms-table th.th-src, .rooms-table td.c-src {
+  width: 76px;
+  text-align: center;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
 .rooms-table .res { font-variant-numeric: tabular-nums; color: #23405c; }
 .rooms-table .res.hi { font-weight: 700; color: var(--accent-dark); }
 .rooms-table input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
@@ -361,7 +392,7 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 
 /* keep the room table usable on print of the app page (report is separate) */
 @media print {
-  .app-header .header-actions, .toolbar, .bulk, .dropzone, .row, .progress-box, .card-head .btn { display: none !important; }
+  .app-header .header-actions, .toolbar, .bulk, .dropzone, .check-line, .row, .progress-box, .card-head .btn { display: none !important; }
   body { background: #fff; }
   .card { box-shadow: none; break-inside: avoid; }
   .table-scroll { overflow: visible; border: none; }

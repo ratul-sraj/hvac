@@ -137,19 +137,33 @@
 
   <!-- ---------------- upload ---------------- -->
   <section class="card" aria-labelledby="uploadHead">
-    <h2 id="uploadHead">2. Upload floor plan PDF</h2>
-    <p class="hint">You can upload many files at once. Rooms found in the PDF are <em>added</em> to the table below —
-      existing rows are not deleted.</p>
+    <h2 id="uploadHead">2. Upload a drawing or a room schedule</h2>
+    <p class="hint">Accepted files: <em>.pdf</em> floor plan drawings, and <em>.csv</em> / <em>.tsv</em> /
+      <em>.xlsx</em> room schedules (from Revit or Excel). You can upload many files at once.
+      Rooms found are <em>added</em> to the table below — existing rows are not deleted.</p>
 
-    <!-- Where the PDF is read. app.js sets this after the one-time /api/health check. -->
-    <p class="hint" id="parseWhere">Reading PDFs in your browser</p>
+    <!-- Where the file is read. app.js sets this after the one-time /api/health check. -->
+    <p class="hint" id="parseWhere">Reading PDF drawings and room schedules in your browser</p>
+
+    <!-- OCR is off by default; js/app.js only loads the tesseract wasm when this is ticked. -->
+    <label class="check-line" id="ocrOption">
+      <input type="checkbox" id="chkOcr">
+      <span class="check-text">
+        <span><strong>Read scanned drawings with OCR (slow)</strong></span>
+        <span class="check-note">Use this only for scanned or image PDFs, where no text can be read.
+          Leave it off for normal drawings.</span>
+      </span>
+    </label>
 
     <div id="dropzone" class="dropzone" tabindex="0" role="button"
-         aria-label="Drag and drop PDF files here, or press Enter to choose files">
-      <div class="dz-icon" aria-hidden="true">PDF</div>
-      <p class="dz-main">Drag and drop PDF drawing files here</p>
-      <p class="dz-sub">or <span class="linkish">click to choose files</span></p>
-      <input type="file" id="fileInput" accept=".pdf,application/pdf" multiple hidden>
+         aria-label="Drag and drop PDF drawing or room schedule files here, or press Enter to choose files">
+      <div class="dz-icon" aria-hidden="true">PDF&nbsp;CSV</div>
+      <p class="dz-main">Drag and drop your drawing or room schedule here</p>
+      <p class="dz-sub">PDF drawing, or CSV / TSV / Excel room schedule &middot;
+        <span class="linkish">click to choose files</span></p>
+      <input type="file" id="fileInput"
+             accept=".pdf,.csv,.tsv,.xlsx,application/pdf,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+             multiple hidden>
     </div>
 
     <div class="row wrap-row">
@@ -260,6 +274,7 @@
             <th class="th-res" data-sort="tr">TR</th>
             <th class="th-res" data-sort="ls">L/s</th>
             <th class="th-res" data-sort="sqftPerTr">ft&sup2;/TR</th>
+            <th class="th-src" data-sort="source">Source</th>
             <th class="th-del" aria-label="Delete room"></th>
           </tr>
         </thead>
@@ -267,8 +282,8 @@
       </table>
     </div>
     <p class="empty hidden" id="roomsEmpty">
-      No rooms yet. Upload a PDF above, click <strong>Try sample drawing</strong>, or use
-      <strong>Add room manually</strong>.
+      No rooms yet. Upload a PDF drawing or a CSV / Excel room schedule above, click
+      <strong>Try sample drawing</strong>, or use <strong>Add room manually</strong>.
     </p>
   </section>
 

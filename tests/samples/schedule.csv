@@ -1,0 +1,14 @@
+﻿ROOM SCHEDULE — HQ BLOCK A,Block A,Rev 3
+Room No,Room Name,Level,Area,Height,Space Type,People,Orientation,Glass,Roof,Lighting,Equipment
+G-01,Reception,Ground Floor,45.5 m²,3.0,Reception,8,W,12.5,no,12,5
+G-02,Conference Room,Ground Floor,6.0 x 4.5,3000,Conference,12,West,5.4,no,12,5
+G-03,Open Plan Office,Ground Floor,"1,249.3",3.0,Office,110,W,45,no,10,15
+101,Cabin A,First Floor,490 ft²,3.0,Cabin,2,E,8,no,10,15
+102,MD Cabin,First Floor,"12'-6"" x 10'",3.0,Cabin,2,N,6,no,10,15
+103,Server Room,First Floor,4500x3600,3000,Server/IT Room,0,S,0,no,10,300
+
+G-01,Reception,Ground Floor,45.5 m²,3.0,Reception,8,W,12.5,no,12,5
+G-04,Toilet - Male,Ground Floor,12 m²,3.0,Toilet,0,,0,no,6,0
+Room No,Room Name,Level,Area,Height,Space Type,People,Orientation,Glass,Roof,Lighting,Equipment
+G-05,Staircase,Ground Floor,18 m²,3.5,Stair,0,,0,no,8,0
+G-06,Pantry,First Floor,9.5 m²,3.0,Pantry,0,,0,no,8,2

@@ -14,7 +14,8 @@
   "dependencies": {
     "express": "^5.2.1",
     "multer": "^2.4.0",
-    "pdfjs-dist": "4.10.38"
+    "pdfjs-dist": "4.10.38",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "puppeteer-core": "^25.12.0"
