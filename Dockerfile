@@ -16,7 +16,7 @@ COPY lib ./lib
 COPY js ./js
 COPY css ./css
 COPY vendor ./vendor
-COPY index.html selftest.html favicon.svg ./
+COPY *.html favicon.svg ./
 # the sample drawing the "load sample" button fetches from /samples
 COPY tests/samples ./tests/samples
 

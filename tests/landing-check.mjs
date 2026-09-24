@@ -2,9 +2,9 @@
 //   cd D:/webhvac && node tests/landing-check.mjs [base-url-or-page-url]
 //
 // Default base: http://127.0.0.1:3000/  (the running Express server, where the planner
-// moves home.html to index.html). While you are testing the pages before that move, pass
+// serves the landing page as index.html). While you are testing pages before that
 // the page itself — the directory is worked out from the URL either way:
-//   node tests/landing-check.mjs http://127.0.0.1:8220/home.html
+//   node tests/landing-check.mjs http://127.0.0.1:8220/index.html
 //   node tests/landing-check.mjs http://127.0.0.1:3000/
 //
 // Uses puppeteer-core with the Edge already installed on this PC (no browser download).
@@ -41,8 +41,8 @@ const ok = (label, pass, detail = "") => {
 };
 
 // Which file is the landing page? The given one, else the first of
-// index.html / home.html that is 200 AND carries the landing hero (so that
-// running against this repo before the planner's move still finds home.html).
+// index.html that is 200 AND carries the landing hero, so the landing page is
+// always found at its real URL.
 async function pickLanding() {
   if (loc.landing) {
     try {
@@ -54,7 +54,7 @@ async function pickLanding() {
   }
   const tried = [];
   let firstOk = null;
-  for (const c of ["index.html", "home.html"]) {
+  for (const c of ["index.html"]) {
     try {
       const r = await fetch(url(c), { redirect: "follow" });
       const body = r.status === 200 ? await r.text() : "";

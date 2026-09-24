@@ -144,7 +144,7 @@ try {
   const pages = [
     ["method.png", "method.html", "this copy does not serve method.html"],
     ["help.png", "help.html", "this copy does not serve help.html"],
-    ["landing.png", "home.html", "this copy does not serve home.html"],
+    ["landing.png", "index.html", "this copy does not serve index.html"],
   ];
   for (const [file, pageName, note] of pages) {
     const url = DOCS_BASE.replace(/\/?$/, "/") + pageName;

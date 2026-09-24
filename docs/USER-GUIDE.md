@@ -314,7 +314,7 @@ Say this clearly, the same way the printed report does:
 | [`img/app-detail.png`](img/app-detail.png) | The load breakdown panel for one room — every heat-gain component in W with its share |
 | [`img/method.png`](img/method.png) | The "Method and assumptions" page |
 | [`img/help.png`](img/help.png) | The "Help and FAQ" page |
-| [`img/landing.png`](img/landing.png) | The landing page (`home.html`) |
+| [`img/landing.png`](img/landing.png) | The landing page (`index.html`) |
 
 They are produced by `tests/screenshots.mjs` from a running copy of the app, so they always match
 the shipped version:
@@ -326,7 +326,7 @@ node tests/screenshots.mjs                  # default base http://127.0.0.1:3000
 ```
 
 The Express server serves the calculator (`app.html`), `selftest.html`, `css/`, `js/`, `vendor/`,
-`/samples/` and the landing pages (`home.html`, `about.html`, `method.html`, `help.html`), so one
+`/samples/` and the pages (`index.html`, `app.html`, `about.html`, `method.html`, `help.html`), so one
 base URL is enough. If a page is **not** served by your copy (still being written, or a static copy
 that is missing it), the script prints a clear `SKIP` line with the HTTP status and writes **no**
 file for it — a missing page can never look like a blank screenshot.
