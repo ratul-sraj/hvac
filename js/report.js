@@ -25,17 +25,19 @@ export function typeLabel(key) {
   return st ? st.label : (key || 'General');
 }
 
-// Group calc results by level -> { level, rooms, tr, cfm, area, areaSqft }
+// Group calc results by level -> { level, rooms, tr, ls, oaLs, cfm, area, areaSqft }
 // Only included rooms are counted (same rule as calc.js totals).
 export function groupByLevel(results) {
   const map = new Map();
   for (const r of results) {
     if (!r.room.include) continue;
     const level = (r.room.level || '').trim() || 'Unspecified';
-    if (!map.has(level)) map.set(level, { level, rooms: 0, tr: 0, cfm: 0, oaCfm: 0, area: 0, areaSqft: 0 });
+    if (!map.has(level)) map.set(level, { level, rooms: 0, tr: 0, ls: 0, oaLs: 0, cfm: 0, oaCfm: 0, area: 0, areaSqft: 0 });
     const g = map.get(level);
     g.rooms += 1;
     g.tr += r.tr;
+    g.ls += r.supplyLs;
+    g.oaLs += r.oaLs;
     g.cfm += r.cfm;
     g.oaCfm += r.oaCfm;
     g.area += parseFloat(r.room.area) || 0;
@@ -88,7 +90,7 @@ export function toCsv(project, calcResult) {
     'Include', 'Level', 'No.', 'Name', 'Space type', 'Area m2', 'Area ft2', 'Height m',
     'People', 'Light W/m2', 'Equip W/m2', 'Orientation', 'Ext wall m2', 'Glass m2',
     'Roof', 'Partition m2',
-    'Sensible W', 'Latent W', 'Total W', 'TR', 'CFM', 'Fresh air CFM', 'ft2/TR', 'SHF',
+    'Sensible W', 'Latent W', 'Total W', 'TR', 'Supply air L/s', 'Fresh air L/s', 'ft2/TR', 'SHF',
   ];
   const rows = [head];
   for (const r of res) {
@@ -108,7 +110,7 @@ export function toCsv(project, calcResult) {
       room.extWall, room.glass,
       room.roof ? 'yes' : 'no', room.partition || 0,
       r.rsh.toFixed(0), r.rlh.toFixed(0), r.totalW.toFixed(0),
-      r.tr.toFixed(2), r.cfm.toFixed(0), r.oaCfm.toFixed(0),
+      r.tr.toFixed(2), r.supplyLs.toFixed(0), r.oaLs.toFixed(0),
       r.sqftPerTr.toFixed(0), r.shf.toFixed(3),
     ]);
   }
@@ -204,7 +206,7 @@ export function buildReportHtml(project, calcResult, opts = {}) {
       <td>${fmt(r.oaSens + r.oaLat, 0)}</td>
       <td>${fmt(r.totalW, 0)}</td>
       <td>${fmt(r.tr, 2)}</td>
-      <td>${fmt(r.cfm, 0)}</td>
+      <td>${fmt(r.supplyLs, 0)}</td>
       <td>${fmt(r.sqftPerTr, 0)}</td>
     </tr>`;
   }).join('');
@@ -215,7 +217,7 @@ export function buildReportHtml(project, calcResult, opts = {}) {
       <td>${fmt(g.area, 1)}</td>
       <td>${fmt(g.areaSqft, 0)}</td>
       <td>${fmt(g.tr, 2)}</td>
-      <td>${fmt(g.cfm, 0)}</td>
+      <td>${fmt(g.ls, 0)}</td>
       <td>${fmt(g.oaCfm, 0)}</td>
     </tr>`).join('');
 
@@ -291,7 +293,7 @@ Fresh air (outdoor air) rates follow ASHRAE 62.1 type-of-use values per person p
       <th>#</th><th class="l">Level</th><th class="l">No.</th><th class="l">Room</th><th class="l">Space type</th>
       <th>Area<br>m&sup2;</th><th>Height<br>m</th><th>People</th><th>Orient.</th><th>Glass<br>m&sup2;</th><th>Roof</th>
       <th>Sensible<br>W</th><th>Latent<br>W</th><th>Fresh air<br>W</th><th>Total<br>W</th>
-      <th>TR</th><th>CFM</th><th>ft&sup2;/TR</th>
+      <th>TR</th><th>Supply air L/s</th><th>ft&sup2;/TR</th>
     </tr>
   </thead>
   <tbody>
@@ -304,7 +306,7 @@ Fresh air (outdoor air) rates follow ASHRAE 62.1 type-of-use values per person p
       <td>${fmt(totals.rsh, 0)}</td><td>${fmt(totals.rlh, 0)}</td>
       <td>${fmt((totals.totalW || 0) - (totals.rsh || 0) - (totals.rlh || 0), 0)}</td>
       <td>${fmt(totals.totalW, 0)}</td>
-      <td>${fmt(totals.tr, 2)}</td><td>${fmt(totals.cfm, 0)}</td><td>${fmt(totals.sqftPerTr, 0)}</td>
+      <td>${fmt(totals.tr, 2)}</td><td>${fmt(totals.ls, 0)}</td><td>${fmt(totals.sqftPerTr, 0)}</td>
     </tr>
   </tfoot>
 </table>
@@ -341,7 +343,7 @@ ${skippedNote}
     <tr class="grand">
       <td class="l">Grand total</td><td>${included.length}</td>
       <td>${fmt(totals.area, 1)}</td><td>${fmt(totals.areaSqft, 0)}</td>
-      <td>${fmt(totals.tr, 2)}</td><td>${fmt(totals.cfm, 0)}</td><td>${fmt(totals.oaCfm, 0)}</td>
+      <td>${fmt(totals.tr, 2)}</td><td>${fmt(totals.ls, 0)}</td><td>${fmt(totals.oaCfm, 0)}</td>
     </tr>
   </tfoot>
 </table>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WebHVAC — Cooling load from a floor plan PDF</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta name="description" content="WebHVAC reads a floor plan PDF or room schedule and gives the room-wise HVAC cooling load in TR, CFM and watts. Runs in your browser, nothing is uploaded to a third party.">
+<meta name="description" content="WebHVAC reads a floor plan PDF or room schedule and gives the room-wise HVAC cooling load in TR, L/s and watts. Runs in your browser, nothing is uploaded to a third party.">
 <link rel="stylesheet" href="css/landing.css">
 </head>
 <body>
@@ -38,7 +38,7 @@
         <h1>Read a floor plan PDF, get the <span class="hl">room-wise cooling load</span></h1>
         <p class="lead">
           WebHVAC reads the room names, areas and levels already written in your drawing or room schedule,
-          then calculates the cooling load room by room and gives you <strong>TR</strong>, <strong>CFM</strong>
+          then calculates the cooling load room by room and gives you <strong>TR</strong>, <strong>L/s</strong>
           and watts. No CAD, no spreadsheet, no sign-up.
         </p>
         <div class="hero-cta">
@@ -50,7 +50,7 @@
           <code>npm start</code> for faster server-side reading.
         </p>
         <ul class="badges">
-          <li>TR &middot; CFM &middot; per-room W</li>
+          <li>TR &middot; L/s &middot; per-room W</li>
           <li>Editable room table</li>
           <li>CSV + printable report</li>
           <li>Works offline</li>
@@ -116,9 +116,9 @@
           </p>
         </li>
         <li>
-          <h3>Read TR / CFM and export</h3>
+          <h3>Read TR / L/s and export</h3>
           <p>
-            The summary shows total tonnes of refrigeration, supply air CFM, fresh-air CFM and ft&sup2;/TR,
+            The summary shows total tonnes of refrigeration, supply air L/s, fresh-air L/s and ft&sup2;/TR,
             plus a per-room breakdown and per-level subtotals. Download the CSV or print the report to PDF.
           </p>
         </li>
@@ -151,7 +151,7 @@
         </li>
         <li>
           <h3>Per-level subtotals</h3>
-          <p>Ground / first / terrace level totals in TR and CFM, so each floor can be sized on its own.</p>
+          <p>Ground / first / terrace level totals in TR and L/s, so each floor can be sized on its own.</p>
         </li>
         <li>
           <h3>CSV export</h3>
@@ -188,7 +188,7 @@
           <h3>Consultancies in Kerala and the Gulf</h3>
           <ul>
             <li>Hot, humid design conditions (Kochi 35/28 &deg;C, Dubai 46/29 &deg;C) are already loaded.</li>
-            <li>First-pass tonnes, CFM and ft&sup2;/TR in minutes, to check a tender document.</li>
+            <li>First-pass tonnes, L/s and ft&sup2;/TR in minutes, to check a tender document.</li>
             <li>CSV and a printable report for the file &mdash; then verify before it goes out.</li>
           </ul>
         </div>
@@ -232,7 +232,7 @@
   <div class="wrap footer-grid">
     <div>
       <h3>WebHVAC</h3>
-      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, CFM and watts, in your browser.</p>
+      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, L/s and watts, in your browser.</p>
       <p class="small"><a href="index.html">Home</a></p>
     </div>
     <div>

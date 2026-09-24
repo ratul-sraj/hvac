@@ -204,7 +204,7 @@ export function calcProject(rooms, proj = DEFAULT_PROJECT) {
     results,
     totals: {
       rooms: inc.length, area, areaSqft: area * 10.7639,
-      totalW: sum("totalW"), tr, cfm: sum("cfm"), oaCfm: sum("oaCfm"),
+      totalW: sum("totalW"), tr, ls: sum("supplyLs"), oaLs: sum("oaLs"), cfm: sum("cfm"), oaCfm: sum("oaCfm"),
       rsh: sum("rsh"), rlh: sum("rlh"),
       sqftPerTr: tr ? (area * 10.7639) / tr : 0,
       wOut: wFromDbWb(proj.outDb, proj.outWb), wIn: wFromDbRh(proj.inDb, proj.inRh),

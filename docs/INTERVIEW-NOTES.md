@@ -9,7 +9,7 @@ interviews are actually made of.
 ## 1. The one-line hook
 
 > "I built a small web tool that reads a floor plan PDF, pulls out every room, and gives you the
-> cooling load room by room — tonnes of refrigeration, supply air CFM and a printable load sheet."
+> cooling load room by room — tonnes of refrigeration, supply air in L/s and a printable load sheet."
 
 If they want the longer version:
 
@@ -82,18 +82,18 @@ interview.
   "it is only 35 degrees outside".
 - **Fresh air per ASHRAE 62.1.** Ventilation air per person plus per m² of floor, by type of use
   (2.5 L/s per person in an office, 5 in a classroom, 12 in a patient room). Fresh air is not free
-  cooling: at Kochi design conditions every 1,000 CFM of outdoor air adds about 3–4 TR.
+  cooling: at Kochi design conditions every 1,000 L/s of outdoor air adds about 3–4 TR.
 - **TR (tonne of refrigeration).** 1 TR = 3,517 W = 12,000 BTU/h. Converting the SI result into TR
   is what the client and the equipment schedule speak.
-- **CFM and supply ΔT.** Supply air quantity = sensible heat ÷ (1.23 × supply ΔT). With an 11 K
-  supply-to-room ΔT, 76,234 CFM here. The air quantity is the bridge from the load to the duct and
+- **Airflow (L/s) and supply ΔT.** Supply air quantity = sensible heat ÷ (1.23 × supply ΔT). With an 11 K
+  supply-to-room ΔT, 35,978 L/s here. The air quantity is the bridge from the load to the duct and
   AHU design, even though this tool does not size them.
 - **ft²/TR as a sanity check.** 5,609 m² / 233.8 TR = **258 ft²/TR**. The rule of thumb for Indian
   office work is roughly 200–300 ft²/TR. A number inside that band, with the biggest rooms verified,
   is a sign the estimate is behaving — and outside it is a sign something is wrong.
 - **Why Kerala's humid climate pushes ft²/TR down (more TR for the same area).** Fresh air at
   28 °C wet bulb carries a lot of moisture. Removing that moisture costs latent heat; the fresh-air
-  load is a large fraction of the total here (8,420 CFM of outdoor air), and roof and west-wall
+  load is a large fraction of the total here (3,974 L/s of outdoor air), and roof and west-wall
   gains are high all year. So for the same floor area, a Kochi building needs more tonnes than a
   dry-climate building — which is why 258 ft²/TR appears instead of the 350–400 ft²/TR someone may
   quote from a dry city.

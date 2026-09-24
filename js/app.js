@@ -290,7 +290,7 @@ function sortedIndices(calc) {
       case 'latent': return r.rlh;
       case 'total': return r.totalW;
       case 'tr': return r.tr;
-      case 'cfm': return r.cfm;
+      case 'ls': return r.supplyLs;
       case 'sqftPerTr': return r.sqftPerTr;
       default: return parseFloat(room[key]) || 0;
     }
@@ -365,7 +365,7 @@ function rowHtml(idx, calc) {
     <td class="res v-latent">${fmt(r.rlh, 0)}</td>
     <td class="res hi v-total">${fmt(r.totalW, 0)}</td>
     <td class="res hi v-tr">${fmt(r.tr, 2)}</td>
-    <td class="res v-cfm">${fmt(r.cfm, 0)}</td>
+    <td class="res v-ls">${fmt(r.supplyLs, 0)}</td>
     <td class="res v-sqftPerTr">${fmt(r.sqftPerTr, 0)}</td>
     <td class="c-del"><button type="button" class="btn-del" data-act="del"
       title="Delete ${esc(nm)}" aria-label="Delete ${esc(nm)}">&times;</button></td>
@@ -411,7 +411,7 @@ function updateLive() {
     tr.querySelector('.v-latent').textContent = fmt(r.rlh, 0);
     tr.querySelector('.v-total').textContent = fmt(r.totalW, 0);
     tr.querySelector('.v-tr').textContent = fmt(r.tr, 2);
-    tr.querySelector('.v-cfm').textContent = fmt(r.cfm, 0);
+    tr.querySelector('.v-ls').textContent = fmt(r.supplyLs, 0);
     tr.querySelector('.v-sqftPerTr').textContent = fmt(r.sqftPerTr, 0);
     for (const f of NUM_FIELDS) {
       const inp = tr.querySelector(`input[data-field="${f}"]`);
@@ -446,8 +446,8 @@ function renderSummary(calc) {
   el.summaryCards.innerHTML = [
     card('Total cooling load', fmt(t.tr, 2), 'TR', true),
     card('Total heat', fmt(t.totalW, 0), 'W', true),
-    card('Supply air', fmt(t.cfm, 0), 'CFM'),
-    card('Fresh / outdoor air', fmt(t.oaCfm, 0), 'CFM'),
+    card('Supply air', fmt(t.ls, 0), 'L/s'),
+    card('Fresh / outdoor air', fmt(t.oaLs, 0), 'L/s'),
     card('Conditioned area', fmt(t.area, 1), 'm²'),
     card('Area', fmt(t.areaSqft, 0), 'ft²'),
     card('Area per tonne', fmt(t.sqftPerTr, 0), 'ft²/TR'),
@@ -464,13 +464,13 @@ function renderSummary(calc) {
         <td>${fmt(g.area, 1)}</td>
         <td>${fmt(g.areaSqft, 0)}</td>
         <td>${fmt(g.tr, 2)}</td>
-        <td>${fmt(g.cfm, 0)}</td>
+        <td>${fmt(g.ls, 0)}</td>
         <td>${fmt(g.oaCfm, 0)}</td>
         <td>${fmt(g.tr ? g.areaSqft / g.tr : 0, 0)}</td>
       </tr>`).join('') +
       `<tr class="total-row">
         <td class="l">Total</td><td>${t.rooms}</td><td>${fmt(t.area, 1)}</td><td>${fmt(t.areaSqft, 0)}</td>
-        <td>${fmt(t.tr, 2)}</td><td>${fmt(t.cfm, 0)}</td><td>${fmt(t.oaCfm, 0)}</td>
+        <td>${fmt(t.tr, 2)}</td><td>${fmt(t.ls, 0)}</td><td>${fmt(t.oaLs, 0)}</td>
         <td>${fmt(t.sqftPerTr, 0)}</td>
       </tr>`
     : '<tr><td class="l" colspan="8">No rooms included yet.</td></tr>';
@@ -522,8 +522,8 @@ function renderDetail(calc) {
     <div class="bd-total">
       <div><div class="k">Cooling load</div><div class="v">${fmt(r.tr, 2)} TR</div></div>
       <div><div class="k">Total heat</div><div class="v">${fmt(r.totalW, 0)} W</div></div>
-      <div><div class="k">Supply air</div><div class="v">${fmt(r.cfm, 0)} CFM</div></div>
-      <div><div class="k">Fresh air</div><div class="v">${fmt(r.oaCfm, 0)} CFM</div></div>
+      <div><div class="k">Supply air</div><div class="v">${fmt(r.supplyLs, 0)} L/s</div></div>
+      <div><div class="k">Fresh air</div><div class="v">${fmt(r.oaLs, 0)} L/s</div></div>
       <div><div class="k">SHF</div><div class="v">${fmt(r.shf, 2)}</div></div>
       <div><div class="k">Area / tonne</div><div class="v">${fmt(r.sqftPerTr, 0)} ft&sup2;/TR</div></div>
     </div>

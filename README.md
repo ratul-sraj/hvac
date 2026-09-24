@@ -1,7 +1,7 @@
 # WebHVAC server — optional Express server
 
 WebHVAC is a small cooling-load calculator: you give it a PDF floor plan / room schedule (or type
-the rooms yourself), it reads the rooms and estimates the cooling load (TR, W, CFM).
+the rooms yourself), it reads the rooms and estimates the cooling load (TR, W, L/s).
 
 The app works **two ways**, and both keep working:
 

@@ -7,8 +7,8 @@ NO CDN links (everything must be local so it works offline and on Pages).
 ## File layout (each file has ONE owner — do not edit files you don't own)
 ```
 index.html            PLANNER — the LANDING page (home page of the site)
-app.html              PLANNER — the CALCULATOR page; generated from the calculator source
-                      by `node tools/sync-app-page.mjs`, which injects the top nav
+app.html              PLANNER — the CALCULATOR page (its own source of truth). Its top nav is
+                      injected by `node tools/update-app-nav.mjs`
 about.html            LANDING worker — about the project
 method.html           LANDING worker — load method and assumptions in plain language
 help.html             LANDING worker — FAQ / how-to
@@ -69,6 +69,6 @@ export function parseText(items /* [{str,x,y,page}] */) -> { rooms, warnings }  
 node tests: `pdfjs-dist/legacy/build/pdf.mjs`). parsePdf must NOT import pdf.js itself.
 
 ## Style
-- Units: SI in the engine (m, m², W). UI shows TR, W, CFM, m² and ft².
+- Units: SI in the engine (m, m², W). UI shows TR, W, L/s, m² and ft².
 - Simple English in UI text (user is non-native English speaker).
 - Keep code readable; no minification.

@@ -174,7 +174,7 @@
         <li><strong>Sensible: 1.23 &times; L/s &times; &Delta;T</strong> watts. The constant 1.23 is &rho; &times; cp for air (about 1.2 kg/m&sup3; &times; 1.005 kJ/kg&middot;K, with the L/s-to-m&sup3;/s factor folded in).</li>
         <li><strong>Latent: 3010 &times; L/s &times; &Delta;W</strong> watts, where &Delta;W is the humidity ratio difference in kg/kg.</li>
         <li><strong>Area: 1 m&sup2; = 10.7639 ft&sup2;.</strong> Used for the ft&sup2; column and for the ft&sup2;/TR density check.</li>
-        <li><strong>Air: 1 L/s = 2.11888 CFM</strong>, so supply and fresh-air quantities are shown in both units.</li>
+        <li><strong>Airflow is shown in L/s (litres per second).</strong> 1 L/s = 2.11888 CFM = 3.6 m&sup3;/h, if your schedule or tender is in another unit.</li>
         <li><strong>Supply air:</strong> room sensible heat divided by (1.23 &times; supply &Delta;T), so the figure depends on the supply temperature difference you set.</li>
         <li><strong>Humidity ratio</strong> is worked out at sea level (101.325 kPa) from the dry bulb / wet bulb pair outdoors and the dry bulb / RH pair indoors, so the latent load follows the local climate.</li>
         <li><strong>Peak solar gain through glass (W/m&sup2;):</strong> N 110 &middot; NE 300 &middot; E 440 &middot; SE 300 &middot; S 130 &middot; SW 350 &middot; W 470 &middot; NW 300. West is the worst side; the storage effect is already inside these figures.</li>
@@ -207,7 +207,7 @@
             <tr><td class="l">Partition U value</td><td class="l">2.2 W/m&sup2;K</td><td class="l">Partition wall to a non-air-conditioned space.</td></tr>
             <tr><td class="l">Infiltration</td><td class="l">0.5 air changes per hour</td><td class="l">Closed building, doors mostly shut. A simple estimate.</td></tr>
             <tr><td class="l">Safety factor</td><td class="l">10 %</td><td class="l">Added to the room sensible and latent load.</td></tr>
-            <tr><td class="l">Supply air &Delta;T</td><td class="l">11 K</td><td class="l">Room air minus supply air, used to size the supply CFM.</td></tr>
+            <tr><td class="l">Supply air &Delta;T</td><td class="l">11 K</td><td class="l">Room air minus supply air, used to size the supply airflow (L/s).</td></tr>
             <tr><td class="l">Glazing, when glass area is blank</td><td class="l">30 % of the exposed wall</td><td class="l">A starting window-to-wall ratio until you measure the drawing.</td></tr>
           </tbody>
         </table>
@@ -259,7 +259,7 @@
   <div class="wrap footer-grid">
     <div>
       <h3>WebHVAC</h3>
-      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, CFM and watts, in your browser.</p>
+      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, L/s and watts, in your browser.</p>
       <p class="small"><a href="index.html">Home</a></p>
     </div>
     <div>

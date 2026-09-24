@@ -52,10 +52,10 @@ try {
   const c = calc.calcProject(parsed.rooms, calc.DEFAULT_PROJECT);
   const t = c.totals;
   log(`  included rooms = ${t.rooms}, area = ${t.area.toFixed(0)} m² (${t.areaSqft.toFixed(0)} ft²)`);
-  log(`  total = ${(t.totalW / 1000).toFixed(1)} kW = ${t.tr.toFixed(1)} TR, supply air = ${t.cfm.toFixed(0)} CFM, fresh air = ${t.oaCfm.toFixed(0)} CFM`);
+  log(`  total = ${(t.totalW / 1000).toFixed(1)} kW = ${t.tr.toFixed(1)} TR, supply air = ${t.ls.toFixed(0)} L/s, fresh air = ${t.oaLs.toFixed(0)} L/s`);
   check("total TR in a sane range", t.tr > 50 && t.tr < 600, `${t.tr.toFixed(1)} TR`);
   check("area per tonne sane", t.sqftPerTr > 150 && t.sqftPerTr < 500, `${t.sqftPerTr.toFixed(0)} ft²/TR`);
-  check("supply air sane", t.cfm > 5000 && t.cfm < 200000, `${t.cfm.toFixed(0)} CFM`);
+  check("supply air sane", t.ls > 2000 && t.ls < 100000, `${t.ls.toFixed(0)} L/s`);
   check("no NaN / Infinity in totals", Object.values(t).every((v) => typeof v !== "number" || Number.isFinite(v)));
 
   // 4. a known room

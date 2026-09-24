@@ -24,7 +24,7 @@ Numbers to remember before you speak (real, from `tests/samples/headquarters.pdf
 | Rooms air-conditioned (included in the load) | **93** |
 | Conditioned area | **5,608.5 m²** (60,369 ft²) |
 | Total cooling load | **233.8 TR** (822,190 W) |
-| Supply air | **76,234 CFM**; fresh air **8,420 CFM** |
+| Supply air | **35,978 L/s**; fresh air **3,974 L/s** |
 | Area per tonne | **258 ft²/TR** |
 | Load by floor | Ground 88.1 TR, L1 70.2 TR, L2 75.5 TR |
 | Biggest room | ATRIUM, Ground Floor, 1,249 m² → 34.6 TR, SHF 0.68 |
@@ -38,7 +38,7 @@ Numbers to remember before you speak (real, from `tests/samples/headquarters.pdf
 
 > "This is WebHVAC. It takes a floor plan PDF — the kind of drawing we get from the architect —
 > reads the rooms out of it, applies cooling-load theory to each room, and gives you the cooling
-> load in tonnes of refrigeration, the supply air in CFM and a room-wise sheet you can hand over.
+> load in tonnes of refrigeration, the supply air in L/s and a room-wise sheet you can hand over.
 > Let me show you with a real three-floor building."
 
 ### 0:30 – 1:00 — the settings (top of the page, scroll the panel)
@@ -58,7 +58,7 @@ PDF**. Click nothing yet.
 while it fills, then point at the summary cards.
 
 > "One click. It reads all three pages and here is the load summary: **233.8 tonnes of
-> refrigeration**, **76,234 CFM supply air**, **8,420 CFM fresh air**, **5,609 square metres
+> refrigeration**, **35,978 L/s supply air**, **3,974 L/s fresh air**, **5,609 square metres
 > conditioned**, and **258 square feet per tonne**."
 
 Then scroll a little, to the level-wise table, then into the room table:
@@ -118,8 +118,8 @@ click the **ATRIUM** row → say the numbers → stop.
 
 > "This app reads a floor plan PDF and calculates the cooling load. It found **149 rooms in three
 > floors** and decided **93 of them are air-conditioned** — **5,609 square metres** — for a total of
-> **233.8 tonnes of refrigeration**, about **258 square feet per tonne**, with **76,000 CFM** of
-> supply air and **8,400 CFM** of fresh air at the Kochi design condition of 35 dry bulb and 28 wet
+> **233.8 tonnes of refrigeration**, about **258 square feet per tonne**, with **35,900 L/s** of
+> supply air and **3,970 L/s** of fresh air at the Kochi design condition of 35 dry bulb and 28 wet
 > bulb. This panel is one room's breakdown — solar, wall, roof, people, lighting, equipment,
 > infiltration, fresh air, sensible and latent, with percentages. Everything is editable, and the
 > CSV or a printed report comes straight out. It is a handbook-level estimate for early sizing, not
@@ -181,7 +181,7 @@ on every exposed wall, one exposed side per room, roof exposed on the top floor,
 infiltration. Correct the glazing area and orientation for the real façade and the total drops.
 
 **Does it size ducts or equipment?**
-No. It gives the **supply air quantity** in CFM (from the sensible heat and the supply ΔT) and the
+No. It gives the **supply air quantity** in L/s (from the sensible heat and the supply ΔT) and the
 fresh-air quantity, and that is all. No duct sizing, no duct heat gain or leakage, no fan heat, no
 chilled-water or refrigerant piping, no AHU/FCU selection, no psychrometric chart.
 

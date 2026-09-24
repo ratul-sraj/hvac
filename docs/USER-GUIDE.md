@@ -2,7 +2,7 @@
 
 WebHVAC reads the rooms out of an architectural or MEP **floor plan PDF** (or a room schedule
 PDF) and estimates the **cooling load** of each room and of the whole building: sensible and
-latent heat in watts, tonnes of refrigeration (TR), supply air in CFM, fresh-air CFM and the
+latent heat in watts, tonnes of refrigeration (TR), supply air in L/s, fresh-air L/s and the
 ft²/tonne figure. You check and correct the rooms in a table, set the design conditions and the
 construction assumptions, then export a CSV or a printable report. Everything runs on your own
 computer — nothing is uploaded anywhere on its own, and no login is needed.
@@ -80,12 +80,12 @@ table, `93 included in the load` and `149 shown` — the other 56 rows are toile
 stairs and similar, which the app sets to *not air conditioned* by itself.
 
 The top of this page is the summary: **total cooling load in TR**, total heat in W, supply air
-CFM, fresh-air CFM, conditioned area in m² and ft², area per tonne (ft²/TR), rooms included, room
+L/s, fresh-air L/s, conditioned area in m² and ft², area per tonne (ft²/TR), rooms included, room
 sensible heat and room latent heat. Under it, the **level-wise subtotal** table shows the same
 numbers floor by floor — which is how you normally report a job.
 
-For the sample the totals are: **5,608.5 m² conditioned**, **233.78 TR**, **76,234 CFM supply air**,
-**8,420 CFM fresh air**, about **258 ft²/TR**.
+For the sample the totals are: **5,608.5 m² conditioned**, **233.78 TR**, **35,978 L/s supply air**,
+**3,974 L/s fresh air**, about **258 ft²/TR**.
 
 ### Step 4 — fix the wrong rooms
 
@@ -112,7 +112,7 @@ the fastest way to find the rooms that drive the load.
 ![The load breakdown panel for the biggest room](img/app-detail.png)
 
 Click anywhere on a row: the **Load breakdown** panel opens under the table. It shows the room's
-cooling load in TR, total heat in W, supply air CFM, fresh-air CFM, SHF and ft²/TR, and then every
+cooling load in TR, total heat in W, supply air L/s, fresh-air L/s, SHF and ft²/TR, and then every
 heat-gain component in watts with its share of the total:
 
 glass (solar), glass (conduction), external wall, roof, partition, people sensible, lighting,
@@ -124,7 +124,7 @@ This panel is what you show when someone asks *"where does the number come from?
 ### Step 6 — export
 
 - **Download CSV** (`<project>-cooling-load.csv`) — one row per room with all inputs and results
-  (Sensible W, Latent W, Total W, TR, CFM, fresh-air CFM, ft²/TR, SHF), with the project settings
+  (Sensible W, Latent W, Total W, TR, supply air L/s, fresh-air L/s, ft²/TR, SHF), with the project settings
   repeated as `#` comment lines at the top. This is the file you put into Excel.
 - **Print / Save PDF report** — opens a formatted report in a new window with the design
   conditions, the assumptions used, the room-wise table, the load summary, the level-wise
@@ -164,7 +164,7 @@ fills them).
 | **Latent W** *(result)* | Room latent heat, safety factor included | — |
 | **Total W** *(result)* | Sensible + latent for the room | — |
 | **TR** *(result)* | Total cooling load of the room in tonnes of refrigeration | — |
-| **CFM** *(result)* | Supply air at the supply ΔT | — |
+| **L/s** *(result)* | Supply air quantity at the supply ΔT | — |
 | **ft²/TR** *(result)* | Room area per tonne | — |
 | **×** | Delete the room | — |
 
@@ -221,7 +221,7 @@ and roof build-ups in the architectural drawing.
 | Partition U value (W/m²K) | 2.2 | Wall to a non-air-conditioned space |
 | Infiltration (air changes/hour) | 0.5 | Leaky envelope, open doors, stack effect — raise it for old or open buildings |
 | Safety factor (%) | 10 | Extra allowance added to the room sensible and latent heat (shown separately in the breakdown) |
-| Supply air ΔT (K) | 11 | Room air minus supply air temperature; sets the supply CFM = sensible ÷ (1.23 × ΔT) |
+| Supply air ΔT (K) | 11 | Room air minus supply air temperature; sets the supply airflow = sensible ÷ (1.23 × ΔT) |
 | Glazing (% of exposed wall) | 30 | Used **only** when the glass area is blank, to guess the window area |
 
 Two more values are fixed in `js/calc.js` and are not editable in the UI: peak solar gain through
@@ -249,7 +249,7 @@ infiltration = 1.23 × infil L/s × ΔT
 
 ROOM      = (sensible sum × (1 + safety%)) + (latent sum × (1 + safety%))
 FRESH AIR = 1.23 × OA L/s × ΔT   (sensible)   +   3010 × OA L/s × (w_out − w_in)   (latent)
-TOTAL     = ROOM + FRESH AIR            TR = TOTAL / 3517            CFM = supply L/s × 2.119
+TOTAL     = ROOM + FRESH AIR            TR = TOTAL / 3517            airflow is shown in L/s
 SHF       = sensible ÷ (sensible + latent)
 ```
 
@@ -287,7 +287,7 @@ Say this clearly, the same way the printed report does:
   energy use, or which month the peak really happens.
 - **No radiant time series / heat storage over time** in the walls, slab or furniture — the
   storage effect is folded into a single factor, not computed hour by hour.
-- **No duct or pipe sizing.** The CFM figure is supply air quantity, not a duct size, and there is
+- **No duct or pipe sizing.** The L/s figure is supply air quantity, not a duct size, not a duct size, and there is
   no duct heat gain, no duct leakage, no fan heat, no chilled water or refrigerant pipe sizing, no
   diffuser selection.
 - **No psychrometric chart and no coil selection.** It reports SHF and the humidity ratios it
