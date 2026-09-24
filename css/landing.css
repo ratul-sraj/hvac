@@ -348,8 +348,10 @@ table.num-table { border-collapse: separate; border-spacing: 0; width: 100%; fon
 .nav-burger-bars span { display: block; width: 16px; height: 2px; background: currentColor; border-radius: 2px; }
 
 @media (max-width: 700px) {
-  header.site-nav.js-nav .nav-burger { display: inline-flex; }
-  header.site-nav.js-nav .nav-links { display: none; }
+  header.site-nav.js-nav .nav-inner { flex-wrap: wrap; }
+  header.site-nav.js-nav .brand { order: 1; }
+  header.site-nav.js-nav .nav-burger { display: inline-flex; order: 2; }
+  header.site-nav.js-nav .nav-links { display: none; order: 3; }
   header.site-nav.js-nav.nav-open .nav-links {
     display: flex;
     flex-direction: column;

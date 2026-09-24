@@ -3,298 +3,262 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebHVAC — Cooling Load from PDF</title>
+<title>WebHVAC — Cooling load from a floor plan PDF</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta name="description" content="Upload HVAC floor plan PDF drawings, get room wise cooling load in TR, CFM and a printable report. Runs fully in your browser.">
-<link rel="stylesheet" href="css/style.css">
+<meta name="description" content="WebHVAC reads a floor plan PDF or room schedule and gives the room-wise HVAC cooling load in TR, CFM and watts. Runs in your browser, nothing is uploaded to a third party.">
+<link rel="stylesheet" href="css/landing.css">
 </head>
 <body>
 
-<header class="app-header">
-  <div class="wrap header-inner">
-    <div>
-      <h1>WebHVAC — Cooling Load from PDF</h1>
-      <p class="tagline">
-        <strong>How to use:</strong> upload a floor plan PDF &rarr; check the rooms we found &rarr;
-        read total TR, CFM and download or print the report. All calculation happens inside your browser.
-      </p>
+<header class="site-nav">
+  <div class="wrap nav-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+        <rect x="1.5" y="7" width="29" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">WebHVAC<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
     </div>
-    <div class="header-actions">
-      <button type="button" id="btnPrint" class="btn btn-ghost">Print / Save PDF report</button>
-      <button type="button" id="btnCsv" class="btn btn-ghost">Download CSV</button>
-    </div>
+    <nav class="nav-links" aria-label="Main">
+      <a href="app.html">Calculator</a>
+      <a href="about.html">About</a>
+      <a href="method.html">Method</a>
+      <a href="help.html">Help</a>
+    </nav>
   </div>
 </header>
 
-<main class="wrap">
+<main>
 
-  <!-- ---------------- project settings ---------------- -->
-  <section class="card" id="projectPanel" aria-labelledby="projectHead">
-    <div class="card-head">
-      <h2 id="projectHead">1. Project and design conditions</h2>
-      <button type="button" class="btn btn-small btn-ghost" id="btnResetProject">Reset to defaults</button>
-    </div>
-    <p class="hint">Every value you change is used immediately. Results update as you type.</p>
-
-    <div class="grid grid-project">
-      <label class="field">
-        <span>Project name</span>
-        <input type="text" id="proj-name" autocomplete="off" placeholder="HVAC Load Calculation">
-      </label>
-
-      <label class="field">
-        <span>Country</span>
-        <select id="proj-country"></select>
-      </label>
-
-      <label class="field">
-        <span>City / region</span>
-        <select id="proj-city"></select>
-      </label>
-
-      <label class="field">
-        <span>Outdoor dry bulb (&deg;C)</span>
-        <input type="number" step="0.5" id="proj-outDb" inputmode="decimal">
-      </label>
-
-      <label class="field">
-        <span>Outdoor wet bulb (&deg;C)</span>
-        <input type="number" step="0.5" id="proj-outWb" inputmode="decimal">
-      </label>
-
-      <label class="field">
-        <span>Indoor dry bulb (&deg;C)</span>
-        <input type="number" step="0.5" id="proj-inDb" inputmode="decimal">
-      </label>
-
-      <label class="field">
-        <span>Indoor RH (%)</span>
-        <input type="number" step="1" id="proj-inRh" inputmode="decimal">
-      </label>
-    </div>
-
-    <details class="adv" open>
-      <summary>Construction and system assumptions</summary>
-      <div class="grid grid-project">
-        <label class="field">
-          <span>Wall U value (W/m&sup2;K)</span>
-          <input type="number" step="0.05" id="proj-uWall" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Glass U value (W/m&sup2;K)</span>
-          <input type="number" step="0.05" id="proj-uGlass" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Glass shading coefficient (SC)</span>
-          <input type="number" step="0.05" id="proj-sc" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Roof U value (W/m&sup2;K)</span>
-          <input type="number" step="0.05" id="proj-uRoof" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Roof equivalent &Delta;T (K)</span>
-          <input type="number" step="1" id="proj-roofEtd" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Partition U value (W/m&sup2;K)</span>
-          <input type="number" step="0.05" id="proj-uPart" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Infiltration (air changes / hour)</span>
-          <input type="number" step="0.1" id="proj-infilAch" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Safety factor (%)</span>
-          <input type="number" step="1" id="proj-safety" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Supply air &Delta;T (K)</span>
-          <input type="number" step="0.5" id="proj-supplyDt" inputmode="decimal">
-        </label>
-        <label class="field">
-          <span>Glazing, if glass area is blank (% of wall)</span>
-          <input type="number" step="1" id="proj-wwr" inputmode="decimal">
-        </label>
+  <!-- ---------------- hero ---------------- -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <h1>Read a floor plan PDF, get the <span class="hl">room-wise cooling load</span></h1>
+        <p class="lead">
+          WebHVAC reads the room names, areas and levels already written in your drawing or room schedule,
+          then calculates the cooling load room by room and gives you <strong>TR</strong>, <strong>CFM</strong>
+          and watts. No CAD, no spreadsheet, no sign-up.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-lg" id="hero-cta" href="app.html">Open the calculator</a>
+          <a class="btn btn-lg btn-ghost" href="method.html">See the method</a>
+        </div>
+        <p class="hero-note">
+          Runs in your browser. Nothing is uploaded to a third party &mdash; or run
+          <code>npm start</code> for faster server-side reading.
+        </p>
+        <ul class="badges">
+          <li>TR &middot; CFM &middot; per-room W</li>
+          <li>Editable room table</li>
+          <li>CSV + printable report</li>
+          <li>Works offline</li>
+        </ul>
       </div>
-    </details>
-  </section>
 
-  <!-- ---------------- upload ---------------- -->
-  <section class="card" aria-labelledby="uploadHead">
-    <h2 id="uploadHead">2. Upload floor plan PDF</h2>
-    <p class="hint">You can upload many files at once. Rooms found in the PDF are <em>added</em> to the table below —
-      existing rows are not deleted.</p>
-
-    <!-- Where the PDF is read. app.js sets this after the one-time /api/health check. -->
-    <p class="hint" id="parseWhere">Reading PDFs in your browser</p>
-
-    <div id="dropzone" class="dropzone" tabindex="0" role="button"
-         aria-label="Drag and drop PDF files here, or press Enter to choose files">
-      <div class="dz-icon" aria-hidden="true">PDF</div>
-      <p class="dz-main">Drag and drop PDF drawing files here</p>
-      <p class="dz-sub">or <span class="linkish">click to choose files</span></p>
-      <input type="file" id="fileInput" accept=".pdf,application/pdf" multiple hidden>
-    </div>
-
-    <div class="row wrap-row">
-      <button type="button" id="btnSample" class="btn">Try sample drawing</button>
-      <button type="button" id="btnManual" class="btn btn-ghost">Add room manually</button>
-      <button type="button" id="btnClear" class="btn btn-danger-ghost">Clear all rooms</button>
-    </div>
-
-    <div id="progressBox" class="progress-box hidden" aria-live="polite">
-      <div class="progress-line"><span id="progressText">Working...</span></div>
-      <div class="progress-bar"><div id="progressFill"></div></div>
-    </div>
-
-    <div id="statusBox" class="status hidden" role="status" aria-live="polite"></div>
-
-    <details id="warnBox" class="warn hidden">
-      <summary><span id="warnCount">0</span> parser note(s) — click to read</summary>
-      <ul id="warnList"></ul>
-    </details>
-  </section>
-
-  <!-- ---------------- summary ---------------- -->
-  <section class="card" aria-labelledby="sumHead">
-    <h2 id="sumHead">3. Load summary</h2>
-    <div class="cards" id="summaryCards"></div>
-
-    <h3 class="sub-head">Level wise subtotal</h3>
-    <div class="table-scroll">
-      <table class="data-table" id="levelTable">
-        <thead>
-          <tr>
-            <th class="l">Level</th><th>Rooms</th><th>Area m&sup2;</th><th>Area ft&sup2;</th>
-            <th>TR</th><th>Supply CFM</th><th>Fresh air CFM</th><th>ft&sup2;/TR</th>
-          </tr>
-        </thead>
-        <tbody id="levelBody"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ---------------- rooms ---------------- -->
-  <section class="card" aria-labelledby="roomsHead">
-    <div class="card-head">
-      <h2 id="roomsHead">4. Rooms — check and edit</h2>
-      <span class="muted small" id="roomsCount"></span>
-    </div>
-    <p class="hint">
-      Grey values are the defaults we calculated from the room type — the load uses them.
-      Type your own value to override. Click a row to see the load breakdown.
-    </p>
-
-    <div class="toolbar">
-      <label class="field field-inline">
-        <span>Search room</span>
-        <input type="search" id="filterName" placeholder="e.g. conference" autocomplete="off">
-      </label>
-      <label class="field field-inline">
-        <span>Level</span>
-        <select id="filterLevel"><option value="all">All levels</option></select>
-      </label>
-      <div class="toolbar-buttons">
-        <button type="button" class="btn btn-small" id="btnIncludeAll">Select all</button>
-        <button type="button" class="btn btn-small" id="btnIncludeNone">Select none</button>
+      <div class="hero-figure" aria-hidden="true">
+        <p class="fig-title">Drawing &rarr; rooms &rarr; tonnes</p>
+        <svg viewBox="0 0 360 210" role="img" aria-label="Floor plan rooms on the left, load bars on the right">
+          <!-- floor plan -->
+          <rect x="6" y="18" width="150" height="174" rx="4" fill="none" stroke="#b9c6d4" stroke-width="2"/>
+          <line x1="106" y1="18" x2="106" y2="112" stroke="#b9c6d4" stroke-width="2"/>
+          <line x1="6" y1="112" x2="156" y2="112" stroke="#b9c6d4" stroke-width="2"/>
+          <line x1="46" y1="112" x2="46" y2="192" stroke="#b9c6d4" stroke-width="2"/>
+          <rect x="12" y="26" width="88" height="20" rx="3" fill="#e8f1fa"/>
+          <rect x="12" y="52" width="88" height="20" rx="3" fill="#e8f1fa"/>
+          <rect x="12" y="78" width="88" height="20" rx="3" fill="#e8f1fa"/>
+          <rect x="112" y="26" width="38" height="20" rx="3" fill="#eef3f8"/>
+          <rect x="12" y="120" width="28" height="20" rx="3" fill="#e8f1fa"/>
+          <rect x="52" y="120" width="98" height="20" rx="3" fill="#eef3f8"/>
+          <rect x="12" y="146" width="138" height="20" rx="3" fill="#e8f1fa"/>
+          <!-- arrow -->
+          <path d="M168 105h24" stroke="#1b5e9c" stroke-width="2"/>
+          <path d="M192 105l-7-4v8z" fill="#1b5e9c"/>
+          <!-- load bars -->
+          <rect x="206" y="44" width="86" height="14" rx="3" fill="#2c7fb8"/>
+          <rect x="206" y="78" width="118" height="14" rx="3" fill="#2c7fb8"/>
+          <rect x="206" y="112" width="62" height="14" rx="3" fill="#2c7fb8"/>
+          <rect x="206" y="146" width="40" height="14" rx="3" fill="#41ab5d"/>
+          <rect x="206" y="170" width="134" height="14" rx="3" fill="#8c6bb1"/>
+          <line x1="230" y1="30" x2="230" y2="192" stroke="#d3dbe4" stroke-width="1"/>
+        </svg>
+        <div class="fig-legend">
+          <span><i class="swatch" style="background:#2c7fb8"></i>Room sensible</span>
+          <span><i class="swatch" style="background:#41ab5d"></i>Latent</span>
+          <span><i class="swatch" style="background:#8c6bb1"></i>Fresh air + safety</span>
+        </div>
       </div>
     </div>
-
-    <div class="bulk">
-      <span class="bulk-label">Bulk edit (applies to the rows shown above):</span>
-      <label class="field field-inline">
-        <span>Orientation</span>
-        <select id="bulkOrient"></select>
-      </label>
-      <button type="button" class="btn btn-small" id="btnBulkOrient">Apply orientation</button>
-      <label class="field field-inline">
-        <span>Roof</span>
-        <select id="bulkRoof">
-          <option value="">-- choose --</option>
-          <option value="yes">Has roof</option>
-          <option value="no">No roof</option>
-        </select>
-      </label>
-      <button type="button" class="btn btn-small" id="btnBulkRoof">Apply roof</button>
-      <span class="muted small">Tip: use the filters to pick one level first.</span>
-    </div>
-
-    <div class="table-scroll table-rooms">
-      <table class="data-table rooms-table" id="roomsTable">
-        <thead>
-          <tr>
-            <th class="th-include" data-sort="include">In</th>
-            <th data-sort="level">Level</th>
-            <th data-sort="number">No.</th>
-            <th class="l" data-sort="name">Room name</th>
-            <th data-sort="type">Space type</th>
-            <th data-sort="area">Area<br>m&sup2;</th>
-            <th data-sort="height">Height<br>m</th>
-            <th data-sort="people">People</th>
-            <th data-sort="light">Light<br>W/m&sup2;</th>
-            <th data-sort="equip">Equip<br>W/m&sup2;</th>
-            <th data-sort="orient">Orient.</th>
-            <th data-sort="extWall">Ext wall<br>m&sup2;</th>
-            <th data-sort="glass">Glass<br>m&sup2;</th>
-            <th data-sort="roof">Roof</th>
-            <th data-sort="partition">Partition<br>m&sup2;</th>
-            <th class="th-res" data-sort="sensible">Sensible<br>W</th>
-            <th class="th-res" data-sort="latent">Latent<br>W</th>
-            <th class="th-res" data-sort="total">Total<br>W</th>
-            <th class="th-res" data-sort="tr">TR</th>
-            <th class="th-res" data-sort="cfm">CFM</th>
-            <th class="th-res" data-sort="sqftPerTr">ft&sup2;/TR</th>
-            <th class="th-del" aria-label="Delete room"></th>
-          </tr>
-        </thead>
-        <tbody id="roomsBody"></tbody>
-      </table>
-    </div>
-    <p class="empty hidden" id="roomsEmpty">
-      No rooms yet. Upload a PDF above, click <strong>Try sample drawing</strong>, or use
-      <strong>Add room manually</strong>.
-    </p>
   </section>
 
-  <!-- ---------------- detail ---------------- -->
-  <section class="card hidden" id="detailPanel" aria-labelledby="detailHead">
-    <div class="card-head">
-      <h2 id="detailHead">Load breakdown</h2>
-      <button type="button" class="btn btn-small btn-ghost" id="btnCloseDetail">Close</button>
+  <!-- ---------------- how it works ---------------- -->
+  <section class="section" id="how">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>How it works &mdash; three steps</h2>
+        <p class="muted">From the drawing to a number you can put in a report, in a few minutes.</p>
+      </div>
+      <ol class="steps">
+        <li>
+          <h3>Upload the floor plan PDF</h3>
+          <p>
+            Drop one or many PDFs (or your room schedule). WebHVAC reads the text layer and pulls out
+            the room name, number, level and area it finds. It works in your browser &mdash; no upload to a third party.
+          </p>
+        </li>
+        <li>
+          <h3>Check the rooms it found</h3>
+          <p>
+            Every room appears in an editable table. Fix a name, type the real area, set the orientation,
+            tick <em>Roof</em> for the top floor and untick anything that is not air conditioned.
+            Toilets, staircases and shafts are excluded for you.
+          </p>
+        </li>
+        <li>
+          <h3>Read TR / CFM and export</h3>
+          <p>
+            The summary shows total tonnes of refrigeration, supply air CFM, fresh-air CFM and ft&sup2;/TR,
+            plus a per-room breakdown and per-level subtotals. Download the CSV or print the report to PDF.
+          </p>
+        </li>
+      </ol>
     </div>
-    <div id="detailBody"></div>
   </section>
 
-  <!-- ---------------- files ---------------- -->
-  <section class="card" aria-labelledby="fileHead">
-    <h2 id="fileHead">5. Save and export</h2>
-    <div class="row wrap-row">
-      <button type="button" id="btnSave" class="btn btn-ghost">Save project (.json)</button>
-      <button type="button" id="btnOpen" class="btn btn-ghost">Open project (.json)</button>
-      <button type="button" id="btnCsv2" class="btn">Download CSV</button>
-      <button type="button" id="btnPrint2" class="btn">Print / Save PDF report</button>
+  <!-- ---------------- features ---------------- -->
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>What is in the calculator</h2>
+      </div>
+      <ul class="features">
+        <li>
+          <h3>Room name, area and level extraction</h3>
+          <p>Reads text-layer PDFs: room tags drawn on the plan, or a room schedule table.</p>
+        </li>
+        <li>
+          <h3>Editable room table</h3>
+          <p>Every value is yours to override &mdash; name, level, area, height, people, glass, walls, orientation.</p>
+        </li>
+        <li>
+          <h3>Country / city design conditions</h3>
+          <p>Kerala, the Gulf and more, with outdoor dry bulb and wet bulb already filled in. Or type your own.</p>
+        </li>
+        <li>
+          <h3>Per-room breakdown chart</h3>
+          <p>See exactly what makes the load: glass solar, wall, roof, people, lighting, equipment, infiltration, fresh air.</p>
+        </li>
+        <li>
+          <h3>Per-level subtotals</h3>
+          <p>Ground / first / terrace level totals in TR and CFM, so each floor can be sized on its own.</p>
+        </li>
+        <li>
+          <h3>CSV export</h3>
+          <p>One row per room with all inputs and results, ready for Excel or your own sheet.</p>
+        </li>
+        <li>
+          <h3>Printable report</h3>
+          <p>A clean A4 report with design conditions, assumptions, room-wise table and the important notes.</p>
+        </li>
+        <li>
+          <h3>Offline in the browser, or faster with Node</h3>
+          <p>Works with no server at all (GitHub Pages). Run <code>npm start</code> and a small Express server reads the PDF for you &mdash; same result, faster.</p>
+        </li>
+      </ul>
     </div>
-    <input type="file" id="jsonInput" accept=".json,application/json" hidden>
-    <p class="hint">
-      Your work is saved automatically in this browser (local storage). Opening the page again restores it.
-      Use <strong>Save project</strong> to keep a file copy or to move it to another computer.
-    </p>
+  </section>
+
+  <!-- ---------------- who it is for ---------------- -->
+  <section class="section" id="who">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>Who it is for</h2>
+      </div>
+      <div class="cols2">
+        <div class="panel">
+          <h3>MEP / HVAC students and modellers</h3>
+          <ul>
+            <li>Practise a real room-wise load on a real drawing, not a textbook table.</li>
+            <li>See the size of each component &mdash; glass solar, people, fresh air &mdash; and how it changes.</li>
+            <li>Learn what the assumptions do before they go into a live project.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Consultancies in Kerala and the Gulf</h3>
+          <ul>
+            <li>Hot, humid design conditions (Kochi 35/28 &deg;C, Dubai 46/29 &deg;C) are already loaded.</li>
+            <li>First-pass tonnes, CFM and ft&sup2;/TR in minutes, to check a tender document.</li>
+            <li>CSV and a printable report for the file &mdash; then verify before it goes out.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------------- honest limits ---------------- -->
+  <section class="section" id="limits">
+    <div class="wrap">
+      <div class="callout warn">
+        <h2>What this tool does not do &mdash; please read</h2>
+        <ul>
+          <li>
+            <strong>Text-layer PDFs only.</strong> The drawing must contain real text (exported from CAD or a
+            drafting tool, or a typed room schedule). A scan, a photo or an image-only plot has no text layer:
+            WebHVAC will find nothing. Those need OCR first.
+          </li>
+          <li>
+            <strong>The load method is handbook-level.</strong> It is a simplified ASHRAE / Carrier E-20 style
+            estimate using peak solar gain and equivalent temperature differences (ETD / CLTD), not a full
+            hourly radiant-time-series calculation. See the <a href="method.html">method page</a> for the exact numbers.
+          </li>
+          <li>
+            <strong>Every result must be checked by a qualified HVAC engineer.</strong> Areas, heights, glass,
+            people and ventilation rates read from a drawing are a starting point, not a design. Duct heat gain,
+            fan heat, diversity and the local code are not included.
+          </li>
+          <li>
+            <strong>It is for study and for checking.</strong> Do not issue a final equipment selection from these
+            numbers without a proper check.
+          </li>
+        </ul>
+      </div>
+    </div>
   </section>
 
 </main>
 
-<footer class="app-footer">
-  <div class="wrap">
-    <p>
-      Simplified ASHRAE / Carrier E-20 style cooling load estimate. <strong>For study and checking only —
-      a qualified HVAC engineer must verify every number.</strong>
-    </p>
-    <p class="muted small">WebHVAC &middot; the load calculation always runs in your browser &middot; your PDF is sent to a
-      server only when the page says <em>Reading PDFs on the server</em>.</p>
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <h3>WebHVAC</h3>
+      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, CFM and watts, in your browser.</p>
+      <p class="small"><a href="index.html">Home</a></p>
+    </div>
+    <div>
+      <h3>Pages</h3>
+      <ul>
+        <li><a href="app.html">Calculator</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="help.html">Help / FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Project</h3>
+      <ul>
+        <li><a href="https://github.com/ratul-sraj/hvac">Source on GitHub</a></li>
+        <li><a href="https://github.com/ratul-sraj/hvac">Report an issue</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap footer-bottom">
+    Simplified ASHRAE / Carrier E-20 style cooling load estimate.
+    <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or on your own server if you run <code>npm start</code>.
   </div>
 </footer>
 
-<script type="module" src="js/app.js"></script>
+<script src="js/nav.js" defer></script>
 </body>
 </html>

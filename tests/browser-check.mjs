@@ -26,7 +26,11 @@ const page = await browser.newPage();
 await page.setViewport({ width: 1400, height: 1000 });
 
 const consoleErrors = [];
-page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
+// A static host (GitHub Pages) has no /api/health, so the app's own availability probe
+// legitimately 404s there; browsers log that as a console error. It is not a page fault.
+const BENIGN = [/\bapi\/health\b/, /favicon\.ico/];
+const isBenign = (t) => BENIGN.some((re) => re.test(t));
+page.on("console", (m) => { if (m.type() === "error" && !isBenign(m.text())) consoleErrors.push(m.text()); });
 page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message));
 const failedRequests = [];
 page.on("requestfailed", (r) => failedRequests.push(`${r.url()} ${r.failure()?.errorText}`));

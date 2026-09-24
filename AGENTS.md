@@ -6,17 +6,31 @@ NO CDN links (everything must be local so it works offline and on Pages).
 
 ## File layout (each file has ONE owner — do not edit files you don't own)
 ```
-index.html            UI agent
-css/style.css         UI agent
-js/app.js             UI agent   (state, room table, events, rendering)
-js/report.js          UI agent   (printable report HTML + CSV export)
-js/calc.js            PLANNER — DONE, read-only. Load engine.
-js/pdfparse.js        PDF agent  (PDF -> rooms[])
-vendor/pdf.min.mjs, vendor/pdf.worker.min.mjs   pdf.js 4.10.38 — read-only
-tests/*.mjs           PDF agent  (node tests, run with `node tests/run.mjs`)
-tests/samples/*.pdf   PDF agent  (generated sample PDFs)
-.github/workflows/pages.yml   PLANNER
+index.html            PLANNER — the LANDING page (home page of the site)
+app.html              PLANNER — the CALCULATOR page; generated from the calculator source
+                      by `node tools/sync-app-page.mjs`, which injects the top nav
+about.html            LANDING worker — about the project
+method.html           LANDING worker — load method and assumptions in plain language
+help.html             LANDING worker — FAQ / how-to
+js/nav.js             PLANNER — shared top nav + hamburger menu (all pages)
+tools/check-nav.mjs   PLANNER — browser check for the nav on every page
+tools/keepalive.sh    PLANNER — git backup + server keepalive (run by a Hermes cron job)
+css/style.css         calculator page styles            css/landing.css   landing pages
+js/calc.js            PLANNER — load engine (read-only for workers)
+js/pdfparse.js        PDF agent — PDF -> rooms[] (also runs server-side in Node)
+js/app.js             UI agent  — calculator behaviour; uses the Express API when present
+js/report.js          UI agent  — printable report + CSV builders
+vendor/pdf.*.mjs      pdf.js 4.10.38 — read-only
+server.js lib/**      SERVER worker — Express server, /api/parse, /api/calc, /api/health
+Dockerfile, render.yaml, fly.toml, docker-compose.yml, .github/workflows/**  deploy configs
+docs/**               USER-GUIDE.md, DEMO-SCRIPT.md, INTERVIEW-NOTES.md, DEPLOY.md
+tests/*.mjs           node test suites (run.mjs = unit/PDF, api-test.mjs = API,
+                      browser-check.mjs = the calculator in a real browser,
+                      landing-check.mjs = the marketing pages, screenshots.mjs = docs images)
 ```
+The calculator page must keep the ids `#roomsTable`, `#btnSample`, `#summaryCards`,
+`#roomsBody`, `#filterName`, `#proj-country`, `#proj-city`, `#proj-outDb`, `#proj-outWb`
+— the browser checks drive them by id.
 
 ## Room object (shared contract)
 ```js

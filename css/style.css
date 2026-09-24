@@ -427,8 +427,10 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .nav-burger-text { font-size: 13px; }
 
 @media (max-width: 700px) {
-  nav.app-nav.js-nav .nav-burger { display: inline-flex; }
-  nav.app-nav.js-nav .app-nav-links { display: none; }
+  nav.app-nav.js-nav .app-nav-inner { flex-wrap: wrap; }
+  nav.app-nav.js-nav .app-nav-brand { order: 1; }
+  nav.app-nav.js-nav .nav-burger { display: inline-flex; order: 2; }
+  nav.app-nav.js-nav .app-nav-links { display: none; order: 3; }
   nav.app-nav.js-nav.nav-open .app-nav-links {
     display: flex;
     flex-direction: column;
