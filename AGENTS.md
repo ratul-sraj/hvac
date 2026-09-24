@@ -1,4 +1,4 @@
-# WebHVAC — cooling load calculator from PDF floor plans / room schedules
+# LoadLens (repo name: webhvac) — cooling load calculator from PDF floor plans, scans and room schedules
 
 Static web app (no server). Deployed with GitHub Pages from repo `ratul-sraj/hvac`.
 All processing happens in the browser. Plain HTML + CSS + ES modules. NO build step, NO frameworks,

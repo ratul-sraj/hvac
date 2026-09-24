@@ -1,4 +1,4 @@
-# WebHVAC — add OCR (scanned drawings) + Excel/CSV room-schedule import
+# LoadLens — OCR (scanned drawings) + Excel/CSV room-schedule import
 
 Two new input ways, on top of the existing PDF text-layer path:
 

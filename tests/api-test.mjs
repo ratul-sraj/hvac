@@ -1,4 +1,5 @@
-// API test suite for the WebHVAC server. Plain node, no test framework.
+// API test suite for the LoadLens server (the product was renamed from WebHVAC;
+// APP_NAME lives in lib/config.js). Plain node, no test framework.
 //   cd D:/webhvac && node tests/api-test.mjs      (or: npm run test:api)
 // Starts its own server on a free port with MAX_UPLOAD_MB=1, checks the HTTP
 // contract from AGENTS-SERVER.md, prints PASS/FAIL per check and exits 1 on
@@ -127,7 +128,7 @@ async function main() {
       assert.equal(res.status, 200);
       const j = await res.json();
       assert.equal(j.ok, true);
-      assert.equal(j.app, "WebHVAC");
+      assert.equal(j.app, "LoadLens", "the health endpoint reports the product name");
       assert.equal(j.serverSideParse, true);
       assert.equal(j.maxUploadMb, MAX_UPLOAD_MB);
       assert.ok(typeof j.version === "string" && j.version.length, "version");
@@ -270,11 +271,11 @@ async function main() {
     });
 
     // 12. UI is served --------------------------------------------------
-    await check("GET / -> the WebHVAC HTML", async () => {
+    await check("GET / -> the LoadLens HTML", async () => {
       const res = await fetch(base + "/");
       assert.equal(res.status, 200);
       const html = await res.text();
-      assert.ok(/WebHVAC/.test(html), "page mentions WebHVAC");
+      assert.ok(/LoadLens/.test(html), "page mentions LoadLens");
       assert.ok(/<html/i.test(html), "looks like HTML");
     });
 

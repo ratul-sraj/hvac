@@ -989,7 +989,7 @@ function finishUpload(added, skipped, failed, notes, serverError, readers, scann
   if (readerWords.length) msg += `Read by ${joinWords(readerWords)}. `;
   msg += notes.join(' | ');
   if (scanned) msg += ` ${SCANNED_MSG}`;
-    if (ocrEmpty) msg += ` ${OCR_NO_ROOMS_MSG}`;
+    if (ocrEmpty) msg += ` | ${OCR_NO_ROOMS_MSG}`;
     if (serverError) msg = `Server: ${serverError}. These files were read in your browser. ${msg}`;
     setStatus(scanned || ocrEmpty ? 'warn' : (failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok')), msg);
 }

@@ -1,4 +1,4 @@
-# WebHVAC — Express + Node server (second way to run the same app)
+# LoadLens — Express + Node server (second way to run the same app)
 
 The app already works as a pure static site (GitHub Pages). This adds a Node/Express
 server that serves the same UI AND does the PDF reading on the server.
