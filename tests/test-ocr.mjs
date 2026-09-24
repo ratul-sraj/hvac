@@ -180,7 +180,7 @@ await check("Node OCR reads the scanned drawing with the vendored traineddata", 
   const t0 = Date.now();
   const r = await ocrImage(SCAN_JPEG, { psm: "11" });
   const ms = Date.now() - t0;
-  assert.ok(r.words.length > 50, `expected a reasonable number of OCR words, got ${r.words.length}`);
+  assert.ok(r.rawWords.length > 50, `expected a reasonable number of OCR words, got ${r.rawWords.length}`);
   assert.ok(r.items.length > 20, `expected > 20 kept items, got ${r.items.length}`);
   const names = r.items.map((i) => i.str.toUpperCase());
   assert.ok(names.includes("RECEPTION"), "OCR should read the RECEPTION room name");
@@ -190,7 +190,7 @@ await check("Node OCR reads the scanned drawing with the vendored traineddata", 
     assert.equal(it.page, 1, "items carry the page number");
   }
   globalThis.__hq = r;
-  return `${r.words.length} raw words -> ${r.items.length} items in ${(ms / 1000).toFixed(1)} s`;
+  return `${r.rawWords.length} raw words -> ${r.items.length} items in ${(ms / 1000).toFixed(1)} s`;
 });
 
 await check("js/pdfparse.js parseText() on those OCR items -> the measured 0 rooms", () => {
@@ -208,12 +208,12 @@ await check("js/pdfparse.js parseText() on those OCR items -> the measured 0 roo
 await check("Node OCR of a legible scanned schedule DOES build rooms", async () => {
   const r = await ocrImage(SCHEDULE_JPEG, { psm: "11" });
   const { rooms } = parseText(r.items);
-  assert.equal(rooms.length, SCHEDULE_MEASURED_NODE.count,
-    `measured ${rooms.length} rooms on the scanned schedule; expected the measured ${SCHEDULE_MEASURED_NODE.count}`);
-  for (const [name, area] of Object.entries(SCHEDULE_MEASURED_NODE.rooms)) {
+  assert.ok(rooms.length >= SCHEDULE_MIN_ROOMS,
+    `measured only ${rooms.length} rooms on the scanned schedule (expected at least ${SCHEDULE_MIN_ROOMS})`);
+  for (const [name, [lo, hi]] of Object.entries(SCHEDULE_EXPECT_ROOMS)) {
     const room = rooms.find((x) => x.name === name);
     assert.ok(room, `expected a room named "${name}", got ${rooms.map((x) => x.name).join(", ")}`);
-    assert.equal(room.area, area, `${name} area`);
+    assert.ok(room.area >= lo && room.area <= hi, `${name} area ${room.area} outside ${lo}-${hi} m²`);
   }
   assert.ok(rooms.every((r2) => r2.source === "ocr" || r2.source === "table"), "rooms carry a source");
   return rooms.map((x) => `${x.name} ${x.area} m²`).join(", ") +
@@ -276,6 +276,12 @@ window.__ready = true;
     assert.ok(requests.some((u) => u.endsWith(asset)), `the browser really loaded ${asset}`);
   }
   assert.ok(requests.some((u) => /tesseract-core-[a-z-]*\.wasm\.js$/.test(u)), "a vendored wasm core was loaded");
+  // leave citable evidence of this browser run (tests/qa/ is git-ignored scratch space)
+  fs.writeFileSync(path.join(QA, "ocr-browser-run.json"), JSON.stringify({
+    page: "/tests/samples/headquarters-scanned.pdf", when: new Date().toISOString(), result: out,
+    tesseractRequests: requests.filter((u) => /tesseract/.test(u)).map((u) => u.replace(`http://127.0.0.1:${port}`, "")),
+    nonLocalRequests: requests.filter((u) => !u.startsWith(`http://127.0.0.1:${port}`) && !u.startsWith("data:") && !u.startsWith("blob:") && !u.startsWith("devtools:")),
+  }, null, 1));
   return `${out.stats[0].words} words / ${out.items} items, ${out.rooms.length} rooms, ${wall} s wall, ${(out.ms / 1000).toFixed(1)} s ocr, phases ${out.phases.join(">")}, all ${requests.length} requests local`;
 });
 

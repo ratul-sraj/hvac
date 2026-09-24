@@ -2,17 +2,23 @@
 //
 //   export function isProbablyScanned(items, { minItems = 12 }) -> boolean
 //   export async function ocrPdfPage({ pdfjs, page, pageNo, scale, langs, onProgress })
-//        -> { items, words, ms, rotation, warnings }
-//   export async function ocrPdf(arrayBuffer, { pdfjs, onProgress, langs, force })
-//        -> { rooms, pages, text, warnings, items, usedOcr, rotations, ms }
+//        -> { items, words, rawWords, dropped, ms, rotation, raster, warnings }
+//   export async function ocrPdf(arrayBuffer, { pdfjs, onProgress, langs, force, maxEdge })
+//        -> { rooms, pages, text, warnings, items, usedOcr, rotations, stats, ms }
 //   export function configureOcr({ workerPath, corePath, langPath, logger, ... }) -> void
-//   export async function ocrImage(source, { langs, onProgress }) -> { items, words, ms, rotation: 0 }
+//   export function ocrConfig() -> resolved configuration (debugging / tests)
+//   export function isJunkWord(str) -> boolean          // the pre-filter used on OCR words
+//   export function unrotateBox(box, deg, w, h)          // rotated-raster -> page frame maths
+//
+// Extras used by tests and any Node caller:
+//   export async function ocrImage(source, {...}) -> { rawWords, items, dropped, ms, ... }
 //   export async function terminateOcr() -> void
 //
 // How it works
 //  1. A pdf.js page is rendered to an OffscreenCanvas (or a detached <canvas>) with
 //     page.getViewport({ scale }) — this already undoes the sheet's /Rotate, so a 90°-rotated
-//     sheet comes out upright. The long edge is capped (MEGA pixels are what kills OCR jobs).
+//     sheet comes out upright. The long edge is capped (a ~4000 px long edge is where OCR stops
+//     being worth the memory: scale 4 on an A1 sheet would be a 250 MB raster).
 //  2. The raster goes to tesseract.js (vendored under vendor/tesseract/, no CDN at runtime)
 //     asking for word bounding boxes.
 //  3. Words with confidence < 40 and the sheet/duct junk annotations are dropped, and the rest
@@ -21,9 +27,12 @@
 //     so OCR items and text-layer items are directly comparable.
 //  4. Rooms are made by parseText() from js/pdfparse.js — the room rules live in ONE place.
 //
-// Rotation: if the first pass finds almost nothing (a scan of a sideways drawing), the raster is
-// re-OCR'd at 90/180/270 and the orientation with the most words wins; the chosen rotation is
-// reported on `rotation` and explained in `warnings`.
+// Rotation: if the upright pass finds almost no readable words (a scan of a sideways drawing),
+// the raster is re-read at 90/180/270 and the orientation with the most readable words wins; the
+// chosen rotation is reported on `rotation` and explained in `warnings`. Items stay in the frame
+// the words were READ in (readable, like a person turning the sheet) — that is where
+// pdfparse's "the room name sits above the area" rule holds; set `mapRotationBack: true` to get
+// them back in the page frame instead.
 //
 // tesseract.js is loaded lazily (only when OCR is actually used) with a dynamic import, so a
 // browser that never ticks "read scanned drawings" never downloads the wasm core.
@@ -342,12 +351,12 @@ export async function ocrImage(source, {
   const opts = {};
   if (psm !== undefined) opts.tessedit_pageseg_mode = String(psm);
   const res = await worker.recognize(source, opts, out);
-  const raw = wordsFromBlocks(res.data);
-  const words = raw.length ? raw : wordsFromTsv(res.data.tsv);
-  const { items, dropped } = toItems(words, { page, scale, rotation, rasterW, rasterH });
+  const fromBlocks = wordsFromBlocks(res.data);
+  const rawWords = fromBlocks.length ? fromBlocks : wordsFromTsv(res.data.tsv);
+  const { items, dropped } = toItems(rawWords, { page, scale, rotation, rasterW, rasterH });
   const ms = Date.now() - t0;
   if (typeof onProgress === "function") onProgress({ phase: "ocr", page: page, pages: 1, progress: 1 });
-  return { words, items, dropped, raw: res.data, ms, scale, rotation, page };
+  return { rawWords, items, dropped, raw: res.data, ms, scale, rotation, page };
 }
 
 /** Words -> js/pdfparse.js items, dropping low-confidence and junk words. */
@@ -423,7 +432,7 @@ export async function ocrPdfPage({
       onProgress: (p) => report(deg ? "rotate" : "ocr", p.progress),
     });
     const result = {
-      items: raw.items, words: raw.items.length, rawWords: raw.words.length,
+      items: raw.items, words: raw.items.length, rawWords: raw.rawWords.length,
       dropped: raw.dropped, rotation: deg, ms: raw.ms, alpha: readableWords(raw.items),
     };
     if (!best || result.alpha > best.alpha || (result.alpha === best.alpha && result.words > best.words)) best = result;

@@ -227,7 +227,12 @@ function parseSchedule(items, levelByPage, warnings) {
     const cells = row.items.map((it) => it.str);
     if (!cells.length) continue;
     const plain = row.text;
-    if (HEAD_NAME.test(plain) && HEAD_AREA.test(plain)) continue; // repeated header
+    // Skip a REPEATED HEADER row only when it really looks like a header: at least two
+    // header-ish cells and nothing that parses as a number/area. A data row such as
+    // "Meeting Room  27.0 m2" also contains a name word and "m2" and must NOT be dropped.
+    const headerCells = cells.filter((c) => HEAD_NAME.test(c) || HEAD_AREA.test(c) || HEAD_DIM.test(c)).length;
+    const looksNumeric = cells.some((c) => parseAreaToken(c) || /^\s*\d+([.,]\d+)?\s*$/.test(c));
+    if (headerCells >= 2 && !looksNumeric) continue;             // repeated header
     if (!/[A-Za-z]{2}/.test(plain)) continue;                    // no name text at all
 
     let name = "", number = "", area = 0, length = 0, width = 0;
