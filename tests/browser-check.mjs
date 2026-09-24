@@ -1,4 +1,4 @@
-// Real-browser check of a WebHVAC deployment using the Edge already on this PC.
+// Real-browser check of a LoadLens deployment using the Edge already on this PC.
 //   cd D:/webhvac && node tests/browser-check.mjs [url-of-the-calculator-page]
 // Default = the local Express server's calculator page. Uses puppeteer-core (no download).
 import fs from "node:fs";
@@ -39,7 +39,7 @@ try {
   // 1. load
   const resp = await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
   ok("site loads", resp && resp.status() === 200, `HTTP ${resp && resp.status()} in ${URL_}`);
-  ok("title", (await page.title()).includes("WebHVAC"), await page.title());
+  ok("title", (await page.title()).includes("LoadLens"), await page.title());
 
   // 2. no console errors on load
   ok("no console errors on load", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));

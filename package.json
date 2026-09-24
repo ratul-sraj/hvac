@@ -1,6 +1,6 @@
 {
   "type": "module",
-  "name": "webhvac",
+  "name": "loadlens",
   "version": "1.0.0",
   "private": true,
   "description": "HVAC cooling-load calculator from PDF floor plans / room schedules (static UI + optional Express server that parses PDFs server-side)",

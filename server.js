@@ -1,4 +1,4 @@
-// WebHVAC server: serves the static UI and reads PDF drawings on the server.
+// LoadLens server: serves the static UI and reads PDF drawings on the server.
 //   npm start                 -> http://localhost:3000/
 //   PORT=8080 npm start       -> custom port
 //   MAX_UPLOAD_MB=50 npm start-> bigger uploads (default 25 MB per file)
@@ -16,7 +16,7 @@ export function startServer({ port = config.port, host = config.host } = {}) {
       const addr = server.address();
       const actual = typeof addr === "object" && addr ? addr.port : port;
       console.log(
-        `WebHVAC listening on http://localhost:${actual} ` +
+        `LoadLens listening on http://localhost:${actual} ` +
           `(root ${ROOT}, max ${config.maxUploadMb} MB per file, ${config.maxFiles} files)`
       );
       resolve({ server, app, port: actual });
@@ -42,7 +42,7 @@ if (isDirect) {
   const shutdown = async (signal) => {
     if (closing) return;
     closing = true;
-    console.log(`\nWebHVAC: ${signal} received, closing server ...`);
+    console.log(`\nLoadLens: ${signal} received, closing server ...`);
     const force = setTimeout(() => process.exit(0), 5000);
     force.unref?.();
     await closeServer(server);
@@ -51,6 +51,6 @@ if (isDirect) {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("unhandledRejection", (err) => {
-    console.error("WebHVAC: unhandled rejection:", err);
+    console.error("LoadLens: unhandled rejection:", err);
   });
 }

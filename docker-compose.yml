@@ -1,4 +1,4 @@
-# WebHVAC — run the optional Express server (static UI + server-side PDF parsing)
+# LoadLens — run the optional Express server (static UI + server-side PDF parsing)
 # on your own machine with one command.
 #
 #   docker compose up -d          build (first time) and start in the background
@@ -9,10 +9,10 @@
 # The image comes from ./Dockerfile (node:22-alpine, listens on 3000, runs as the
 # unprivileged "node" user). No database and no secrets are needed.
 services:
-  webhvac:
+  loadlens:
     build: .
-    image: webhvac:local
-    container_name: webhvac
+    image: loadlens:local
+    container_name: loadlens
     # host port 3000 -> container port 3000 (change the left number if 3000 is busy:
     # "8080:3000" makes it http://localhost:8080)
     ports:

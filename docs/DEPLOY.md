@@ -1,4 +1,4 @@
-# Deploying WebHVAC — a simple guide
+# Deploying LoadLens — a simple guide
 
 This guide is written for someone who is new to servers. You do not need to be a
 programmer to follow it. Take it one section at a time.
@@ -7,7 +7,7 @@ programmer to follow it. Take it one section at a time.
 
 ## First, what does "deploy" mean here?
 
-WebHVAC is one program. It has two parts:
+LoadLens is one program. It has two parts:
 
 1. **The pages** (HTML, CSS, JavaScript) — the calculator screen you see in the
    browser, plus the PDF drawing files it can read.
@@ -52,7 +52,7 @@ Now open this in your browser:
 http://localhost:3000
 ```
 
-You should see the WebHVAC page. Upload a PDF and it will be read by the server.
+You should see the LoadLens page. Upload a PDF and it will be read by the server.
 To stop the server press **Ctrl + C** in the terminal window.
 
 ### Let another device on the same Wi-Fi open it
@@ -132,11 +132,11 @@ by itself. Steps:
 3. Connect your GitHub account if asked, then pick the repository
    **`ratul-sraj/hvac`**.
 4. Render reads `render.yaml` and shows a summary (one web service named
-   `webhvac`, Docker, free plan). Click **Apply**.
+   `loadlens`, Docker, free plan). Click **Apply**.
 5. Wait for the first build. It takes a few minutes — watch the log on screen.
    When it says the service is live, you are done.
 6. Your address is shown at the top of the service page, like
-   `https://webhvac.onrender.com`. Open it.
+   `https://loadlens.onrender.com`. Open it.
 
 To change the maximum PDF size later, open the service in Render, go to
 **Environment**, edit `MAX_UPLOAD_MB`, and save. Render will restart the service.
@@ -177,7 +177,7 @@ fly open                    # opens your live https address
 
 The app name in `fly.toml` must be unique across all of Fly. If the name is taken,
 `fly launch` picks another one — update the `app = "..."` line in `fly.toml` to
-match. To stop spending the free allowance, run `fly apps destroy webhvac`.
+match. To stop spending the free allowance, run `fly apps destroy loadlens`.
 
 ---
 

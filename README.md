@@ -1,7 +1,8 @@
-# WebHVAC server — optional Express server
+# LoadLens server — optional Express server
 
-WebHVAC is a small cooling-load calculator: you give it a PDF floor plan / room schedule (or type
-the rooms yourself), it reads the rooms and estimates the cooling load (TR, W, L/s).
+LoadLens is a small cooling-load calculator: you give it a PDF floor plan, a scanned sheet (browser
+OCR) or an Excel / CSV room schedule (or type the rooms yourself), it reads the rooms and estimates
+the cooling load (TR, W, L/s).
 
 The app works **two ways**, and both keep working:
 
@@ -13,6 +14,13 @@ The app works **two ways**, and both keep working:
 When the page is opened through this server it asks `GET /api/health` once and, if the server
 answers, uploads the PDFs to the server instead of parsing them locally. If the server is missing
 (GitHub Pages) or a call fails, the browser falls back to local parsing automatically.
+
+### Inputs
+
+The drop zone accepts **`.pdf`, `.csv`, `.tsv` and `.xlsx`**. Room schedules and the optional
+**"Read scanned drawings with OCR (slow)"** checkbox always run **in the browser**, even when this
+server is present (the server parses text-layer PDFs only). The room table's **Source** column shows
+where each row came from: `CSV/Excel`, `OCR`, `PDF` or `manual`.
 
 ## Run it
 
@@ -50,7 +58,7 @@ All endpoints return JSON. Errors are `{ "error": "message" }` with a proper sta
 
 ```bash
 curl -s http://localhost:3000/api/health
-# {"ok":true,"app":"WebHVAC","version":"1.0.0-server","node":"v22.23.2",
+# {"ok":true,"app":"LoadLens","version":"1.0.0-server","node":"v22.23.2",
 #  "uptimeSec":3,"maxUploadMb":25,"serverSideParse":true}
 ```
 
@@ -135,8 +143,8 @@ fails). It exits `1` if anything fails.
 ### Docker
 
 ```bash
-docker build -t webhvac .
-docker run --rm -p 3000:3000 -e MAX_UPLOAD_MB=25 webhvac
+docker build -t loadlens .
+docker run --rm -p 3000:3000 -e MAX_UPLOAD_MB=25 loadlens
 # http://localhost:3000/
 ```
 
@@ -157,8 +165,13 @@ That version parses PDFs in the browser, so nothing breaks if you never run this
 
 ## Limits — please read
 
-- **Text-layer PDFs only.** Scanned drawings (images) have no text to read; there is no OCR. If a
-  PDF has no text layer the parse returns no rooms and you must type the rooms in.
+- **Text-layer PDFs and room schedules.** The best input is a text-layer PDF (exported from CAD) or
+  an Excel / CSV room schedule (`.csv`, `.tsv`, `.xlsx`). The server parses text-layer PDFs only. A
+  scanned or image-only drawing can be read **in the browser** with the optional *"Read scanned
+  drawings with OCR (slow)"* box, but OCR is slow (~4 s per page, and it downloads ~11 MB of wasm
+  from this site on first use) and the small area labels on a scanned drawing usually cannot be read
+  back — for a scanned sheet, import the Excel / CSV room schedule instead. Everything runs locally;
+  nothing is uploaded to a third party.
 - **The load method is handbook level.** The numbers come from a simplified handbook method
   (solar, wall ETD, people, lighting, equipment, infiltration). They are an estimate for early
   sizing, **not** a substitute for a proper load calculation — an engineer must check the input

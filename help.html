@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebHVAC — Help and FAQ</title>
+<title>Help and FAQ — LoadLens</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta name="description" content="WebHVAC help: which PDFs work and which do not (scans need OCR), how to fix a wrong room, what Include does, what to change when the load looks too high or low, where the numbers are in the report, and where your files go.">
+<meta name="description" content="LoadLens help: which files work (text-layer PDFs, Excel/CSV room schedules, scanned sheets with OCR), how to fix a wrong room, what Include does, what to change when the load looks too high or low, where the numbers are in the report, and where your files go.">
 <link rel="stylesheet" href="css/landing.css">
 </head>
 <body>
@@ -18,7 +18,7 @@
         <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
       </svg>
-      <span class="brand-text">WebHVAC<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+      <span class="brand-text">LoadLens<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
     </div>
     <nav class="nav-links" aria-label="Main">
       <a href="app.html">Calculator</a>
@@ -43,10 +43,12 @@
 
   <section class="section" id="pdfs">
     <div class="wrap prose">
-      <h2>Which PDFs work</h2>
+      <h2>What you can upload</h2>
       <p>
-        WebHVAC reads the <strong>text layer</strong> of the PDF &mdash; the real, selectable text that a
-        drafting program writes into the file. Two kinds of drawing work well:
+        LoadLens reads the <strong>text layer</strong> of a PDF &mdash; the real, selectable text that a
+        drafting program writes into the file. It also imports an <strong>Excel / CSV room schedule</strong>
+        directly, and it can read a <strong>scanned sheet</strong> with the optional OCR box. Three kinds
+        of input work well:
       </p>
       <div class="cols2">
         <div class="panel">
@@ -66,6 +68,27 @@
             <li>Upload the schedule page and the plan pages together; rooms found are added to the table.</li>
           </ul>
         </div>
+        <div class="panel">
+          <h3>Works: an Excel / CSV room schedule</h3>
+          <ul>
+            <li>Export the room schedule from Revit or Excel and drop the <em>.csv</em>, <em>.tsv</em> or
+              <em>.xlsx</em> file on the page. The drop zone accepts all four file types.</li>
+            <li>No PDF text and no OCR needed &mdash; the most accurate way in, and the best answer for a
+              scanned drawing.</li>
+            <li>The room table's <em>Source</em> column shows <em>CSV/Excel</em> for these rows.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Works with limits: a scanned sheet (OCR)</h3>
+          <ul>
+            <li>Tick <em>Read scanned drawings with OCR (slow)</em> for a scan, a photo or an image-only plot.</li>
+            <li>A legible scanned <strong>schedule</strong> reads well &mdash; Office 27 m&sup2;,
+              Conference 48 m&sup2;, Store about 2.9 m&sup2; came through in testing.</li>
+            <li>A scanned <strong>drawing</strong> currently comes back with <strong>0 rooms</strong> &mdash;
+              the small m&sup2; area labels are not recoverable. The page says so and suggests the better
+              route: import the Excel / CSV room schedule.</li>
+          </ul>
+        </div>
       </div>
     </div>
   </section>
@@ -78,23 +101,61 @@
       <div class="faq">
 
         <details>
-          <summary>Why does a scanned drawing find no rooms? Do I need OCR?</summary>
+          <summary>Why does a scanned drawing find no rooms? What does the OCR box do?</summary>
           <p>
             A scan, a photo, or a PDF plotted to an image has <strong>no text layer</strong> &mdash; it is
-            just a picture of a drawing. There is nothing for WebHVAC to read, so it will report that it
-            found no rooms. The same is true for an image-only plot or a drawing where the room labels were
+            just a picture of a drawing. There is nothing for LoadLens to read as text, so the normal reader
+            reports no rooms. The same is true for an image-only plot or a drawing where the room labels were
             converted to outlines.
           </p>
-          <p>To use a scanned drawing you need OCR (optical character recognition) first:</p>
+          <p>
+            Tick <strong>"Read scanned drawings with OCR (slow)"</strong> in the upload panel to read such a
+            sheet with OCR. What to expect, honestly:
+          </p>
           <ul>
-            <li>Run the scan through an OCR tool that can output a PDF with a text layer, then upload that.</li>
-            <li>Or ask the architect / drafter for the original vector PDF &mdash; that is always the better answer.</li>
-            <li>Or use <strong>Add room manually</strong> and type the rooms from the print. For a small job
-              that is often faster than fixing OCR.</li>
+            <li>OCR is <strong>off by default</strong> and only runs when you tick the box.</li>
+            <li>The first time you use it, the page downloads about <strong>11 MB</strong> of OCR engine
+              from <em>this</em> site. Nothing goes to a third party; the reading happens in your browser.</li>
+            <li>It is slow: about <strong>4 seconds per page</strong>, and up to about
+              <strong>12 seconds</strong> when it has to search for the page rotation.</li>
+            <li>A legible scanned <strong>schedule</strong> reads well &mdash; in testing the Office
+              (27 m&sup2;), Conference (48 m&sup2;) and Store (about 2.9 m&sup2;) rows came back with their areas.</li>
+            <li>A scanned <strong>drawing</strong> currently comes back with <strong>0 rooms</strong>: OCR can
+              read large text, but the small m&sup2; area labels on a scanned plan are usually not recoverable.
+              When that happens the status line tells you so and points you at the schedule import below.</li>
           </ul>
+          <p>
+            <strong>The better answer for a scanned sheet:</strong> ask the architect / drafter for the original
+            vector PDF, or for the room schedule as <em>.xlsx</em> / <em>.csv</em> and import that. It needs no
+            OCR and it is the most accurate input. For a small job, <strong>Add room manually</strong> may also
+            be faster than fixing OCR.
+          </p>
           <p class="muted small">
             Quick test: open the PDF and try to select the text of a room name with the mouse. If you can
-            select it, WebHVAC can read it. If you cannot, it is an image.
+            select it, LoadLens can read it. If you cannot, it is an image &mdash; use OCR or the schedule import.
+          </p>
+        </details>
+
+        <details>
+          <summary>How do I import an Excel or CSV room schedule?</summary>
+          <p>
+            Export the room schedule from Revit or Excel as <em>.xlsx</em>, <em>.csv</em> or <em>.tsv</em>,
+            then drag that file onto the same drop zone you use for PDFs &mdash; it accepts
+            <em>.pdf</em>, <em>.csv</em>, <em>.tsv</em> and <em>.xlsx</em>.
+          </p>
+          <ul>
+            <li>The reader looks for a header row with room name, area, level, room number and so on. Ordinary
+              schedule headings (Room / Space Name, Area, Level, Room No., Type, People) are understood.</li>
+            <li>Areas in m&sup2; or ft&sup2; both work, and dimensions like <em>4500x3600</em> or
+              <em>6.0 x 4.5</em> are turned into an area.</li>
+            <li>Rows whose name looks like a toilet, shaft or store are set to <em>not air conditioned</em>
+              by default &mdash; check the <em>In</em> tick.</li>
+            <li>The <em>Source</em> column of each row shows <em>CSV/Excel</em>, so you can see which rows came
+              from the sheet.</li>
+          </ul>
+          <p class="muted small">
+            This is the recommended path for a scanned drawing: the schedule gives clean names and areas,
+            where OCR on the drawing cannot.
           </p>
         </details>
 
@@ -176,11 +237,15 @@
           </p>
           <ul>
             <li><strong>Static version (GitHub Pages):</strong> the PDF is read by pdf.js inside your own
-              browser tab. The file never leaves your computer and no network request carries it.</li>
+              browser tab, and an Excel / CSV room schedule is read there too. The file never leaves your
+              computer and no network request carries it.</li>
             <li><strong>Local server version (you ran <code>npm start</code>):</strong> the PDF is posted to
               <code>http://localhost:3000</code> &mdash; your own machine &mdash; parsed there and not stored.
-              The page tells you which mode it is in: <em>Reading PDFs in your browser</em> or
-              <em>Reading PDFs on the server</em>.</li>
+              Room schedules and OCR still run in the browser. The page tells you which mode it is in:
+              <em>Reading PDFs in your browser</em> or <em>Reading PDFs on the server</em>.</li>
+            <li><strong>OCR (optional):</strong> the OCR engine (about 11 MB of wasm) is downloaded once from
+              this same site, not from a CDN, and the reading happens in your browser. Your file is never
+              uploaded to a third party.</li>
           </ul>
           <p>
             Your project (rooms and settings) is saved in your browser's own local storage so a reload
@@ -224,7 +289,7 @@
 <footer class="site-footer">
   <div class="wrap footer-grid">
     <div>
-      <h3>WebHVAC</h3>
+      <h3>LoadLens</h3>
       <p>Room-wise cooling load from a floor plan PDF &mdash; TR, L/s and watts, in your browser.</p>
       <p class="small"><a href="index.html">Home</a></p>
     </div>

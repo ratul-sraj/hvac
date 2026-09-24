@@ -1,4 +1,4 @@
-# Fly.io configuration for WebHVAC.
+# Fly.io configuration for LoadLens.
 #
 # Commands (run from the repo root, after installing flyctl and `fly auth login`):
 #   fly launch --no-deploy     create the app from this file (do NOT let it rewrite it)
@@ -8,9 +8,9 @@
 #   fly apps destroy <name>    delete the app when you are done
 #
 # "app" MUST be globally unique on Fly. If the name is taken, `fly launch` will
-# pick another one — update this line to match, or set a name like webhvac-<yourname>.
+# pick another one — update this line to match, or set a name like loadlens-<yourname>.
 
-app = "webhvac"
+app = "loadlens"
 primary_region = "sin"          # Singapore: closest Fly region to Kerala
 
 [build]

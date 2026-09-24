@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebHVAC — Cooling load from a floor plan PDF</title>
+<title>LoadLens — cooling load from a floor plan PDF</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta name="description" content="WebHVAC reads a floor plan PDF or room schedule and gives the room-wise HVAC cooling load in TR, L/s and watts. Runs in your browser, nothing is uploaded to a third party.">
+<meta name="description" content="LoadLens — cooling load from a floor plan PDF. It reads a floor plan PDF, an Excel/CSV room schedule or a scanned sheet (optional OCR) and gives the room-wise HVAC cooling load in TR, L/s and watts. Runs in your browser, nothing is uploaded to a third party.">
 <link rel="stylesheet" href="css/landing.css">
 </head>
 <body>
@@ -18,7 +18,7 @@
         <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
       </svg>
-      <span class="brand-text">WebHVAC<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+      <span class="brand-text">LoadLens<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
     </div>
     <nav class="nav-links" aria-label="Main">
       <a href="app.html">Calculator</a>
@@ -37,9 +37,9 @@
       <div>
         <h1>Read a floor plan PDF, get the <span class="hl">room-wise cooling load</span></h1>
         <p class="lead">
-          WebHVAC reads the room names, areas and levels already written in your drawing or room schedule,
-          then calculates the cooling load room by room and gives you <strong>TR</strong>, <strong>L/s</strong>
-          and watts. No CAD, no spreadsheet, no sign-up.
+          LoadLens — cooling load from a floor plan PDF. It reads the room names, areas and levels
+                    already written in your drawing or room schedule, then calculates the cooling load room by room
+                    and gives you <strong>TR</strong>, <strong>L/s</strong> and watts. No CAD, no spreadsheet, no sign-up.
         </p>
         <div class="hero-cta">
           <a class="btn btn-lg" id="hero-cta" href="app.html">Open the calculator</a>
@@ -103,8 +103,9 @@
         <li>
           <h3>Upload the floor plan PDF</h3>
           <p>
-            Drop one or many PDFs (or your room schedule). WebHVAC reads the text layer and pulls out
-            the room name, number, level and area it finds. It works in your browser &mdash; no upload to a third party.
+            Drop one or many PDFs, a scanned sheet, or your room schedule (.csv / .tsv / .xlsx). LoadLens
+                        reads the text layer and pulls out the room name, number, level and area it finds. It works in
+                        your browser &mdash; no upload to a third party.
           </p>
         </li>
         <li>
@@ -135,7 +136,8 @@
       <ul class="features">
         <li>
           <h3>Room name, area and level extraction</h3>
-          <p>Reads text-layer PDFs: room tags drawn on the plan, or a room schedule table.</p>
+          <p>Reads text-layer PDFs: room tags drawn on the plan, or a room schedule table. It also imports
+            Excel / CSV room schedules directly, and can read a scanned sheet with the optional OCR box.</p>
         </li>
         <li>
           <h3>Editable room table</h3>
@@ -203,9 +205,10 @@
         <h2>What this tool does not do &mdash; please read</h2>
         <ul>
           <li>
-            <strong>Text-layer PDFs only.</strong> The drawing must contain real text (exported from CAD or a
-            drafting tool, or a typed room schedule). A scan, a photo or an image-only plot has no text layer:
-            WebHVAC will find nothing. Those need OCR first.
+            <strong>A scanned drawing needs help.</strong> The best input is a text-layer PDF (exported from CAD
+                        or a drafting tool) or an Excel / CSV room schedule. LoadLens can also read a scanned or image
+                        PDF with the optional OCR box, but OCR is slow and the small area labels on a scanned drawing
+                        usually cannot be read back &mdash; for a scan, import the Excel / CSV room schedule instead.
           </li>
           <li>
             <strong>The load method is handbook-level.</strong> It is a simplified ASHRAE / Carrier E-20 style
@@ -231,7 +234,7 @@
 <footer class="site-footer">
   <div class="wrap footer-grid">
     <div>
-      <h3>WebHVAC</h3>
+      <h3>LoadLens</h3>
       <p>Room-wise cooling load from a floor plan PDF &mdash; TR, L/s and watts, in your browser.</p>
       <p class="small"><a href="index.html">Home</a></p>
     </div>

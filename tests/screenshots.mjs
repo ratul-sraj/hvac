@@ -1,4 +1,4 @@
-// WebHVAC — take the documentation screenshots (docs/img/*.png) from a running copy of the app.
+// LoadLens — take the documentation screenshots (docs/img/*.png) from a running copy of the app.
 //
 //   cd D:/webhvac
 //   node tests/screenshots.mjs [appBaseUrl] [docsBaseUrl]

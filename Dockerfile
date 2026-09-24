@@ -1,4 +1,4 @@
-# WebHVAC server image: the static UI plus server-side PDF parsing.
+# LoadLens server image: the static UI plus server-side PDF parsing.
 FROM node:22-alpine
 
 ENV NODE_ENV=production \

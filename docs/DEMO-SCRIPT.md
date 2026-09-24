@@ -1,4 +1,4 @@
-# WebHVAC — 5-minute live demo script
+# LoadLens — 5-minute live demo script
 
 For presenting the project live: to an interview panel, a mentor at the academy, or a colleague.
 Everything below is real output from the app running on this PC. Keep the browser at full screen,
@@ -36,7 +36,7 @@ Numbers to remember before you speak (real, from `tests/samples/headquarters.pdf
 
 ### 0:00 – 0:30 — the hook (do not touch the mouse)
 
-> "This is WebHVAC. It takes a floor plan PDF — the kind of drawing we get from the architect —
+> "This is LoadLens. It takes a floor plan PDF — the kind of drawing we get from the architect —
 > reads the rooms out of it, applies cooling-load theory to each room, and gives you the cooling
 > load in tonnes of refrigeration, the supply air in L/s and a room-wise sheet you can hand over.
 > Let me show you with a real three-floor building."
@@ -104,9 +104,9 @@ PDF report** and let the report window appear (do not print).
 
 > "Two things I want to be clear about. This is a **handbook-level estimate**, not a design
 > calculation — peak solar, sol-air ETD, no hourly simulation, no duct sizing, no psychrometric
-> chart, no coil selection. For a signed job you still use HAP or Carrier or TRACE. And it reads
-> the **text layer** of the PDF — a scanned drawing has no text, so there it finds nothing and you
-> type the rooms in. Within those limits, in a few seconds it turns a drawing I would normally read
+chart, no coil selection. For a signed job you still use HAP or Carrier or TRACE. And it reads
+> the **text layer** of the PDF — a scanned drawing has no text, so for a scan you either import the
+> room schedule as Excel/CSV (much better) or tick the OCR box. Within those limits, in a few seconds it turns a drawing I would normally read
 > by hand into a 93-room load sheet with the whole calculation shown line by line."
 
 ---
@@ -122,8 +122,9 @@ click the **ATRIUM** row → say the numbers → stop.
 > supply air and **3,970 L/s** of fresh air at the Kochi design condition of 35 dry bulb and 28 wet
 > bulb. This panel is one room's breakdown — solar, wall, roof, people, lighting, equipment,
 > infiltration, fresh air, sensible and latent, with percentages. Everything is editable, and the
-> CSV or a printed report comes straight out. It is a handbook-level estimate for early sizing, not
-> a replacement for HAP — and it needs a text PDF, because there is no OCR."
+CSV or a printed report comes straight out. It is a handbook-level estimate for early sizing, not
+> a replacement for HAP — and for a scanned sheet it needs the room schedule as Excel/CSV, or the
+> optional OCR."
 
 ---
 
@@ -145,16 +146,20 @@ shows them on the Method page and in the printed report's "Assumptions used" sec
 areas, names and levels come from the text in the PDF you upload.
 
 **Does it handle scanned drawings?**
-No. It reads the PDF's text layer; a scanned or photographed drawing has no text, so there is no
-OCR and it finds nothing. Open the PDF, try to select a room name with the mouse — if you cannot,
-nothing can read it. Upload the vector PDF exported from AutoCAD/Revit instead, or the room
-schedule sheet, or type the rooms in by hand.
+Partly, and honestly. It reads the PDF's text layer first; a scanned or photographed drawing has no
+text, so the normal reader finds nothing. Two better options exist. **Best:** export the room
+schedule from Revit/Excel and drop the `.xlsx` / `.csv` on the page — it needs no OCR and is the most
+accurate input. **Alternative:** tick the *"Read scanned drawings with OCR (slow)"* box, which reads
+the page in the browser with Tesseract (off by default, ~4 s per page, ~11 MB downloaded from this
+site on first use). A legible scanned **schedule** OCRs into real rooms (Office 27 m², Conference
+48 m², Store ~2.9 m²), but a scanned **drawing** currently comes back with 0 rooms, because the small
+area labels cannot be recovered — the page says so and points you at the schedule import. Keep the
+mouse test: open the PDF, try to select a room name. If you cannot select it, it is an image.
 
 **Can it read Revit schedules?**
-Not the `.rvt` file and not the schedule object — it has no Revit API. But if you **export the room
-schedule as PDF**, the same reader works on it, and a tabular schedule usually parses more cleanly
-than the plan itself. For a whole model you would use Revit's own room data (or IFC) and a real
-load program.
+Not the `.rvt` file and not the schedule object — it has no Revit API. But you **can** export the
+room schedule as Excel/CSV (`.xlsx`, `.csv`, `.tsv`) and drop that on the page; it is the cleanest
+input of all. Exporting the schedule as PDF also works — the same reader reads the text layer.
 
 **Is the data uploaded anywhere?**
 No. Running it locally with `npm start`, the PDF goes to your own machine's Node server on
@@ -193,7 +198,8 @@ percentage of the room total. It is the screen to open when someone asks "where 
 coming from?".
 
 **What would you add next?**
-Worth saying honestly, because it is a real roadmap: OCR for scans, reading a Revit/IFC room
-schedule directly, per-hour RTS solar and wall storage, a psychrometric process line and coil
-selection, duct and pipe sizing, and a project library of glass and wall build-ups so the U values
-and shading coefficients are not typed in by hand.
+Worth saying honestly, because it is a real roadmap: reading a Revit/IFC room schedule directly,
+per-hour RTS solar and wall storage, a psychrometric process line and coil selection, duct and pipe
+sizing, and a project library of glass and wall build-ups so the U values and shading coefficients
+are not typed in by hand. (OCR and Excel/CSV schedule import have since shipped — see the notes
+above.)

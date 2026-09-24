@@ -25,7 +25,7 @@ jobs:
         run: |
           mkdir _site
           cp -r *.html favicon.svg css js vendor _site/
-          mkdir -p _site/samples && cp tests/samples/*.pdf _site/samples/ || true
+          mkdir -p _site/samples && cp tests/samples/*.pdf tests/samples/*.csv tests/samples/*.xlsx _site/samples/ 2>/dev/null || true
           ls -la _site _site/samples
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5

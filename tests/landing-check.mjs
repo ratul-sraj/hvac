@@ -1,4 +1,4 @@
-// Real-browser check of the WebHVAC public pages (landing, about, method, help).
+// Real-browser check of the LoadLens public pages (landing, about, method, help).
 //   cd D:/webhvac && node tests/landing-check.mjs [base-url-or-page-url]
 //
 // Default base: http://127.0.0.1:3000/  (the running Express server, where the planner
@@ -77,7 +77,7 @@ const LANDING = picked.file || "index.html";
 try {
   const r = await fetch(url("app.html"), { redirect: "follow" });
   const body = await r.text();
-  ok("calculator target exists (GET app.html)", r.status === 200 && /WebHVAC/i.test(body),
+  ok("calculator target exists (GET app.html)", r.status === 200 && /LoadLens/i.test(body),
     `HTTP ${r.status}, ${body.length} bytes`);
 } catch (e) {
   ok("calculator target exists (GET app.html)", false, "request failed: " + e.message);

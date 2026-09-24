@@ -1,4 +1,4 @@
-// WebHVAC — app state, room table, events, rendering.
+// LoadLens — app state, room table, events, rendering.
 // No frameworks, no build step. Plain ES modules.
 
 import {
@@ -54,6 +54,7 @@ async function loadOcrModule() {
 /* state                                                              */
 /* ------------------------------------------------------------------ */
 
+// KEEP the old brand in this key: renaming it would throw away every user's saved project.
 const STORAGE_KEY = 'webhvac.state.v1';
 const NUM_FIELDS = ['area', 'height', 'people', 'light', 'equip', 'extWall', 'glass', 'partition'];
 
@@ -766,6 +767,12 @@ const NO_FILES_MSG = 'No supported file found. Please choose a floor plan .pdf d
 const SCANNED_MSG = "This PDF looks scanned (no text layer). " +
   "Tick 'Read scanned drawings with OCR' and try again.";
 
+// Exactly one clear line, shown when OCR ran, the page(s) were read, and 0 rooms came out.
+// Simple English, no jargon: say what OCR could not do and what to do instead.
+const OCR_NO_ROOMS_MSG = "OCR read the page but could not recover the room names and areas " +
+  "(the small area labels on a scanned drawing are usually unreadable). " +
+  "For a scanned sheet, importing an Excel or CSV room schedule gives a much better result.";
+
 // ".csv" / ".tsv" / ".xlsx" -> the room-schedule reader; ".pdf" -> pdf.js or OCR.
 const isScheduleUpload = (f) => /\.(csv|tsv|xlsx)$/i.test(f.name || '');
 const isPdfUpload = (f) => /\.pdf$/i.test(f.name || '') || f.type === 'application/pdf';
@@ -965,8 +972,9 @@ async function parseFilesOnServer(files) {
 
 // Same ending for all readers, so the status wording stays the same.
 // `readers` = who read the files (server / browser / OCR / room schedule),
-// `scanned` = a PDF came back with 0 rooms and no text layer while OCR was off.
-function finishUpload(added, skipped, failed, notes, serverError, readers, scanned) {
+// `scanned` = a PDF came back with 0 rooms and no text layer while OCR was off,
+// `ocrEmpty` = OCR ran, the page(s) were read, and 0 rooms came out of them.
+function finishUpload(added, skipped, failed, notes, serverError, readers, scanned, ocrEmpty) {
   state.ui.busy = false;
   el.dropzone.classList.remove('busy');
   setProgress(null);
@@ -981,8 +989,9 @@ function finishUpload(added, skipped, failed, notes, serverError, readers, scann
   if (readerWords.length) msg += `Read by ${joinWords(readerWords)}. `;
   msg += notes.join(' | ');
   if (scanned) msg += ` ${SCANNED_MSG}`;
-  if (serverError) msg = `Server: ${serverError}. These files were read in your browser. ${msg}`;
-  setStatus(scanned ? 'warn' : (failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok')), msg);
+    if (ocrEmpty) msg += ` ${OCR_NO_ROOMS_MSG}`;
+    if (serverError) msg = `Server: ${serverError}. These files were read in your browser. ${msg}`;
+    setStatus(scanned || ocrEmpty ? 'warn' : (failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok')), msg);
 }
 
 async function handleFiles(fileList) {
@@ -1004,6 +1013,8 @@ async function handleFiles(fileList) {
   const readers = new Set();
   let serverError = '';
   let scanned = false;
+  // OCR was on, the page(s) were read, and 0 rooms came out of them.
+  let ocrEmpty = false;
   // OCR is a choice for this upload: with it on, PDFs are read here in the
   // browser with tesseract, also when the Express server is there.
   const useOcr = !!(el.ocrCheck && el.ocrCheck.checked);
@@ -1094,6 +1105,11 @@ async function handleFiles(fileList) {
       notes.push(`${f.name}: ${res.added} room(s)${out.pages ? ` from ${out.pages} page(s)` : ''}${ocrPages}`);
       // no rooms and no text layer: one clear line about the OCR box
       if (!useOcr && (!out.rooms || !out.rooms.length) && await pdfLooksScanned(out)) scanned = true;
+      // OCR ran and read the page(s) but found no rooms: say why, and what works better.
+      if (useOcr && !res.added && out.pages) {
+        ocrEmpty = true;
+        pushWarnings([`${f.name}: ${OCR_NO_ROOMS_MSG}`]);
+      }
     } catch (err) {
       failed += 1;
       const msg = (err && err.message) ? err.message : String(err);
@@ -1102,7 +1118,7 @@ async function handleFiles(fileList) {
     }
   }
 
-  finishUpload(added, skipped, failed, notes, serverError, readers, scanned);
+  finishUpload(added, skipped, failed, notes, serverError, readers, scanned, ocrEmpty);
 }
 
 async function loadSample() {
@@ -1167,7 +1183,7 @@ function download(name, text, mime) {
 }
 
 function safeName() {
-  return String(state.project.name || 'webhvac').replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '') || 'webhvac';
+  return String(state.project.name || 'loadlens').replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '') || 'loadlens';
 }
 
 function exportCsv() {
@@ -1193,7 +1209,7 @@ function printReport() {
 
 function saveProjectFile() {
   download(safeName() + '.json',
-    JSON.stringify({ app: 'WebHVAC', v: 1, savedAt: new Date().toISOString(), project: state.project, rooms: state.rooms }, null, 2),
+    JSON.stringify({ app: 'LoadLens', v: 1, savedAt: new Date().toISOString(), project: state.project, rooms: state.rooms }, null, 2),
     'application/json');
   setStatus('ok', 'Project file saved.');
 }
@@ -1217,7 +1233,7 @@ function openProjectFile(file) {
       saveNow();
       setStatus('ok', `Project opened: ${state.rooms.length} room(s).`);
     } catch (err) {
-      setStatus('err', `Could not open this file as a WebHVAC project (${(err && err.message) || err}).`);
+      setStatus('err', `Could not open this file as a LoadLens project (${(err && err.message) || err}).`);
     }
   };
   reader.onerror = () => setStatus('err', 'Could not read the file.');

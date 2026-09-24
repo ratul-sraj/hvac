@@ -1,4 +1,4 @@
-# Builds the WebHVAC Docker image on every push to main (and on demand) so a
+# Builds the LoadLens Docker image on every push to main (and on demand) so a
 # broken Dockerfile is caught in CI. The image is NOT published anywhere — this
 # workflow only proves that `docker build .` succeeds and that the container
 # answers GET /api/health. No secrets are used.
@@ -36,13 +36,13 @@ jobs:
           file: ./Dockerfile
           push: false
           load: true
-          tags: webhvac:ci
+          tags: loadlens:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke test the image
         run: |
-          docker run --rm -d --name webhvac-ci -p 3000:3000 webhvac:ci
+          docker run --rm -d --name loadlens-ci -p 3000:3000 loadlens:ci
           for i in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:3000/api/health; then
               echo ""
@@ -52,9 +52,9 @@ jobs:
             sleep 1
           done
           echo "server did not become healthy in time"
-          docker logs webhvac-ci || true
+          docker logs loadlens-ci || true
           exit 1
 
       - name: Stop the test container
         if: always()
-        run: docker rm -f webhvac-ci || true
+        run: docker rm -f loadlens-ci || true

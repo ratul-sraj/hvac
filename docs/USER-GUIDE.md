@@ -1,11 +1,12 @@
-# WebHVAC — user guide
+# LoadLens — user guide
 
-WebHVAC reads the rooms out of an architectural or MEP **floor plan PDF** (or a room schedule
-PDF) and estimates the **cooling load** of each room and of the whole building: sensible and
-latent heat in watts, tonnes of refrigeration (TR), supply air in L/s, fresh-air L/s and the
-ft²/tonne figure. You check and correct the rooms in a table, set the design conditions and the
-construction assumptions, then export a CSV or a printable report. Everything runs on your own
-computer — nothing is uploaded anywhere on its own, and no login is needed.
+LoadLens reads the rooms out of an architectural or MEP **floor plan PDF**, an **Excel / CSV room
+schedule** or a **scanned sheet (optional OCR)** and estimates the **cooling load** of each room and
+of the whole building: sensible and latent heat in watts, tonnes of refrigeration (TR), supply air
+in L/s, fresh-air L/s and the ft²/tonne figure. You check and correct the rooms in a table, set the
+design conditions and the construction assumptions, then export a CSV or a printable report.
+Everything runs on your own computer — nothing is uploaded anywhere on its own, and no login is
+needed.
 
 The same page also works the other way: type the rooms in by hand, or start from an empty table,
 if the PDF cannot be read.
@@ -59,11 +60,31 @@ Everything recalculates as you type. You do not need to press any "calculate" bu
 
 ### Step 2 — upload the drawing
 
-Drag a PDF onto the dashed box (or click it and choose the file). You can select several PDFs at
-once — up to 10 files per upload, max 25 MB each. Two buttons help you test:
+Drag a file onto the dashed box (or click it and choose the file). The drop zone accepts:
+
+- **`.pdf`** — a floor plan drawing exported from CAD/Revit (it must have a **text layer**).
+- **`.csv` / `.tsv` / `.xlsx`** — a room schedule exported from Revit or Excel. This is usually the
+  most accurate input and the best way to handle a **scanned** drawing, because it needs no OCR.
+
+You can select several files at once — up to 10 files per upload, max 25 MB each. Two buttons help
+you test:
 
 - **Try sample drawing** loads `tests/samples/headquarters.pdf`, a real 3-page sample building.
 - **Add room manually** adds one empty room you can type into.
+
+**Reading a scanned drawing.** A scan or a photo has no text layer, so the normal reader finds
+nothing. Tick **"Read scanned drawings with OCR (slow)"** in the upload panel to read it with OCR
+instead. What to expect, honestly:
+
+- OCR is **off by default** and only runs when you tick the box. The first time you use it the page
+  downloads about **11 MB** of OCR engine (wasm) **from this site** — nothing from a third party.
+- It is **slow**: roughly **4 seconds per page**, and up to about **12 seconds** when it has to
+  search for the page rotation (a rotated sheet is detected and turned upright first).
+- A legible scanned **schedule** reads well — the Office, Conference and Store rows come back with
+  their areas (Office 27 m², Conference 48 m², Store about 2.9 m²).
+- A scanned **drawing** currently comes back with **0 rooms**: OCR can read large text but the small
+  area labels on a scanned plan are usually not recoverable. When that happens the page tells you so
+  and suggests the better route — **import the Excel / CSV room schedule** for a scanned sheet.
 
 A progress bar shows the file and the page being read, then a status line reports what happened,
 for example `149 room(s) added, 6 looked like duplicates and were skipped`. Parser notes
@@ -166,6 +187,7 @@ fills them).
 | **TR** *(result)* | Total cooling load of the room in tonnes of refrigeration | — |
 | **L/s** *(result)* | Supply air quantity at the supply ΔT | — |
 | **ft²/TR** *(result)* | Room area per tonne | — |
+| **Source** *(result)* | Where the row came from — `CSV/Excel`, `OCR`, `PDF` or `manual` | — |
 | **×** | Delete the room | — |
 
 Shortcuts: `Esc` closes the breakdown panel. Sorting works on every column. The typo-friendly
@@ -259,7 +281,8 @@ SHF       = sensible ÷ (sensible + latent)
 
 | What you see | What it usually is | What to do |
 |---|---|---|
-| **No rooms found** (status says 0 rooms added) | The PDF is a **scan** — a photo or a plot with no text layer. WebHVAC reads text only, there is no OCR | Open the PDF and try to select a room name with the mouse. If you cannot select text, nothing can read it. Upload a vector/text PDF exported from AutoCAD/Revit, or upload the **room schedule** sheet, or type the rooms in with **Add room manually** |
+| **No rooms found** (status says 0 rooms added) | The PDF is a **scan** — a photo or a plot with no text layer | Open the PDF and try to select a room name with the mouse. If you cannot select text, nothing can read it as text: tick **"Read scanned drawings with OCR (slow)"** and try again, or — much better — upload the **Excel / CSV room schedule** for that sheet, or type the rooms in with **Add room manually** |
+| **Ticked OCR and still 0 rooms** | OCR read the page but the small area labels on a scanned drawing could not be recovered | Import the **Excel / CSV room schedule** for that sheet instead — it is far more accurate than OCR on a drawing. Adding rooms by hand is fine for a small job |
 | Only some rooms found | Rooms drawn as text on top of the plan are not always tagged with an area; the parser skips labels with no area and says so in the **parser note(s)** box | Read the notes, then add the missing rooms by hand. A room-schedule table page usually parses better than the plan itself |
 | A **room name** is wrong or looks like a number (`TEL.C.`, `M. TL.`) | The PDF uses short drafting labels and their room numbers | Click the name cell and type the real name; the space type follows the new name |
 | **Area missing** (blank area, 0 m²) | The label had no area in the text layer | Type the area from the drawing. Note the default ext-wall and glass areas are *derived* from the area, so fix the area first |
@@ -296,9 +319,10 @@ Say this clearly, the same way the printed report does:
   correction, no chiller plant, no VRF selection, no controls.
 - **No fresh-air duct, toilet and staircase ventilation design** — those spaces are simply
   excluded from the totals.
-- **No CAD/Revit intelligence.** It reads the **text layer** of a PDF. It does not understand
-  geometry, room boundaries, room-bounding elements or a Revit model, and it cannot read a Revit
-  room schedule directly — print/export the schedule to PDF first.
+- **No CAD/Revit intelligence.** It reads the **text layer** of a PDF or an Excel/CSV room schedule
+  you export yourself. It does not understand geometry, room boundaries, room-bounding elements or a
+  Revit model. You **can** import a room schedule as `.csv` / `.tsv` / `.xlsx` — export it from Revit
+  or Excel and drop it on the page; that is the most accurate input of all.
 - **No code compliance.** Fresh-air rates are taken from ASHRAE 62.1 type-of-use values inside the
   app; your project's actual code (ASHRAE 62.1, NBC India, ECBC, local authority) and the project
   specification rule.
