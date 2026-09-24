@@ -36,6 +36,11 @@ fi
 CODE="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null)"
 CODE="${CODE:0:3}"; [ -n "$CODE" ] || CODE="000"
 if [ "$CODE" != "200" ]; then
+  # free the port first: a leftover listener makes the new process die with EADDRINUSE
+  for p in $(netstat -ano 2>/dev/null | grep LISTENING | grep ":${PORT} " | awk '{print $5}' | sort -u); do
+    taskkill /PID "$p" /F >/dev/null 2>&1
+  done
+  sleep 1
   ( nohup node server.js >> "$LOG" 2>&1 & echo $! > tools/server.pid ) >/dev/null 2>&1
   sleep 2
   NEW="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null)"
