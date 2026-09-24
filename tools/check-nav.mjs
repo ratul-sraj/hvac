@@ -9,7 +9,7 @@ import puppeteer from "puppeteer-core";
 const BASE = process.argv[2] || "http://127.0.0.1:3000/";
 const PAGES = [
   { url: "app.html", nav: "nav.app-nav", links: ".app-nav-links", burger: "nav.app-nav .nav-burger", file: "nav-app" },
-  { url: "home.html", nav: "header.site-nav", links: ".nav-links", burger: "header.site-nav .nav-burger", file: "nav-home" },
+  { url: "index.html", nav: "header.site-nav", links: ".nav-links", burger: "header.site-nav .nav-burger", file: "nav-home" },
   { url: "method.html", nav: "header.site-nav", links: ".nav-links", burger: "header.site-nav .nav-burger", file: "nav-method" },
   { url: "help.html", nav: "header.site-nav", links: ".nav-links", burger: "header.site-nav .nav-burger", file: "nav-help" },
   { url: "about.html", nav: "header.site-nav", links: ".nav-links", burger: "header.site-nav .nav-burger", file: "nav-about" },
