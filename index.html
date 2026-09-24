@@ -126,6 +126,9 @@
     <p class="hint">You can upload many files at once. Rooms found in the PDF are <em>added</em> to the table below —
       existing rows are not deleted.</p>
 
+    <!-- Where the PDF is read. app.js sets this after the one-time /api/health check. -->
+    <p class="hint" id="parseWhere">Reading PDFs in your browser</p>
+
     <div id="dropzone" class="dropzone" tabindex="0" role="button"
          aria-label="Drag and drop PDF files here, or press Enter to choose files">
       <div class="dz-icon" aria-hidden="true">PDF</div>
@@ -287,7 +290,8 @@
       Simplified ASHRAE / Carrier E-20 style cooling load estimate. <strong>For study and checking only —
       a qualified HVAC engineer must verify every number.</strong>
     </p>
-    <p class="muted small">WebHVAC &middot; everything runs offline in your browser &middot; no data is uploaded to any server.</p>
+    <p class="muted small">WebHVAC &middot; the load calculation always runs in your browser &middot; your PDF is sent to a
+      server only when the page says <em>Reading PDFs on the server</em>.</p>
   </div>
 </footer>
 

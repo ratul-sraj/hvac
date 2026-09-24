@@ -30,6 +30,8 @@ const state = {
     order: [],
     busy: false,
   },
+  // Filled once on load by probeServer(): is the Express server (server.js) there?
+  server: { available: false, version: null, checked: false },
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -47,6 +49,7 @@ const el = {
   filterLevel: $('#filterLevel'),
   dropzone: $('#dropzone'),
   fileInput: $('#fileInput'),
+  parseWhere: $('#parseWhere'),
   progressBox: $('#progressBox'),
   progressText: $('#progressText'),
   progressFill: $('#progressFill'),
@@ -687,6 +690,87 @@ function pushWarnings(list) {
   el.warnList.innerHTML = state.warnings.map((w) => `<li>${esc(w)}</li>`).join('');
 }
 
+/* --- the Express server (server.js) is used only when it answers ---------- */
+
+// One GET /api/health on load, with a short timeout. A static host answers 404
+// or HTML: then we simply stay local. Nothing here may break the page, so every
+// failure (no server, timeout, wrong answer) is swallowed.
+const HEALTH_TIMEOUT_MS = 1500;
+
+async function probeServer() {
+  let answer = { available: false, version: null, checked: true };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), HEALTH_TIMEOUT_MS);
+  try {
+    // relative URL, so it also works when the app is served from a sub-path
+    const res = await fetch('api/health', { signal: ctrl.signal, cache: 'no-store' });
+    const type = res.headers.get('content-type') || '';
+    if (res.ok && /json/i.test(type)) {
+      const data = await res.json();
+      if (data && data.ok === true && data.serverSideParse === true) {
+        answer = { available: true, version: data.version || null, checked: true };
+      }
+    }
+  } catch (e) {
+    /* no server / timeout / not JSON: keep reading the PDFs in the browser */
+  } finally {
+    clearTimeout(timer);
+  }
+  state.server = answer;
+  updateParseWhere();
+}
+
+// The short honest line in the upload panel saying where the PDF is read.
+function updateParseWhere() {
+  if (!el.parseWhere) return;
+  el.parseWhere.textContent = state.server.available
+    ? 'Reading PDFs on the server (faster)'
+    : 'Reading PDFs in your browser';
+}
+
+// The server takes at most 10 files per request, so a bigger selection is split.
+const SERVER_FILES_PER_REQUEST = 10;
+
+// POST the files as multipart/form-data, one field named "files" per file, and
+// merge the answer of every batch into one { rooms, warnings, files }.
+// Errors (400 bad PDF, 413 too big, network, bad answer) throw with a short message.
+async function parseFilesOnServer(files) {
+  const rooms = [], warnings = [], fileInfos = [];
+  for (let i = 0; i < files.length; i += SERVER_FILES_PER_REQUEST) {
+    const batch = files.slice(i, i + SERVER_FILES_PER_REQUEST);
+    const body = new FormData();
+    for (const f of batch) body.append('files', f, f.name);
+    const res = await fetch('api/parse', { method: 'POST', body });
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) {
+      // 400 and 413 come back as { error: "..." } — show the server's own words
+      throw new Error((data && data.error) ? data.error : `the server answered HTTP ${res.status}`);
+    }
+    if (!data || typeof data !== 'object') throw new Error('the server sent an unexpected answer');
+    if (Array.isArray(data.rooms)) rooms.push(...data.rooms);
+    if (Array.isArray(data.warnings)) warnings.push(...data.warnings);
+    if (Array.isArray(data.files)) fileInfos.push(...data.files);
+  }
+  return { rooms, warnings, files: fileInfos };
+}
+
+// Same ending for both paths, so the status wording stays the same.
+function finishUpload(added, skipped, failed, notes, serverError) {
+  state.ui.busy = false;
+  el.dropzone.classList.remove('busy');
+  setProgress(null);
+  renderAll();
+  saveSoon();
+
+  const parts = [`${added} room(s) added`];
+  if (skipped) parts.push(`${skipped} looked like duplicates and were skipped`);
+  if (failed) parts.push(`${failed} file(s) could not be read`);
+  let msg = `${parts.join(', ')}. ${notes.join(' | ')}`;
+  if (serverError) msg = `Server: ${serverError}. These files were read in your browser. ${msg}`;
+  setStatus(failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok'), msg);
+}
+
 async function handleFiles(fileList) {
   if (state.ui.busy) return;
   const files = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
@@ -699,7 +783,46 @@ async function handleFiles(fileList) {
   setStatus(null);
   let added = 0, skipped = 0, failed = 0;
   const notes = [];
+  let serverError = '';
 
+  // --- server path: send the files to POST /api/parse and merge the answer ---
+  if (state.server.available) {
+    setProgress(files.length === 1
+      ? `Uploading file 1 of 1: ${files[0].name} …`
+      : `Uploading ${files.length} files to the server …`, 10);
+    // the server reads the whole file at once and answers in one piece,
+    // so after the upload we only have one line left to show
+    const readingTimer = setTimeout(() => setProgress('Reading PDF on the server …', 60), 500);
+    try {
+      const out = await parseFilesOnServer(files);
+      clearTimeout(readingTimer);
+      // merge exactly like the local path: addRooms() for the rooms
+      // (same duplicate guard), pushWarnings() for the notes
+      const res = addRooms(out.rooms);
+      added = res.added;
+      skipped = res.skipped;
+      if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
+      if (out.files && out.files.length) {
+        for (const info of out.files) {
+          const n = (typeof info.roomCount === 'number')
+            ? info.roomCount
+            : (Array.isArray(info.rooms) ? info.rooms.length : 0);
+          notes.push(`${info.name}: ${n} room(s)${info.pages ? ` from ${info.pages} page(s)` : ''}`);
+        }
+      } else {
+        notes.push(`${files.length} file(s) read on the server`);
+      }
+      finishUpload(added, skipped, failed, notes, '');
+      return;
+    } catch (err) {
+      clearTimeout(readingTimer);
+      serverError = (err && err.message) ? err.message : String(err);
+      setStatus('warn', `Server: ${serverError}. Reading the file(s) in your browser instead.`);
+      // fall through to the local pdf.js path below, the user still gets a result
+    }
+  }
+
+  // --- local path (unchanged): pdf.js reads the PDF in this browser ----------
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     setProgress(`File ${i + 1} of ${files.length}: ${f.name} — opening`, 3);
@@ -721,17 +844,7 @@ async function handleFiles(fileList) {
     }
   }
 
-  state.ui.busy = false;
-  el.dropzone.classList.remove('busy');
-  setProgress(null);
-  renderAll();
-  saveSoon();
-
-  const parts = [`${added} room(s) added`];
-  if (skipped) parts.push(`${skipped} looked like duplicates and were skipped`);
-  if (failed) parts.push(`${failed} file(s) could not be read`);
-  setStatus(failed && !added ? 'err' : (failed || skipped ? 'warn' : 'ok'),
-    `${parts.join(', ')}. ${notes.join(' | ')}`);
+  finishUpload(added, skipped, failed, notes, serverError);
 }
 
 async function loadSample() {
@@ -1032,6 +1145,8 @@ function start() {
   syncProjectInputs();
   wire();
   renderAll();
+  updateParseWhere(); // the browser text until the one-time check answers
+  probeServer();      // asks the server if it is there; never blocks the page
   if (restored && state.rooms.length) {
     setStatus('ok', `Restored your last work from this browser: ${state.rooms.length} room(s).`);
   } else {

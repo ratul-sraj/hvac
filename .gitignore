@@ -3,3 +3,5 @@ node_modules/
 tests/qa/
 _*.mjs
 tests/_*.mjs
+tools/keepalive.log
+tools/server.pid

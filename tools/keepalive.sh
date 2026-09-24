@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# WebHVAC housekeeping: git backup + keep the Express server alive.
+# Run by hand or by the Hermes cron job "webhvac-backup-keepalive".
+# Log: tools/keepalive.log
+set -u
+
+REPO="D:/webhvac"
+PORT="${PORT:-3000}"
+HEALTH="http://127.0.0.1:${PORT}/api/health"
+LOG="$REPO/tools/keepalive.log"
+STAMP="$(date '+%Y-%m-%d %H:%M')"
+
+cd "$REPO" || { echo "cannot cd to $REPO"; exit 1; }
+mkdir -p tools
+
+# ---------------------------------------------------------------- 1. git backup
+if [ -n "$(git status --porcelain)" ]; then
+  git add -A
+  if git -c user.name="ratul-sraj" -c user.email="ratul-sraj@users.noreply.github.com" \
+       commit -q -m "backup: automatic snapshot ${STAMP}"; then
+    if GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/hvac_deploy -o IdentitiesOnly=yes" \
+         git push -q git@github.com:ratul-sraj/hvac.git HEAD:main 2>>"$LOG"; then
+      echo "${STAMP}  backup: committed and pushed" >> "$LOG"
+    else
+      echo "${STAMP}  backup: committed locally, PUSH FAILED" >> "$LOG"
+    fi
+  else
+    echo "${STAMP}  backup: commit failed" >> "$LOG"
+  fi
+fi
+
+# ------------------------------------------------------------ 2. server keepalive
+CODE="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null || echo 000)"
+if [ "$CODE" != "200" ]; then
+  ( nohup node server.js >> "$LOG" 2>&1 & echo $! > tools/server.pid ) >/dev/null 2>&1
+  sleep 2
+  NEW="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null || echo 000)"
+  echo "${STAMP}  server: was ${CODE}, restarted (pid $(cat tools/server.pid 2>/dev/null)) -> ${NEW}" >> "$LOG"
+else
+  echo "${STAMP}  server: ok (200)" >> "$LOG"
+fi

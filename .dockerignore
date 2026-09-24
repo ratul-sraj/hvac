@@ -1,0 +1,22 @@
+# never ship host build/state into the image
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.github
+Dockerfile
+.dockerignore
+# docs and dev-only test code (tests/samples IS copied by the Dockerfile)
+AGENTS.md
+AGENTS-SERVER.md
+README.md
+*.md
+tests/*.mjs
+tests/qa
+tests/verify
+tests/_*.mjs
+_*.mjs
+# local scratch
+_*
+.env
+.env.*
