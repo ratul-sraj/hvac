@@ -1,0 +1,100 @@
+name,name_en,type,include,note
+TEL.C.,telephone cabinet,general,false,service cabinet
+FHC,fire hose cabinet,general,false,service
+SECURITY CONTROL ROOM,security control room,office,true,conditioned workspace
+ELEC. C.,electrical cabinet,general,false,service
+AV CONTROL RM.,audio-visual control room,office,true,conditioned workspace
+CORR.,corridor,general,true,circulation inside the conditioned envelope
+ST. 02,stair 02,general,false,circulation
+RECEPTION,reception,reception,true,public area normally conditioned
+MANAGER OFFICE,manager office,cabin,true,
+MAIN ELEC/LV SWITCH RM,main electrical / LV switch room,general,false,plant room
+COR.,corridor,general,true,circulation inside the conditioned envelope
+CHIEF OFFICE,chief office,cabin,true,
+S. MAN. OFFICE,senior manager office,cabin,true,
+MEETING RM.,meeting room,conference,true,
+ST. 01,stair 01,general,false,circulation
+VIDEO DISPLAY HALL,video display hall,conference,true,
+DIRECTOR,director office,cabin,true,
+F. TL.,female toilet,general,false,wet area not cooled
+ADA,accessible (disabled) toilet,general,false,wet area not cooled
+BMS,building management system room,server,true,equipment room
+KIT.,kitchenette,restaurant,false,pantry: extract only
+SERVER RM.,server room,server,true,high equipment load
+M. TL.,male toilet,general,false,wet area not cooled
+BMU STORE,building maintenance unit store,general,false,store
+GARB. RM,garbage room,general,false,service
+WORKSTATIONS,open plan workstations,office,true,
+IDF/TEL,intermediate distribution frame / telecom room,server,true,equipment room
+ENTERTAINMENT & RECREATION,entertainment and recreation,gym,true,active space
+OFFICE,office,office,true,
+PL 1,plumbing shaft 1,general,false,shaft
+ELEC. RM.,electrical room,general,false,plant room
+STO.,store,general,false,store
+LOBBY,lobby,reception,true,
+PL 3,plumbing shaft 3,general,false,shaft
+PL 4,plumbing shaft 4,general,false,shaft
+PL 2,plumbing shaft 2,general,false,shaft
+FILING RM.,filing room,office,true,records room
+COFFEE SHOP,coffee shop,restaurant,true,
+ATRIUM,atrium,general,true,conditioned public volume
+Corr,corridor,general,true,circulation inside the conditioned envelope
+ST. 03,stair 03,general,false,circulation
+M. PRAYER RM.,male prayer room,general,true,conditioned in Gulf practice
+FM. MAN,facility manager,office,true,
+ABLUTION,ablution area,general,false,wet area not cooled
+ARCH. RM.,archive room,general,false,store
+COPY/PRINT,copy and print room,office,true,
+J. C.,janitor closet,general,false,service
+ATRIUM VOID,atrium void,general,false,open volume
+VOID,void,general,false,open volume
+MULTIPURPOSE HALL,multipurpose hall,conference,true,
+ADVISOR,advisor office,cabin,true,
+VIP DINING,vip dining,restaurant,true,
+MAJLIS,majlis (guest reception hall),reception,true,Gulf house: conditioned
+ADMIN ASSISTANCE,admin assistance,office,true,
+STORE,store,general,false,store
+F. PRAYER RM.,female prayer room,general,true,conditioned in Gulf practice
+CABIN,cabin,cabin,true,
+Atrium Void,atrium void,general,false,open volume
+OFF. MAN,office manager,office,true,
+MAIN OFFICE,main office,office,true,
+مكتب المدير,director office (Arabic),cabin,true,multilingual check
+غرفة الاجتماعات,meeting room (Arabic),conference,true,multilingual check
+دورة مياه,toilet (Arabic),general,false,multilingual check
+مجلس,majlis (Arabic),reception,true,multilingual check
+غرفة الخادم,server room (Arabic),server,true,multilingual check
+مطبخ,kitchen (Arabic),restaurant,false,multilingual check
+مخزن,store (Arabic),general,false,multilingual check
+ممر,corridor (Arabic),general,true,multilingual check
+استقبال,reception (Arabic),reception,true,multilingual check
+المكتب المفتوح,open office (Arabic),office,true,multilingual check
+شرفة,balcony (Arabic),general,false,multilingual check
+غرفة الكهرباء,electrical room (Arabic),general,false,multilingual check
+Salle de réunion,meeting room (French),conference,true,multilingual check
+Bureau du directeur,director office (French),cabin,true,multilingual check
+Toilettes,toilets (French),general,false,multilingual check
+Recepción,reception (Spanish),reception,true,multilingual check
+Sala de reuniones,meeting room (Spanish),conference,true,multilingual check
+सभा कक्ष,meeting room (Hindi),conference,true,multilingual check
+प्रबंधक कार्यालय,manager office (Hindi),cabin,true,multilingual check
+शौचालय,toilet (Hindi),general,false,multilingual check
+سٹور,store (Urdu),general,false,multilingual check
+دفتر,office (Urdu),office,true,multilingual check
+Open Plan Office,open plan office,office,true,regression: was dropped by the old rules
+Court Room,court room,hospital,true,regression: was dropped by the old rules
+Court Yard,courtyard,general,false,open area not cooled
+Gymnasium,gymnasium,gym,true,
+Cafeteria,cafeteria,restaurant,true,
+Data Centre,data centre,server,true,
+Patient Ward,patient ward,hospital,true,
+Classroom 12,classroom,classroom,true,
+Master Bedroom,master bedroom,bedroom,true,
+Guest Room 201,guest bedroom,bedroom,true,
+Living Room,living room,living,true,
+Retail Unit 3,retail unit,retail,true,
+Prayer Hall,prayer hall,general,true,conditioned in Gulf practice
+Ramp,ramp,general,false,circulation
+Parking 1A,parking bay,general,false,unconditioned
+Terrace,terrace,general,false,outdoor
+Kitchen,kitchen,restaurant,false,extract only

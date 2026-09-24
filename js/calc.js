@@ -68,25 +68,63 @@ export const SPACE_TYPES = {
   general:    { label: "General",           m2pp: 10,  light: 10, equip: 10, ps: 75, pl: 55, oap: 2.5, oaa: 0.3 },
 };
 
-export const NON_AC_WORDS = /\b(toilet|wc|w\.c|bath|washroom|lavatory|store|storage|shaft|duct|stair|staircase|lift|elevator|corridor|passage|utility|balcony|sit[- ]?out|verandah|veranda|porch|parking|garage|electrical|elec\.|janitor|jan\.|pantry|kitchen|wash|dress|dressing|court\s*yard|terrace|open(?!\s+(plan|office))|void|ramp|drive)\b/i;
+// Room names arrive written as drawings write them: "M. TL.", "ELEC. C.", "CORR.", "ST. 01",
+// "PL 1". Punctuation breaks the usual \b boundaries (a pattern ending in "elec\." cannot match
+// "ELEC. C." because "." and " " are both non-word), so normalise first: lowercase, and turn
+// punctuation into spaces, which makes every abbreviation a whole word.
+export function normName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[.,;:()[\]{}\/\\|&"'_+\-]+/g, " ")   // kEEP hyphens? no: treat as space for matching
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
+// Words that mean "this space is not cooled" (service, circulation, wet, outdoor, plant).
+// Built so that drawing abbreviations work directly: a plain \b fails on "M. TL." / "ELEC. C."
+// because "." is a non-word character, so the pattern uses lookarounds and allows optional dots
+// between the letters of an abbreviation.
+const NON_AC_PATTERN = [
+  "toilets?", "w\\.?c", "bath(?:room)?s?", "washrooms?", "lavatory", "showers?",
+  "t\\.?l", "m\\.? ?t\\.?l", "f\\.? ?t\\.?l", "j\\.? ?c", "ada",   // male/female toilet, janitor, accessible
+  "stores?", "storage", "sto", "arch(?:ive)?", "garb(?:age)?", "fhc", "tel\\.? ?c",
+  "shafts?", "ducts?", "risers?", "p\\.?l ?\\d+",                  // risers / plumbing shafts
+    "stairs?", "staircase", "st\\.? ?\\d+",
+  "lifts?", "elevators?", "escalators?",
+  // NOTE: corridors are deliberately NOT here: in a fully air-conditioned building a corridor
+  // is inside the conditioned envelope and is normally cooled. Stairs, toilets, shafts, stores and
+  // plant rooms stay excluded.
+  "circulation",
+  "kits?", "kitchens?", "kitchenettes?", "pantr(?:y|ies)", "ablutions?",
+  "utility", "plant", "elec", "electrical", "switch", "transformer", "generator",
+  "balcon(?:y|ies)", "sit ?-? ?outs?", "sitouts?", "verandah?s?", "porch(?:es)?",
+  "parking", "garage", "drive", "ramps?", "terrace", "voids?", "court ?yards?", "courtyards?",
+  "open(?! ?(?:plan|office))", "dress", "dressing", "dhobi", "laundry",
+].join("|");
+export const NON_AC_WORDS = new RegExp(`(?:^|[^a-z0-9])(?:${NON_AC_PATTERN})(?![a-z0-9])`, "i");
+
+// Space typing. ORDER MATTERS: the specific patterns must come before the general ones
+// ("Coffee Shop" is a restaurant, not retail; "Video Display Hall" is a conference room, not retail;
+// "Manager Office" is a cabin, not a generic office).
 export function guessSpaceType(name) {
-  const n = (name || "").toLowerCase();
+  const compact = normName(name);
+  const n = compact.replace(/\s+/g, "");
+  const has = (re) => re.test(compact) || re.test(n);
   const rules = [
-    [/server|data|it room|hub|ups|comms/, "server"],
-    [/conf|meeting|board|discussion|training/, "conference"],
-    [/cabin|manager|md|ceo|director|chamber/, "cabin"],
-    [/recep|lobby|waiting|foyer|entrance/, "reception"],
-    [/shop|retail|showroom|store front|display/, "retail"],
-    [/restaurant|dining|cafe|cafeteria|canteen|food/, "restaurant"],
-    [/bed|master|guest room|kids/, "bedroom"],
-    [/living|family|lounge|drawing|hall|home theat/, "living"],
-    [/class|lecture|lab|library|study/, "classroom"],
-    [/ward|patient|icu|opd|consult|clinic|ot\b|operation/, "hospital"],
-    [/gym|fitness|yoga/, "gym"],
-    [/office|work|admin|account|hr\b|staff|open plan|workstation/, "office"],
+    [/server|data ?cent|it ?room|hub|ups|comms|idf|bms|telecom|switch ?room/, "server"],
+    [/coffee|cafe|cafeteria|canteen|restaurant|dining|food ?court|pantry|kits?|kitchen|mess/, "restaurant"],
+    [/conf|meeting|board|discussion|training|multipurpose|auditorium|display|hall/, "conference"],
+    [/gym|fitness|yoga|entertainment|recreation|sports|play/, "gym"],
+    [/ward|patient|icu|opd|consult|clinic|operation|hospital|nurse/, "hospital"],
+    [/class|lecture|lab|laboratory|library|study/, "classroom"],
+    [/majlis|istiqbal|recep|lobby|foyer|waiting|entrance/, "reception"],
+    [/cabin|manager|director|chief|md|ceo|advisor|chamber|executive|secretary/, "cabin"],
+    [/bed|master|guest ?room|kids|suite/, "bedroom"],
+    [/living|family|lounge|drawing|tv|home ?theat|majlis/, "living"],
+    [/retail|shop|showroom|supermarket|market|boutique/, "retail"],
+    [/office|work ?station|workstat|admin|account|(?<![a-z])hr(?![a-z])|staff|filing|record|copy|print|security|control|(?<![a-z])fm(?![a-z])|off ?man|store ?front/, "office"],
   ];
-  for (const [re, t] of rules) if (re.test(n)) return t;
+  for (const [re, t] of rules) if (has(re)) return t;
   return "general";
 }
 

@@ -5,3 +5,7 @@ _*.mjs
 tests/_*.mjs
 tools/keepalive.log
 tools/server.pid
+tools/laya/.venv/
+tools/laya/__pycache__/
+tools/laya/cache/
+tools/laya/*.log
