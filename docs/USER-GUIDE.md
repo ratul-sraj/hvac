@@ -321,13 +321,22 @@ the shipped version:
 
 ```bash
 cd D:/webhvac
-npm start                                            # terminal 1
-python -m http.server 8230 --bind 127.0.0.1          # terminal 2 (serves the landing pages too)
-node tests/screenshots.mjs http://127.0.0.1:3000/ http://127.0.0.1:8230/
+npm start                                   # serves the app AND the landing pages
+node tests/screenshots.mjs                  # default base http://127.0.0.1:3000/
 ```
 
-A page that is not served (HTTP 404 while another worker is writing it, for example) is printed as
-a `SKIP` line and no file is written for it.
+The Express server serves the calculator (`app.html`), `selftest.html`, `css/`, `js/`, `vendor/`,
+`/samples/` and the landing pages (`home.html`, `about.html`, `method.html`, `help.html`), so one
+base URL is enough. If a page is **not** served by your copy (still being written, or a static copy
+that is missing it), the script prints a clear `SKIP` line with the HTTP status and writes **no**
+file for it — a missing page can never look like a blank screenshot.
+
+An optional second argument points the three documentation pages at a different copy while the
+calculator is still taken from the first:
+
+```bash
+node tests/screenshots.mjs http://127.0.0.1:3000/ http://127.0.0.1:8230/   # docs base
+```
 
 ---
 

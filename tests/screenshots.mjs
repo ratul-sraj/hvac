@@ -6,9 +6,9 @@
 //   appBaseUrl   where the calculator page is served   (default http://127.0.0.1:3000/)
 //   docsBaseUrl  where home/method/help pages live     (default = appBaseUrl)
 //
-// The Express server (npm start) serves the app but not the landing pages, so to fill in
-// landing.png / method.png / help.png as well, point the second argument at a plain static
-// copy of the folder:
+// The Express server (npm start) serves the calculator and the landing pages, so one base URL is
+// normally enough. Pass a second URL only if the documentation pages live somewhere else (a plain
+// static copy, for example):
 //   python -m http.server 8230 --bind 127.0.0.1      (run inside D:/webhvac)
 //   node tests/screenshots.mjs http://127.0.0.1:3000/ http://127.0.0.1:8230/
 //
@@ -142,9 +142,9 @@ try {
 
   /* ---------- 4. the documentation pages ---------- */
   const pages = [
-    ["method.png", "method.html", "server.js does not serve it yet"],
-    ["help.png", "help.html", "server.js does not serve it yet"],
-    ["landing.png", "home.html", "server.js does not serve it yet"],
+    ["method.png", "method.html", "this copy does not serve method.html"],
+    ["help.png", "help.html", "this copy does not serve help.html"],
+    ["landing.png", "home.html", "this copy does not serve home.html"],
   ];
   for (const [file, pageName, note] of pages) {
     const url = DOCS_BASE.replace(/\/?$/, "/") + pageName;

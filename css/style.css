@@ -368,3 +368,39 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
   table.data-table { font-size: 11px; }
   .data-table thead th { position: static; }
 }
+/* ------------------------------------------- shared top navigation (all pages) */
+.app-nav {
+  background: var(--accent-dark);
+  color: #fff;
+  font-size: 14px;
+}
+.app-nav-inner {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  min-height: 40px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.app-nav-brand {
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: .2px;
+  text-decoration: none;
+}
+.app-nav-links {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.app-nav-links a {
+  color: #dce9f6;
+  text-decoration: none;
+  padding: 5px 10px;
+  border-radius: 6px;
+}
+.app-nav-links a:hover { background: rgba(255, 255, 255, .14); color: #fff; }
+.app-nav-links a.here { background: rgba(255, 255, 255, .2); color: #fff; font-weight: 600; }
+@media print { .app-nav { display: none; } }
