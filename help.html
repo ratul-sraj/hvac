@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebHVAC — Help and FAQ</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="description" content="WebHVAC help: which PDFs work and which do not (scans need OCR), how to fix a wrong room, what Include does, what to change when the load looks too high or low, where the numbers are in the report, and where your files go.">
+<link rel="stylesheet" href="css/landing.css">
+</head>
+<body>
+
+<header class="site-nav">
+  <div class="wrap nav-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+        <rect x="1.5" y="7" width="29" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">WebHVAC<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+    </div>
+    <nav class="nav-links" aria-label="Main">
+      <a href="app.html">Calculator</a>
+      <a href="about.html">About</a>
+      <a href="method.html">Method</a>
+      <a href="help.html" aria-current="page">Help</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h1>Help and FAQ</h1>
+      <p class="lead">
+        Short answers to the questions that come up most: what the tool can read, how to fix a room,
+        what <em>Include</em> does, and what to change when the load does not look right.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="pdfs">
+    <div class="wrap prose">
+      <h2>Which PDFs work</h2>
+      <p>
+        WebHVAC reads the <strong>text layer</strong> of the PDF &mdash; the real, selectable text that a
+        drafting program writes into the file. Two kinds of drawing work well:
+      </p>
+      <div class="cols2">
+        <div class="panel">
+          <h3>Works: room tags on the plan</h3>
+          <ul>
+            <li>The PDF was exported or plotted from AutoCAD, Revit, ArchiCAD or similar.</li>
+            <li>Each room has a text label such as <em>CONFERENCE ROOM</em>, <em>ROOM 203</em> or <em>BEDROOM</em>.</li>
+            <li>Areas may be printed next to the name (for example <em>24.5 m&sup2;</em> or <em>265 sq.ft</em>). If they are, they are used; if not, you type them.</li>
+            <li>Level names such as <em>GROUND FLOOR</em>, <em>FIRST FLOOR</em> or <em>TERRACE</em> appear on the sheet.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Works: a room schedule table</h3>
+          <ul>
+            <li>A schedule or legend page with a table: Room no. / Name / Area, typed in the PDF.</li>
+            <li>Often the cleanest source &mdash; better than the plan itself.</li>
+            <li>Upload the schedule page and the plan pages together; rooms found are added to the table.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>Frequently asked questions</h2>
+      </div>
+      <div class="faq">
+
+        <details>
+          <summary>Why does a scanned drawing find no rooms? Do I need OCR?</summary>
+          <p>
+            A scan, a photo, or a PDF plotted to an image has <strong>no text layer</strong> &mdash; it is
+            just a picture of a drawing. There is nothing for WebHVAC to read, so it will report that it
+            found no rooms. The same is true for an image-only plot or a drawing where the room labels were
+            converted to outlines.
+          </p>
+          <p>To use a scanned drawing you need OCR (optical character recognition) first:</p>
+          <ul>
+            <li>Run the scan through an OCR tool that can output a PDF with a text layer, then upload that.</li>
+            <li>Or ask the architect / drafter for the original vector PDF &mdash; that is always the better answer.</li>
+            <li>Or use <strong>Add room manually</strong> and type the rooms from the print. For a small job
+              that is often faster than fixing OCR.</li>
+          </ul>
+          <p class="muted small">
+            Quick test: open the PDF and try to select the text of a room name with the mouse. If you can
+            select it, WebHVAC can read it. If you cannot, it is an image.
+          </p>
+        </details>
+
+        <details>
+          <summary>A room name, area or level is wrong. How do I fix it?</summary>
+          <p>Every cell in the room table is editable. Changing a value recalculates the load immediately.</p>
+          <ul>
+            <li><strong>Wrong name or wrong area:</strong> click the cell and type the correct value.</li>
+            <li><strong>Wrong room type:</strong> use the <em>Space type</em> dropdown in the row (Office, Conference, Cabin, Bedroom, Retail, Server, Gym and so on). The type sets people, lighting and equipment per m&sup2;.</li>
+            <li><strong>Found something that is not a room</strong> (a title, a dimension, a note read as a name): use the <strong>&times;</strong> button at the end of the row to delete it.</li>
+            <li><strong>A real room that is not air conditioned</strong> (toilet, store, staircase): do not delete it &mdash; leave it in the table and untick <em>In</em> so the record stays with the project but is out of the totals.</li>
+            <li><strong>Half the rooms missing:</strong> the drawing may split rooms across layers or sheets. Upload the other pages too, or add the missing rooms manually.</li>
+          </ul>
+        </details>
+
+        <details>
+          <summary>What does the "In" (Include) tick do, and why are toilets and stairs excluded?</summary>
+          <p>
+            The <em>In</em> column decides whether a row is counted in the load. A ticked room is added up
+            into the room totals, the level subtotals and the TR / CFM figures. An unticked room is still
+            shown in the table and still printed in the report as <em>not air conditioned</em>, but it adds
+            nothing to any total, and no supply air is sized for it.
+          </p>
+          <p>
+            Toilets, WCs, bathrooms, staircases, lift shafts, duct shafts, store rooms, corridors to
+            non-conditioned areas, balconies and car parks are <strong>unticked by default</strong>, because
+            they are normally not cooled. This is why the total is lower than "every room in the drawing".
+          </p>
+          <p>
+            Put a tick back if the space really is air conditioned &mdash; for example a toilet inside a
+            conditioned office floor, or a corridor inside the conditioned envelope. Use
+            <strong>Select all</strong> / <strong>Select none</strong> with the filters to change a whole
+            level at once.
+          </p>
+        </details>
+
+        <details>
+          <summary>The load looks too high (or too low). What should I check first?</summary>
+          <p>Work down this list &mdash; the top items change the answer the most:</p>
+          <ol>
+            <li><strong>Origin / orientation.</strong> The default is West, which has the worst solar gain. A north-facing or interior room loaded as West will read high. Use the <em>Bulk edit &rarr; Apply orientation</em> control to set a whole level correctly.</li>
+            <li><strong>Glass area and exposed wall.</strong> If glass was blank, it was assumed at 30 % of one long side &times; height. Type the real glass and wall areas from the drawing; this is the single biggest correction.</li>
+            <li><strong>Roof tick.</strong> Only the top floor (or the top of a single-storey building) should have <em>Roof</em> ticked. A roof ticked on every level inflates the load, because the roof ETD is 22 K, much larger than a wall ETD.</li>
+            <li><strong>Room type.</strong> A 30 m&sup2; room typed as Conference (2.5 m&sup2; per person, so 12 people) is very different from Office (10 m&sup2; per person, 3 people). Check the <em>People</em> column &mdash; fix the count directly if you know it.</li>
+            <li><strong>Fresh-air rate.</strong> The outdoor air load is counted on top of the room load and is often the largest block in a humid climate. If your project uses a different ventilation standard, adjust the fresh air rather than the room load.</li>
+            <li><strong>Safety factor.</strong> The default is 10 %. If your office practice is 5 % or 15 %, change it in the assumptions panel and the whole project follows.</li>
+            <li><strong>Design conditions.</strong> Check the city (or the outdoor DB / WB you typed). Kochi 35/28 &deg;C and Dubai 46/29 &deg;C give very different totals.</li>
+            <li><strong>Infiltration.</strong> 0.5 air changes per hour is a closed-building figure. A leaky or frequently opened space may need more; a pressurised one less.</li>
+            <li><strong>Include column.</strong> Look for a big room that should be ticked but is not &mdash; that lowers the total, not raises it.</li>
+          </ol>
+          <p class="muted small">
+            Remember the method is a handbook-level estimate. A difference of 10&ndash;15 % against a full
+            RTS calculation is normal; a difference of 2&times; usually means an input, not the method.
+          </p>
+        </details>
+
+        <details>
+          <summary>Where do the numbers end up in the report?</summary>
+          <p>The printable report has six numbered sections. Knowing which is which saves time when a checker asks:</p>
+          <ul>
+            <li><strong>1. Project and design conditions</strong> &mdash; project name, country, city, outdoor DB and WB, outdoor RH, indoor DB and RH, the &Delta;T, the supply &Delta;T and the safety factor.</li>
+            <li><strong>2. Assumptions used</strong> &mdash; wall U, glass U, shading coefficient, roof U, roof ETD, partition U, infiltration ACH and the glazing percentage that was assumed.</li>
+            <li><strong>3. Room wise load</strong> &mdash; one row per included room with area, height, people, orientation, glass, sensible W, latent W, fresh-air W, total W, TR, CFM and ft&sup2;/TR, with a totals row at the bottom.</li>
+            <li><strong>4. Load summary</strong> &mdash; total TR and kW, room sensible and latent heat, supply air CFM, fresh-air CFM, conditioned area in m&sup2; and ft&sup2;, and the area per tonne in both ft&sup2;/TR and m&sup2;/TR.</li>
+            <li><strong>5. Level wise subtotal</strong> &mdash; rooms, area, TR and CFM per level, so each floor can be sized separately.</li>
+            <li><strong>6. Important notes</strong> &mdash; the method and its limits, and the signature lines for prepared by / checked by / date.</li>
+          </ul>
+          <p>
+            On screen the same figures are in the <em>Load summary</em> cards, the <em>Level wise subtotal</em>
+            table and the room table, and the CSV export carries every input and result in one row per room.
+          </p>
+        </details>
+
+        <details>
+          <summary>Where do my files go? Is my drawing uploaded anywhere?</summary>
+          <p>
+            <strong>Nothing is uploaded to a third party.</strong> There is no cloud service, no analytics
+            and no account.
+          </p>
+          <ul>
+            <li><strong>Static version (GitHub Pages):</strong> the PDF is read by pdf.js inside your own
+              browser tab. The file never leaves your computer and no network request carries it.</li>
+            <li><strong>Local server version (you ran <code>npm start</code>):</strong> the PDF is posted to
+              <code>http://localhost:3000</code> &mdash; your own machine &mdash; parsed there and not stored.
+              The page tells you which mode it is in: <em>Reading PDFs in your browser</em> or
+              <em>Reading PDFs on the server</em>.</li>
+          </ul>
+          <p>
+            Your project (rooms and settings) is saved in your browser's own local storage so a reload
+            restores it. Use <strong>Save project (.json)</strong> if you want a file you can move to another
+            computer, and <strong>Clear all rooms</strong> if you want to start fresh.
+          </p>
+        </details>
+
+        <details>
+          <summary>Can I use it on a phone or a tablet?</summary>
+          <p>
+            Yes. The pages are responsive down to a 390 px screen and the room table scrolls sideways
+            instead of breaking. Reading and checking a few rooms on a phone at site works; editing a
+            300-room drawing is much easier on a laptop.
+          </p>
+        </details>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>Still stuck?</h2>
+      <p>
+        If a PDF gives no rooms, check that the text is selectable (see the first question). If it is
+        selectable and still fails, please report it on the project page with the drawing's source program
+        and one screenshot of the room tag:
+        <a href="https://github.com/ratul-sraj/hvac">github.com/ratul-sraj/hvac</a>.
+      </p>
+      <p>
+        The exact formulas and default values are on the <a href="method.html">Method and assumptions</a>
+        page, and <a href="about.html">About</a> explains how to run the tool locally.
+      </p>
+      <a class="btn btn-lg" href="app.html">Open the calculator</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <h3>WebHVAC</h3>
+      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, CFM and watts, in your browser.</p>
+      <p class="small"><a href="index.html">Home</a></p>
+    </div>
+    <div>
+      <h3>Pages</h3>
+      <ul>
+        <li><a href="app.html">Calculator</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="help.html">Help / FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Project</h3>
+      <ul>
+        <li><a href="https://github.com/ratul-sraj/hvac">Source on GitHub</a></li>
+        <li><a href="https://github.com/ratul-sraj/hvac">Report an issue</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap footer-bottom">
+    Simplified ASHRAE / Carrier E-20 style cooling load estimate.
+    <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or on your own server if you run <code>npm start</code>.
+  </div>
+</footer>
+
+</body>
+</html>

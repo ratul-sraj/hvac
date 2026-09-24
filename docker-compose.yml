@@ -1,0 +1,46 @@
+# WebHVAC — run the optional Express server (static UI + server-side PDF parsing)
+# on your own machine with one command.
+#
+#   docker compose up -d          build (first time) and start in the background
+#   open http://localhost:3000/
+#   docker compose logs -f        watch the request log
+#   docker compose down           stop and remove the container
+#
+# The image comes from ./Dockerfile (node:22-alpine, listens on 3000, runs as the
+# unprivileged "node" user). No database and no secrets are needed.
+services:
+  webhvac:
+    build: .
+    image: webhvac:local
+    container_name: webhvac
+    # host port 3000 -> container port 3000 (change the left number if 3000 is busy:
+    # "8080:3000" makes it http://localhost:8080)
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      # max size of ONE uploaded PDF (default 25). Max 10 files per request.
+      MAX_UPLOAD_MB: "25"
+    restart: unless-stopped
+    # the image is a plain Alpine node image and has no curl, so the check uses
+    # the node binary that is already inside the image.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # ---------------------------------------------------------------------------
+    # OPTIONAL: serve your own PDF drawings from a local folder.
+    # The image already ships the sample at tests/samples (reachable as
+    # /samples/headquarters.pdf). To add your own files, create a folder called
+    # "samples" next to this file and uncomment the two lines below — they appear
+    # on the server at http://localhost:3000/samples/<your-file>.pdf
+    #
+    # volumes:
+    #   - ./samples:/app/samples:ro
+    # ---------------------------------------------------------------------------

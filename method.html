@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebHVAC — Method and assumptions</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="description" content="The WebHVAC cooling load method in plain language: design conditions, the components, the factors actually used (3517 W = 1 TR), the default assumptions, and the limits of ETD / CLTD.">
+<link rel="stylesheet" href="css/landing.css">
+</head>
+<body>
+
+<header class="site-nav">
+  <div class="wrap nav-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+        <rect x="1.5" y="7" width="29" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">WebHVAC<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+    </div>
+    <nav class="nav-links" aria-label="Main">
+      <a href="app.html">Calculator</a>
+      <a href="about.html">About</a>
+      <a href="method.html" aria-current="page">Method</a>
+      <a href="help.html">Help</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h1>Method and assumptions</h1>
+      <p class="lead">
+        A simplified ASHRAE / Carrier E-20 style cooling load estimate, in SI units.
+        Everything below is what the tool actually uses &mdash; no hidden factors.
+      </p>
+      <div class="callout warn">
+        <h3>Read this first</h3>
+        <p>
+          This is a <strong>handbook-level estimate</strong>, not a full design calculation and not a
+          radiant time series (RTS) model. It must be checked and approved by a qualified HVAC engineer
+          before any equipment is ordered or any document is issued. The numbers here are typical practice
+          values for about 10&deg; north latitude (Kerala / South India / the Gulf).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>1. Design conditions</h2>
+        <p class="muted">
+          Two outdoor values and two indoor values drive the whole calculation. In the app these come from
+          the country / city list, and you can type over them.
+        </p>
+      </div>
+      <div class="table-scroll">
+        <table class="num-table">
+          <thead>
+            <tr><th class="l">Condition</th><th class="l">Default</th><th class="l">Where it is used</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="l">Outdoor dry bulb (DB)</td><td class="l">35 &deg;C (Kochi)</td><td class="l">Temperature difference across walls, glass and roof; sensible fresh-air load.</td></tr>
+            <tr><td class="l">Outdoor wet bulb (WB)</td><td class="l">28 &deg;C (Kochi)</td><td class="l">Outdoor humidity ratio, and so the latent load on fresh and infiltrating air.</td></tr>
+            <tr><td class="l">Indoor dry bulb</td><td class="l">24 &deg;C</td><td class="l">Comfort set point; &Delta;T = outdoor &minus; indoor.</td></tr>
+            <tr><td class="l">Indoor relative humidity</td><td class="l">50 %</td><td class="l">Indoor humidity ratio; the latent load is proportional to (outdoor &minus; indoor humidity ratio).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose" style="margin-top:14px">
+        <p class="muted small">
+          Other built-in cities include Thiruvananthapuram 34/27.5, Palakkad 38/26, Chennai 38/28,
+          Bengaluru 34/22, Delhi 43/24, Dubai 46/29, Abu Dhabi 46/29, Riyadh 46/22, Doha 46/28,
+          Muscat 46/29 and Kuwait City 48/24. Always check the values against your local code.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>2. The components</h2>
+        <p class="muted">For each room the heat gain is built from these pieces, then summed.</p>
+      </div>
+      <div class="table-scroll">
+        <table class="num-table">
+          <thead>
+            <tr><th class="l">Component</th><th class="l">How it is calculated</th><th class="l">Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="l">Glass &mdash; solar</td>
+              <td class="l">glass m&sup2; &times; solar factor for the orientation &times; shading coefficient</td>
+              <td class="l">Peak solar gain, storage effect already included. W orientation is the worst.</td>
+            </tr>
+            <tr>
+              <td class="l">Glass &mdash; conduction</td>
+              <td class="l">glass m&sup2; &times; U glass &times; &Delta;T</td>
+              <td class="l">Outdoor &minus; indoor dry bulb difference.</td>
+            </tr>
+            <tr>
+              <td class="l">External wall</td>
+              <td class="l">net wall m&sup2; (gross &minus; glass) &times; U wall &times; wall ETD</td>
+              <td class="l">ETD (equivalent temperature difference, the sol-air value) depends on orientation.</td>
+            </tr>
+            <tr>
+              <td class="l">Roof</td>
+              <td class="l">area &times; U roof &times; roof ETD</td>
+              <td class="l">Applied only to rooms you tick as <em>Roof</em> &mdash; normally the top floor.</td>
+            </tr>
+            <tr>
+              <td class="l">Partition</td>
+              <td class="l">partition m&sup2; &times; U partition &times; (&Delta;T &minus; 3 K)</td>
+              <td class="l">Wall to a non-air-conditioned space. The 3 K is the usual allowance for the cooler side.</td>
+            </tr>
+            <tr>
+              <td class="l">People &mdash; sensible</td>
+              <td class="l">people &times; sensible W per person (space type)</td>
+              <td class="l">75 W for office / conference, 70 W for homes and classrooms, 210 W for a gym.</td>
+            </tr>
+            <tr>
+              <td class="l">People &mdash; latent</td>
+              <td class="l">people &times; latent W per person (space type)</td>
+              <td class="l">55 W for office, 35 W for a bedroom, 80 W in a restaurant, 315 W for a gym.</td>
+            </tr>
+            <tr>
+              <td class="l">Lighting</td>
+              <td class="l">area &times; lighting W/m&sup2;</td>
+              <td class="l">6 to 20 W/m&sup2; depending on the space type.</td>
+            </tr>
+            <tr>
+              <td class="l">Equipment / power</td>
+              <td class="l">area &times; equipment W/m&sup2;</td>
+              <td class="l">15 W/m&sup2; for an office, 300 W/m&sup2; for a server room.</td>
+            </tr>
+            <tr>
+              <td class="l">Infiltration &mdash; sensible</td>
+              <td class="l">1.23 &times; air (L/s) &times; &Delta;T</td>
+              <td class="l">Air from the air-change rate: ACH &times; volume.</td>
+            </tr>
+            <tr>
+              <td class="l">Infiltration &mdash; latent</td>
+              <td class="l">3010 &times; air (L/s) &times; &Delta;W</td>
+              <td class="l">&Delta;W is the difference in humidity ratio (kg/kg) between outdoor and indoor.</td>
+            </tr>
+            <tr>
+              <td class="l">Outdoor / fresh air (ASHRAE 62.1)</td>
+              <td class="l">(people &times; L/s per person) + (area &times; L/s per m&sup2;), then the same 1.23 and 3010 formulas</td>
+              <td class="l">The ventilation air is the biggest single block in hot, humid climates. It is counted on top of the room load.</td>
+            </tr>
+            <tr>
+              <td class="l">Safety factor</td>
+              <td class="l">sensible and latent room load &times; (1 + safety %)</td>
+              <td class="l">Applied to the room load only, before fresh air is added.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>3. The factors and units actually used</h2>
+      <p>These are the only conversion numbers in the engine. Everything else is built on top of them.</p>
+      <ul>
+        <li><strong>1 TR = 3517 W.</strong> The tonne of refrigeration is the metric tonne (3.517 kW), not the 12,000 Btu/h ton. Total load in watts is divided by 3517 to get TR.</li>
+        <li><strong>Sensible: 1.23 &times; L/s &times; &Delta;T</strong> watts. The constant 1.23 is &rho; &times; cp for air (about 1.2 kg/m&sup3; &times; 1.005 kJ/kg&middot;K, with the L/s-to-m&sup3;/s factor folded in).</li>
+        <li><strong>Latent: 3010 &times; L/s &times; &Delta;W</strong> watts, where &Delta;W is the humidity ratio difference in kg/kg.</li>
+        <li><strong>Area: 1 m&sup2; = 10.7639 ft&sup2;.</strong> Used for the ft&sup2; column and for the ft&sup2;/TR density check.</li>
+        <li><strong>Air: 1 L/s = 2.11888 CFM</strong>, so supply and fresh-air quantities are shown in both units.</li>
+        <li><strong>Supply air:</strong> room sensible heat divided by (1.23 &times; supply &Delta;T), so the figure depends on the supply temperature difference you set.</li>
+        <li><strong>Humidity ratio</strong> is worked out at sea level (101.325 kPa) from the dry bulb / wet bulb pair outdoors and the dry bulb / RH pair indoors, so the latent load follows the local climate.</li>
+        <li><strong>Peak solar gain through glass (W/m&sup2;):</strong> N 110 &middot; NE 300 &middot; E 440 &middot; SE 300 &middot; S 130 &middot; SW 350 &middot; W 470 &middot; NW 300. West is the worst side; the storage effect is already inside these figures.</li>
+        <li><strong>Wall ETD (K) for a 230 mm plastered brick wall:</strong> N 7 &middot; NE 10 &middot; E 12 &middot; SE 11 &middot; S 9 &middot; SW 13 &middot; W 15 &middot; NW 12.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>4. Default assumptions</h2>
+        <p class="muted">
+          These are the starting values. Every one of them is adjustable in the
+          <a href="app.html">calculator</a> under <em>Construction and system assumptions</em>, and every one
+          is printed on the report so a checker can see what was used.
+        </p>
+      </div>
+      <div class="table-scroll">
+        <table class="num-table">
+          <thead>
+            <tr><th class="l">Assumption</th><th class="l">Default</th><th class="l">Basis</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="l">Wall U value</td><td class="l">2.0 W/m&sup2;K</td><td class="l">230 mm brick wall, plastered both sides.</td></tr>
+            <tr><td class="l">Glass U value</td><td class="l">5.8 W/m&sup2;K</td><td class="l">Single clear glass.</td></tr>
+            <tr><td class="l">Shading coefficient (SC)</td><td class="l">0.6</td><td class="l">Clear glass with internal blinds. One value covers all shading.</td></tr>
+            <tr><td class="l">Roof U value</td><td class="l">2.0 W/m&sup2;K</td><td class="l">RCC slab with waterproofing / weathering course.</td></tr>
+            <tr><td class="l">Roof equivalent &Delta;T (ETD)</td><td class="l">22 K</td><td class="l">Sol-air value for an exposed roof in this climate.</td></tr>
+            <tr><td class="l">Partition U value</td><td class="l">2.2 W/m&sup2;K</td><td class="l">Partition wall to a non-air-conditioned space.</td></tr>
+            <tr><td class="l">Infiltration</td><td class="l">0.5 air changes per hour</td><td class="l">Closed building, doors mostly shut. A simple estimate.</td></tr>
+            <tr><td class="l">Safety factor</td><td class="l">10 %</td><td class="l">Added to the room sensible and latent load.</td></tr>
+            <tr><td class="l">Supply air &Delta;T</td><td class="l">11 K</td><td class="l">Room air minus supply air, used to size the supply CFM.</td></tr>
+            <tr><td class="l">Glazing, when glass area is blank</td><td class="l">30 % of the exposed wall</td><td class="l">A starting window-to-wall ratio until you measure the drawing.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose" style="margin-top:14px">
+        <p class="muted small">
+          If a room has a length and a width, one long side &times; height is taken as the exposed wall, and
+          the glass is 30 % of that. If you can measure the real glass and wall areas, type them in &mdash;
+          they change the answer more than any other field.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>5. What the method leaves out</h2>
+      <p>
+        Being honest about the gaps is part of the method. All of the following are outside the calculation
+        and must be added or checked by an engineer when the equipment is selected.
+      </p>
+      <ul>
+        <li><strong>ETD / CLTD is a simplification.</strong> A single peak equivalent temperature difference stands in for the whole day's heat flow through a wall or roof. It does not model thermal mass, the real peak hour, or how the load shifts into the evening. A full radiant time series or a proper hourly model will give different numbers.</li>
+        <li>One shading coefficient covers overhangs, fins, blinds, neighbouring buildings and reflected radiation.</li>
+        <li>No duct heat gain, no duct leakage and no fan heat.</li>
+        <li>No diversity factor on people, lighting or equipment &mdash; everything is at its stated value at the same time.</li>
+        <li>Infiltration is a simple air-change estimate; door openings, stack effect and window leakage are not modelled.</li>
+        <li>Toilets, staircases and shafts are assumed to be unventilated and are excluded from the totals by default.</li>
+        <li>Altitude, part-load behaviour, redundancy and controls are not part of the load at all.</li>
+      </ul>
+      <div class="callout warn">
+        <h3>Requirement</h3>
+        <p>
+          Every value produced by WebHVAC must be verified by a qualified HVAC engineer against the actual
+          architectural drawing, the real construction build-up and the ventilation code that applies to the
+          project (for example ASHRAE 62.1, NBC India or ECBC) before it is used for equipment selection.
+        </p>
+      </div>
+      <p class="small muted">
+        Want to check the arithmetic yourself? The whole engine is one readable file, and the
+        <a href="help.html">Help page</a> shows where each number appears in the report.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <h3>WebHVAC</h3>
+      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, CFM and watts, in your browser.</p>
+      <p class="small"><a href="index.html">Home</a></p>
+    </div>
+    <div>
+      <h3>Pages</h3>
+      <ul>
+        <li><a href="app.html">Calculator</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="help.html">Help / FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Project</h3>
+      <ul>
+        <li><a href="https://github.com/ratul-sraj/hvac">Source on GitHub</a></li>
+        <li><a href="https://github.com/ratul-sraj/hvac">Report an issue</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap footer-bottom">
+    Simplified ASHRAE / Carrier E-20 style cooling load estimate.
+    <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or on your own server if you run <code>npm start</code>.
+  </div>
+</footer>
+
+</body>
+</html>

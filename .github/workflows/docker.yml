@@ -1,0 +1,60 @@
+# Builds the WebHVAC Docker image on every push to main (and on demand) so a
+# broken Dockerfile is caught in CI. The image is NOT published anywhere — this
+# workflow only proves that `docker build .` succeeds and that the container
+# answers GET /api/health. No secrets are used.
+#
+# NOTE (not enabled on purpose): to publish the image to GitHub Container
+# Registry you would add `permissions: { packages: write }`, log in with
+# `docker/login-action` using the workflow's built-in GITHUB_TOKEN (no manual
+# secret), and set `push: true` plus tags. That is deliberately left out here.
+name: Docker build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: webhvac:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the image
+        run: |
+          docker run --rm -d --name webhvac-ci -p 3000:3000 webhvac:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/api/health; then
+              echo ""
+              echo "health OK"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not become healthy in time"
+          docker logs webhvac-ci || true
+          exit 1
+
+      - name: Stop the test container
+        if: always()
+        run: docker rm -f webhvac-ci || true

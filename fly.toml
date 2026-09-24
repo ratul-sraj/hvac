@@ -1,0 +1,43 @@
+# Fly.io configuration for WebHVAC.
+#
+# Commands (run from the repo root, after installing flyctl and `fly auth login`):
+#   fly launch --no-deploy     create the app from this file (do NOT let it rewrite it)
+#   fly deploy                 build ./Dockerfile and ship it
+#   fly open                   open the app in the browser
+#   fly logs                   watch the server log
+#   fly apps destroy <name>    delete the app when you are done
+#
+# "app" MUST be globally unique on Fly. If the name is taken, `fly launch` will
+# pick another one — update this line to match, or set a name like webhvac-<yourname>.
+
+app = "webhvac"
+primary_region = "sin"          # Singapore: closest Fly region to Kerala
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  # max size of ONE uploaded PDF in MB (default 25; max 10 files per request)
+  MAX_UPLOAD_MB = "25"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # free-tier friendly: the machine sleeps when idle and wakes on the next request
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Fly restarts the machine if /api/health stops answering ok.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  # pdf.js reads the whole PDF in memory, so keep at least 256 MB.
+  size = "shared-cpu-1x"
+  memory = "512mb"

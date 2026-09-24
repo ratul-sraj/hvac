@@ -1,0 +1,32 @@
+# Render Blueprint for WebHVAC (https://render.com/docs/blueprint-spec).
+#
+# How to use it:
+#   1. Create a free Render account and connect this GitHub repo.
+#   2. New + -> Blueprint -> pick the repo. Render reads this file and asks you
+#      to apply it. The first build starts automatically (autoDeploy: true).
+#   3. When the build finishes you get an https URL like
+#      https://webhvac.onrender.com — the app is live there.
+#
+# The service is Docker-based, so it uses the repo's ./Dockerfile (node:22-alpine,
+# starts `node server.js`, listens on the port Render passes in $PORT).
+# No database and no secrets are required.
+services:
+  - type: web
+    name: webhvac
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Free instance type is enough for a small test (sleeps after ~15 min idle and
+    # wakes on the next request, so the first hit after a break is slow).
+    plan: free
+    # Singapore is the closest region to Kerala; change if you prefer.
+    region: singapore
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Maximum size of ONE uploaded PDF, in MB (default 25, max 10 files/request).
+      # Raise it if you upload large drawings, but keep it sensible on the free plan.
+      - key: MAX_UPLOAD_MB
+        value: "25"
+      # Set to "0" to silence the one-line-per-request server log (optional).
+      - key: LOG_REQUESTS
+        value: "1"

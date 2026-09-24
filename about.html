@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About WebHVAC — what it is and how to run it</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="description" content="WebHVAC is a small open-source HVAC cooling load tool: what it is, who made it, the stack behind it, and how to run it locally with npm start or on GitHub Pages.">
+<link rel="stylesheet" href="css/landing.css">
+</head>
+<body>
+
+<header class="site-nav">
+  <div class="wrap nav-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+        <rect x="1.5" y="7" width="29" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">WebHVAC<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+    </div>
+    <nav class="nav-links" aria-label="Main">
+      <a href="app.html">Calculator</a>
+      <a href="about.html" aria-current="page">About</a>
+      <a href="method.html">Method</a>
+      <a href="help.html">Help</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h1>About WebHVAC</h1>
+      <p class="lead">
+        WebHVAC is a small, free cooling load calculator for buildings. You give it a floor plan PDF or a
+        room schedule; it gives you the room-wise cooling load in TR, supply air in CFM and the watts behind
+        every room.
+      </p>
+      <p>
+        It exists because the first pass of an HVAC load estimate is usually the slowest part of the job.
+        The rooms are already named and dimensioned in the drawing &mdash; retyping them into a spreadsheet is
+        pure copying. WebHVAC reads that text layer directly and starts you from the real room list, which
+        you then check and correct.
+      </p>
+      <p>
+        It is a study and checking tool, not a certified design package. The method is handbook-level and
+        simplified; see <a href="method.html">Method and assumptions</a> for the exact numbers and
+        <a href="help.html">Help</a> for what kinds of PDFs work.
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>Who made it</h2>
+      </div>
+      <div class="prose">
+        <p>
+          WebHVAC is built and maintained by <strong>Ratul S</strong>, an MEP / HVAC drafter and modeller
+          working with Kerala and Gulf projects. It started as a personal script to stop retyping room
+          schedules, and is published as open source so other students, modellers and consultancies can use
+          it and improve it.
+        </p>
+        <p>
+          The code is public:
+          <a href="https://github.com/ratul-sraj/hvac">https://github.com/ratul-sraj/hvac</a>.
+          Issues, corrections to the assumptions and pull requests are welcome there.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>The stack</h2>
+        <p class="muted">Deliberately boring: no framework, no build step, no CDN.</p>
+      </div>
+      <div class="table-scroll">
+        <table class="num-table">
+          <thead>
+            <tr><th class="l">Part</th><th class="l">What is used</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="l">Pages and styling</td>
+              <td class="l">Plain HTML, one CSS file per area, system fonts only. Two separate CSS files: one for the calculator, one for these public pages.</td>
+            </tr>
+            <tr>
+              <td class="l">Application logic</td>
+              <td class="l">Plain ES modules (<code>js/*.js</code>) loaded directly by the browser. No bundler, no transpiler, no minification.</td>
+            </tr>
+            <tr>
+              <td class="l">PDF text extraction</td>
+              <td class="l"><a href="https://mozilla.github.io/pdf.js/">pdf.js</a> 4.10.38, vendored locally in <code>vendor/</code> so the page works offline.</td>
+            </tr>
+            <tr>
+              <td class="l">Optional server</td>
+              <td class="l">Node 22 + Express, with multer for uploads. It serves the same UI and can read the PDF on the server instead of in the browser.</td>
+            </tr>
+            <tr>
+              <td class="l">Hosting</td>
+              <td class="l">GitHub Pages for the free static version; the same folder runs on Docker, Render, Railway or Fly if you want the server.</td>
+            </tr>
+            <tr>
+              <td class="l">Storage</td>
+              <td class="l">Your browser's local storage, plus plain <code>.json</code> project files you save and open yourself. No database, no accounts.</td>
+            </tr>
+            <tr>
+              <td class="l">Python</td>
+              <td class="l">None. The project is Python-free &mdash; Node and the browser only, so there is nothing extra to install.</td>
+            </tr>
+            <tr>
+              <td class="l">Tests</td>
+              <td class="l">Plain Node scripts (no test framework) for the engine, the parser and the API, plus a <code>puppeteer-core</code> check that drives the real Edge browser.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>How to run it yourself</h2>
+      </div>
+      <div class="cols2">
+        <div class="panel">
+          <h3>1. Free version &mdash; do nothing</h3>
+          <p>
+            The static version is served straight from GitHub Pages. Open the
+            <a href="app.html">calculator</a> and it works: the PDF is read in your browser.
+            There is no server and nothing to install.
+          </p>
+          <p class="small muted">Best for a quick estimate on any computer, including a college lab.</p>
+        </div>
+        <div class="panel">
+          <h3>2. Local version &mdash; the Node server</h3>
+          <p>Faster on big drawings, and the PDF is read on your own machine.</p>
+          <ol>
+            <li>Install Node 22 if you do not have it.</li>
+            <li>Get the code: <code>git clone https://github.com/ratul-sraj/hvac</code></li>
+            <li><code>cd hvac</code></li>
+            <li><code>npm install</code></li>
+            <li><code>npm start</code></li>
+            <li>Open <a href="http://localhost:3000">http://localhost:3000</a></li>
+          </ol>
+          <p class="small muted">
+            The page detects the server on its own and switches to server-side reading.
+            Change the port with <code>PORT=8080 npm start</code>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>Where your files go</h2>
+      <p>
+        Nowhere you do not control. In the static version the PDF is read by pdf.js inside your own browser
+        tab and never leaves the computer. In the local server version it is posted to
+        <code>http://localhost:3000</code> &mdash; your own machine &mdash; parsed there, and not stored.
+        There is no analytics, no third-party upload and no account.
+      </p>
+      <div class="callout tip">
+        <h3>Contributing</h3>
+        <p>
+          The method numbers live in one readable file and the assumptions are all named.
+          If you find a value that does not match your local code (NBC India, ECBC, ASHRAE), open an issue at
+          <a href="https://github.com/ratul-sraj/hvac">github.com/ratul-sraj/hvac</a> with the city and the
+          reference. Corrections are welcome.
+        </p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <h3>WebHVAC</h3>
+      <p>Room-wise cooling load from a floor plan PDF &mdash; TR, CFM and watts, in your browser.</p>
+      <p class="small"><a href="index.html">Home</a></p>
+    </div>
+    <div>
+      <h3>Pages</h3>
+      <ul>
+        <li><a href="app.html">Calculator</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="help.html">Help / FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Project</h3>
+      <ul>
+        <li><a href="https://github.com/ratul-sraj/hvac">Source on GitHub</a></li>
+        <li><a href="https://github.com/ratul-sraj/hvac">Report an issue</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap footer-bottom">
+    Simplified ASHRAE / Carrier E-20 style cooling load estimate.
+    <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or on your own server if you run <code>npm start</code>.
+  </div>
+</footer>
+
+</body>
+</html>
