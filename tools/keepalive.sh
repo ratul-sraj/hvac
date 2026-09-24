@@ -36,7 +36,8 @@ fi
 CODE="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null)"
 CODE="${CODE:0:3}"; [ -n "$CODE" ] || CODE="000"
 if [ "$CODE" != "200" ]; then
-  ( nohup node server.js >> "$LOG" 2>&1 & echo $! > tools/server.pid ) >/dev/null 2>&1
+  # --watch so the preview is always the newest code
+( nohup node --watch server.js >> "$LOG" 2>&1 & echo $! > tools/server.pid ) >/dev/null 2>&1
   sleep 2
   NEW="$(curl -s -m 6 -o /dev/null -w '%{http_code}' "$HEALTH" 2>/dev/null)"
   NEW="${NEW:0:3}"; [ -n "$NEW" ] || NEW="000"
