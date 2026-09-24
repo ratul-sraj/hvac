@@ -12,15 +12,22 @@
 
 
 <!-- shared top navigation (injected by tools/update-app-nav.mjs) -->
+<!-- same markup, classes and link order as the marketing pages, so the header looks identical -->
 <nav class="app-nav" aria-label="Main">
   <div class="wrap app-nav-inner">
-    <a class="app-nav-brand" href="index.html">LoadLens</a>
+    <a class="app-nav-brand" href="index.html">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+        <rect x="1.5" y="7" width="29" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">LoadLens<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+    </a>
     <span class="app-nav-links">
-      <a href="index.html">Home</a>
-      <a href="app.html" class="here" aria-current="page">Calculator</a>
+      <a href="app.html" aria-current="page">Calculator</a>
+      <a href="about.html">About</a>
       <a href="method.html">Method</a>
       <a href="help.html">Help</a>
-      <a href="about.html">About</a>
     </span>
   </div>
 </nav>

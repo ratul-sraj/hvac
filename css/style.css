@@ -399,41 +399,89 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
   table.data-table { font-size: 11px; }
   .data-table thead th { position: static; }
 }
-/* ------------------------------------------- shared top navigation (all pages) */
+/* --------------------------- shared top navigation (all pages, identical look)
+   The calculator page reuses the marketing header's styling: same white sticky bar, same
+   SVG brand mark, same link order and colours, so the header does not change between pages.
+   .app-nav* is kept as the class prefix so js/nav.js finds it. */
 .app-nav {
-  background: var(--accent-dark);
-  color: #fff;
-  font-size: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  line-height: 1.6;          /* same as the marketing pages, so the header height matches */
+  background: linear-gradient(180deg, #ffffff, #f6f9fc);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 3px rgba(20, 40, 70, .05);
 }
 .app-nav-inner {
   display: flex;
   align-items: center;
-  gap: 18px;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 56px;
   flex-wrap: wrap;
-  min-height: 40px;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 .app-nav-brand {
-  color: #fff;
-  font-weight: 700;
-  letter-spacing: .2px;
-  text-decoration: none;
-}
-.app-nav-links {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-.app-nav-links a {
-  color: #dce9f6;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+  color: var(--accent-dark);
   text-decoration: none;
-  padding: 5px 10px;
-  border-radius: 6px;
 }
-.app-nav-links a:hover { background: rgba(255, 255, 255, .14); color: #fff; }
-.app-nav-links a.here { background: rgba(255, 255, 255, .2); color: #fff; font-weight: 600; }
+.app-nav-brand .brand-mark { color: var(--accent); flex: 0 0 auto; }
+.app-nav-brand .brand-text { font-size: 17px; letter-spacing: .2px; white-space: nowrap; }
+.app-nav-brand .brand-sub { display: block; font-size: 11px; font-weight: 600; color: var(--ink-soft); letter-spacing: .4px; }
+.app-nav-links { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.app-nav-links a {
+  display: inline-block;
+  padding: 7px 11px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  text-decoration: none;
+}
+.app-nav-links a:hover { background: var(--accent-soft); color: var(--accent-dark); }
+.app-nav-links a[aria-current="page"] { background: var(--accent-soft); text-decoration: underline; }
+
+/* hamburger, styled like the marketing pages' one */
+.nav-burger {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.nav-burger:hover { background: var(--accent-soft); }
+.nav-burger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-burger-bars { display: inline-flex; flex-direction: column; gap: 3px; }
+.nav-burger-bars span { display: block; width: 16px; height: 2px; background: currentColor; border-radius: 2px; }
+
+@media (max-width: 700px) {
+  nav.app-nav.js-nav .app-nav-inner { flex-wrap: wrap; }
+  nav.app-nav.js-nav .app-nav-brand { order: 1; }
+  nav.app-nav.js-nav .nav-burger { display: inline-flex; order: 2; }
+  nav.app-nav.js-nav .app-nav-links { display: none; order: 3; }
+  nav.app-nav.js-nav.nav-open .app-nav-links {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    margin: 4px 0 6px;
+    gap: 2px;
+  }
+  nav.app-nav.js-nav.nav-open .app-nav-links a { padding: 11px 12px; font-size: 15px; }
+}
 @media print { .app-nav { display: none; } }
 
 /* ------------------------------------------- hamburger menu on narrow screens */
