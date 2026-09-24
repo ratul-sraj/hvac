@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restart the WebHVAC Express server cleanly. One command, no port race.
+# Restart the LoadLens Express server cleanly. One command, no port race.
 #   cd D:/webhvac && bash tools/restart-server.sh
 #
 # Why this exists: `node --watch` (and any plain restart while the old process is still
@@ -49,7 +49,7 @@ echo "$LISTENER" > tools/server.pid
 echo "${STAMP}  restart-server: listening pid ${LISTENER:-none}, health ${CODE}" >> "$LOG"
 
 if [ "$CODE" = "200" ]; then
-  echo "WebHVAC is live at http://localhost:${PORT}/   (pid ${LISTENER})"
+  echo "LoadLens is live at http://localhost:${PORT}/   (pid ${LISTENER})"
   curl -s -m 5 "http://127.0.0.1:${PORT}/api/health"
   echo
 else

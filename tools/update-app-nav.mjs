@@ -1,4 +1,5 @@
 // Refresh the top navigation injected into the calculator page `app.html`.
+// (Product name: LoadLens. Keep this brand in step with the pages.)
 //
 // After the site was split, `index.html` is the LANDING page and `app.html` is the
 // calculator. The calculator's own markup lives in app.html, but its top nav is injected
@@ -14,7 +15,7 @@ const page = process.argv[2] || "app.html";
 const NAV = `<!-- shared top navigation (injected by tools/update-app-nav.mjs) -->
 <nav class="app-nav" aria-label="Main">
   <div class="wrap app-nav-inner">
-    <a class="app-nav-brand" href="index.html">WebHVAC</a>
+    <a class="app-nav-brand" href="index.html">LoadLens</a>
     <span class="app-nav-links">
       <a href="index.html">Home</a>
       <a href="app.html" class="here" aria-current="page">Calculator</a>
