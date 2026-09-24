@@ -20,6 +20,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CSV_PATH = ROOT / "tests" / "samples" / "room-types.csv"
+
+
+def pct(a, b):
+    """Percent as a FLOAT (callers format it with :.1f), so it must live at module level:
+    print_table() calls it, and a nested copy inside summarize() is not visible there."""
+    return (100.0 * a / b) if b else float("nan")
 BASELINE_PATH = ROOT / "tests" / "qa" / "roomtype-baseline.json"
 OUT_DIR = ROOT / "tests" / "qa"
 

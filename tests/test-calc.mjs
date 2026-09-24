@@ -23,12 +23,17 @@ export function testCourtRoomIsConditioned() {
 }
 
 export function testNonAcRoomsStillExcluded() {
+  // Stairs, toilets, shafts, stores, plant rooms and outdoor areas are NOT conditioned.
+  // Corridors deliberately ARE (they sit inside the conditioned envelope) - see NON_AC_WORDS.
   for (const name of ["Toilet", "W.C", "Store Room", "Terrace", "Open Terrace", "Lift Lobby",
-    "Corridor", "Parking", "Staircase", "Electrical Room", "Kitchen", "Balcony", "Void", "Ramp"]) {
+    "Parking", "Staircase", "ST. 01", "ST. 02", "M. TL.", "F. TL.", "ELEC. C.", "Main ELEC/LV SWITCH RM",
+    "PL 1", "PL 2", "FHC", "TEL.C.", "ADA", "J. C.", "GARB. RM", "ARCH. RM.", "KIT.", "Electrical Room",
+    "Kitchen", "Balcony", "Void", "Ramp", "BMU STORE", "Ablution"]) {
     assert.equal(NON_AC_WORDS.test(name), true, `${name} should be excluded`);
   }
   for (const name of ["Office", "Server Room", "Reception", "WORKSTATIONS", "Meeting Room",
-    "Chief Office", "Conference Room", "Bedroom", "Gym"]) {
+    "Chief Office", "Conference Room", "Bedroom", "Gym", "Corridor", "CORR.", "COR.", "LOBBY",
+    "ATRIUM", "MULTIPURPOSE HALL", "FILING RM.", "COFFEE SHOP", "VIDEO DISPLAY HALL"]) {
     assert.equal(NON_AC_WORDS.test(name), false, `${name} should be included`);
   }
 }
