@@ -74,11 +74,13 @@ export const OCR_DEFAULTS = {
   langs: "eng",         // tesseract language(s)
   minItems: 12,         // isProbablyScanned(): fewer non-empty text items than this = a scan
   minConfidence: 40,    // drop OCR words below this confidence
-  minWords: 40,         // first pass below this word count = "thin" -> try rotating the raster
+  minWords: 40,         // a pass with fewer kept words than this is reported as "thin"
+  minAlphaWords: 10,    // fewer readable words than this = try the raster at 90/180/270
   oem: 1,               // 1 = LSTM_ONLY (the default engine of tesseract.js v7)
   psm: "11",            // 11 = SPARSE TEXT: floor plans are scattered tags, not prose
   cacheMethod: "none",  // no IndexedDB / disk cache: the traineddata is already local
-  searchRotations: true,
+  searchRotations: true, // a sideways scan is re-read at 90/180/270 and the best pass wins
+  mapRotationBack: false, // false = keep OCR words in the frame they were read in (readable)
   logger: null,         // tesseract progress logger, if the caller wants one
 };
 
@@ -98,8 +100,8 @@ const VENDOR = {
  */
 export function configureOcr({
   workerPath, corePath, langPath, tesseract, tesseractModuleURL,
-  logger, scale, maxEdge, langs, psm, oem, minConfidence, minWords, minItems,
-  searchRotations, cacheMethod, workerBlobURL, userDefinedDpi,
+  logger, scale, maxEdge, langs, psm, oem, minConfidence, minWords, minItems, minAlphaWords,
+  searchRotations, mapRotationBack, cacheMethod, workerBlobURL, userDefinedDpi,
 } = {}) {
   if (workerPath !== undefined) cfg.workerPath = abs(workerPath);
   if (corePath !== undefined) cfg.corePath = abs(corePath);
@@ -115,7 +117,9 @@ export function configureOcr({
   if (minConfidence !== undefined) cfg.minConfidence = minConfidence;
   if (minWords !== undefined) cfg.minWords = minWords;
   if (minItems !== undefined) cfg.minItems = minItems;
+  if (minAlphaWords !== undefined) cfg.minAlphaWords = minAlphaWords;
   if (searchRotations !== undefined) cfg.searchRotations = !!searchRotations;
+  if (mapRotationBack !== undefined) cfg.mapRotationBack = !!mapRotationBack;
   if (cacheMethod !== undefined) cfg.cacheMethod = cacheMethod;
   if (workerBlobURL !== undefined) cfg.workerBlobURL = workerBlobURL;
   if (userDefinedDpi !== undefined) cfg.userDefinedDpi = userDefinedDpi;
@@ -355,7 +359,13 @@ function toItems(words, { page = 1, scale = 1, rotation = 0, rasterW = 0, raster
     if (!str) { dropped++; continue; }
     if (num(w.confidence, 0) < cfg.minConfidence) { dropped++; continue; }
     if (isJunkWord(str)) { dropped++; continue; }
-    const box = unrotateBox({ x: w.x, y: w.y, w: w.w, h: w.h }, rotation, rasterW, rasterH);
+    // When the raster had to be rotated to be readable, the words are kept in that readable
+    // frame by default: that is the frame a person reads the sheet in, and js/pdfparse.js's tag
+    // rule ("the name sits ABOVE the area") only works there. Set mapRotationBack to put them
+    // back in the page frame (matching pdf.js display coordinates) instead.
+    const box = cfg.mapRotationBack
+      ? unrotateBox({ x: w.x, y: w.y, w: w.w, h: w.h }, rotation, rasterW, rasterH)
+      : { x: w.x, y: w.y, w: w.w, h: w.h };
     const s = scale > 0 ? scale : 1;
     items.push({
       str,
@@ -368,6 +378,16 @@ function toItems(words, { page = 1, scale = 1, rotation = 0, rasterW = 0, raster
     });
   }
   return { items, dropped };
+}
+
+/** Words that clearly read as words: 3+ letters, decent confidence. Used to tell a readable
+ *  orientation from a sideways one ("ia]", "£3", "El" score 0). */
+function readableWords(items) {
+  let n = 0;
+  for (const it of items) {
+    if (it.confidence >= 60 && /^[A-Za-z]{3,}[.,]?$/.test(it.str)) n++;
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------- one page
@@ -404,14 +424,14 @@ export async function ocrPdfPage({
     });
     const result = {
       items: raw.items, words: raw.items.length, rawWords: raw.words.length,
-      dropped: raw.dropped, rotation: deg, ms: raw.ms,
+      dropped: raw.dropped, rotation: deg, ms: raw.ms, alpha: readableWords(raw.items),
     };
-    if (!best || result.words > best.words) best = result;
+    if (!best || result.alpha > best.alpha || (result.alpha === best.alpha && result.words > best.words)) best = result;
     report(deg ? "rotate" : "ocr", 1);
-    // A 90°-rotated sheet is rendered upright by pdf.js, so rotation 0 normally wins.
-    // Only when the first pass is thin (a scan of a sideways drawing, no /Rotate) do we pay
-    // for re-reading the raster rotated 90/180/270 and keep the best orientation.
-    if (!deg && result.words >= cfg.minWords) break;
+    // A 90°-rotated sheet is rendered upright by pdf.js, so rotation 0 normally wins and we stop.
+    // Only when the upright pass finds almost no readable words (a scan of a sideways drawing,
+    // no /Rotate in the file) do we pay for re-reading the raster at 90/180/270.
+    if (!deg && result.alpha >= cfg.minAlphaWords) break;
   }
   const thin = best.words < cfg.minWords;
 
@@ -422,8 +442,10 @@ export async function ocrPdfPage({
         `room tags were read at that angle.`
     );
   }
-  if (!best.items.length) {
-    warnings.push(`Page ${pageNo}: OCR found no usable text${words ? ` (${words} raw words were dropped as junk or low confidence)` : ""}`);
+  if (!best.items.length && !words) {
+    warnings.push(`Page ${pageNo}: no text found on this page (the OCR pass found nothing to read).`);
+  } else if (!best.items.length) {
+    warnings.push(`Page ${pageNo}: OCR found ${words} word(s) but none survived the confidence/junk filter.`);
   } else if (thin) {
     warnings.push(`Page ${pageNo}: OCR kept only ${best.items.length} word(s) — this scan is small or faint, so expect only part of the rooms.`);
   }
@@ -434,6 +456,7 @@ export async function ocrPdfPage({
     dropped: best.dropped,
     ms: Date.now() - t0,
     rotation: best.rotation,
+    raster: { width: raster.width, height: raster.height, scale: raster.scale },
     warnings,
   };
 }
@@ -512,6 +535,13 @@ export async function ocrPdf(arrayBuffer, { pdfjs, onProgress, langs = cfg.langs
   for (const w of parseWarnings) if (!warnings.includes(w)) warnings.push(w);
   // rooms that came off an OCR'd page are marked so the UI can show where they came from
   for (const r of rooms) if (usedOcr.includes(num(r.page, 1))) r.source = "ocr";
+  if (!rooms.length && usedOcr.length && items.length) {
+    warnings.push(
+      `OCR read ${items.length} word(s) on page(s) ${usedOcr.join(", ")} but js/pdfparse.js could not build a room from them: ` +
+        `a room needs a readable NAME and AREA, and on a scanned drawing the area tags ("96.0 m²") are the first thing OCR loses. ` +
+        `A CSV/XLSX room schedule exported from Revit/Excel is far more accurate for scanned sheets.`
+    );
+  }
 
   return {
     rooms,

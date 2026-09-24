@@ -95,6 +95,7 @@ function firstNumber(s) {
 }
 
 const r2 = (n) => Math.round(n * 100) / 100;
+const r4 = (n) => Math.round(n * 10000) / 10000;
 
 // ---------------------------------------------------------------------------
 // DEFLATE (RFC 1951) — raw inflate, used by the ZIP reader for .xlsx
@@ -243,7 +244,7 @@ function readZip(u8) {
       const start = e.lho + 30 + nlen + elen;
       const comp = u8.subarray(start, start + e.csize);
       if (e.method === 0) return comp;
-      if (e.method === 8) return inflateRaw(comp, e.usize);
+      if (e.method === 8) return inflateRaw(comp);
       throw new Error(`unsupported zip compression method ${e.method} for ${n}`);
     },
   };
@@ -315,7 +316,7 @@ function parseSheet(xml, shared) {
         if (idx < 0) idx = auto;
         auto = idx + 1;
         if (idx >= MAX_COLS) continue;
-        const t = /\bt="([a-z]+)"/.exec(cAttrs);
+        const t = /\bt="([A-Za-z]+)"/.exec(cAttrs);
         const type = t ? t[1] : "n";
         let val = "";
         if (type === "inlineStr") {
@@ -491,24 +492,24 @@ export function parseLengthValue(raw, headerFactor = 1) {
   if (!s) return { value: null, unit: null };
   // 12'-6" , 12' 6" , 12'6" , 12 ft 6 in
   let m = s.match(/^(-?\d+(?:\.\d+)?)\s*(?:'|′|ft|feet|foot)\s*(?:-|\s)?\s*(?:(\d+(?:\.\d+)?)\s*(?:"|″|in|inch|inches)?)?$/i);
-  if (m) return { value: (+m[1]) * M_PER_FT + (m[2] ? (+m[2]) * M_PER_IN : 0), unit: "ft-in" };
+  if (m) return { value: r4((+m[1]) * M_PER_FT + (m[2] ? (+m[2]) * M_PER_IN : 0)), unit: null };
   m = s.match(/^(-?\d+(?:\.\d+)?)\s*(?:"|″|in|inch|inches)$/i);
-  if (m) return { value: (+m[1]) * M_PER_IN, unit: "in" };
-  m = s.match(/^(-?[\d.,\s]+?)\s*([a-zA-Zµ²"']+)?$/);
+  if (m) return { value: r4((+m[1]) * M_PER_IN), unit: null };
+  m = s.match(/^(-?[\d.,\s]+?)\s*([A-Za-zµ²³](?:[A-Za-z0-9 ²³.,/_-]*[A-Za-z0-9²³])?)?$/);
   if (!m) {
     const v = firstNumber(s);
-    return Number.isFinite(v) ? { value: v, unit: null } : { value: null, unit: null };
+    return Number.isFinite(v) ? { value: r4(v), unit: null } : { value: null, unit: null };
   }
   const n = cleanNumber(m[1]);
   if (!Number.isFinite(n)) return { value: null, unit: null };
   const u = String(m[2] || "").toLowerCase().replace(/²/g, "2").replace(/[.\s]/g, "");
-  if (!u) return { value: n > 100 ? n / 1000 : n * headerFactor, unit: null }; // >100 mm -> m
-  if (/^(mm|millimetre|millimetres|millimeter|millimeters)$/.test(u)) return { value: n / 1000, unit: null };
-  if (/^(cm|centimetre|centimetres|centimeter|centimeters)$/.test(u)) return { value: n / 100, unit: null };
-  if (/^(m|mtr|mtrs|meter|meters|metre|metres)$/.test(u)) return { value: n, unit: null };
-  if (/^(ft|feet|foot)$/.test(u)) return { value: n * M_PER_FT, unit: null };
-  if (/^(in|inch|inches)$/.test(u)) return { value: n * M_PER_IN, unit: null };
-  return { value: n, unit: String(m[2]).trim() };
+  if (!u) return { value: n > 100 ? r4(n / 1000) : r4(n * headerFactor), unit: null }; // >100 mm -> m
+  if (/^(mm|millimetre|millimetres|millimeter|millimeters)$/.test(u)) return { value: r4(n / 1000), unit: null };
+  if (/^(cm|centimetre|centimetres|centimeter|centimeters)$/.test(u)) return { value: r4(n / 100), unit: null };
+  if (/^(m|mtr|mtrs|meter|meters|metre|metres)$/.test(u)) return { value: r4(n), unit: null };
+  if (/^(ft|feet|foot)$/.test(u)) return { value: r4(n * M_PER_FT), unit: null };
+  if (/^(in|inch|inches)$/.test(u)) return { value: r4(n * M_PER_IN), unit: null };
+  return { value: r4(n), unit: String(m[2]).trim() };
 }
 
 // -> { value: m²|null, unit: string|null, dims: [l,w]|null, looksLikeLength: boolean }
@@ -536,7 +537,7 @@ export function parseAreaValue(raw, headerFactor = 1) {
     if (/^\d+(?:\.\d+)?\s*(?:'|′).*$/.test(s)) { out.looksLikeLength = true; return out; }
   }
 
-  const m = s.match(/^(-?[\d][\d.,\s]*?)\s*([a-zA-Zµ²³"']+)?$/);
+  const m = s.match(/^(-?[\d][\d.,\s]*?)\s*([A-Za-zµ²³](?:[A-Za-z0-9 ²³.,/_-]*[A-Za-z0-9²³])?)?$/);
   if (!m) {
     const v = cleanNumber(s);
     if (Number.isFinite(v)) { out.value = r2(v * headerFactor); return out; }
@@ -597,7 +598,7 @@ function parseOrient(raw) {
   return map[s] || null;
 }
 
-const LEVEL_RE = /(ground|flr|floor|storey|story|level|lvl|base|cellar|mezz|terr|roof|zone|block|wing|tower|gf|ff|sf|tf|\d)/i;
+const LEVEL_RE = /(\bground\b|\bflr\b|\bfloor\b|\bstorey\b|\bstory\b|\blevel\b|\blvl\b|\bbase(ment)?\b|\bcellar\b|\bmezz\b|\bterr(ace)?\b|\broof\b|\bzone\b|\bblock\b|\bwing\b|\btower\b|\bgf\b|\bff\b|\bsf\b|\btf\b|\d)/i;
 
 // ---------------------------------------------------------------------------
 // column detection
@@ -677,6 +678,10 @@ function gridToRooms(grid, rowNums, warnings, { sheetName = "", headerlessHint =
     if (!row || !row.length) continue;
     const keys = knownKeysIn(row);
     if (keys.size < 2) continue;
+    // a header row always names a room, a number or an area ...
+    if (!["name", "number", "area", "type"].some((k) => keys.has(k))) continue;
+    // ... and never contains a readable area value (that would be data)
+    if (row.some((c) => c && /\d/.test(c) && parseAreaValue(c).value > 0)) continue;
     const found = {};
     row.forEach((c, ci) => {
       const key = detectColumnKey(c);
@@ -690,11 +695,10 @@ function gridToRooms(grid, rowNums, warnings, { sheetName = "", headerlessHint =
   if (headerIdx < 0) {
     // 2) headerless 2-column file: name, area
     if (!headerlessHint) { warnings.push("No header row found (no room name / area columns)."); return empty; }
-    let looks = false;
-    for (let i = 0; i < Math.min(grid.length, 5); i++) {
-      const row = grid[i] || [];
-      if (row.length >= 2 && row[0] && !Number.isFinite(cleanNumber(row[0])) && parseAreaValue(row[1]).value != null) { looks = true; break; }
-    }
+    const sample = grid.slice(0, 12).filter((r) => r && r.some((c) => c));
+    const wide = sample.filter((r) => r.filter((c) => c).length > 3).length;      // a real table, not a list
+    const pairs = sample.filter((r) => r[0] && !Number.isFinite(cleanNumber(r[0])) && parseAreaValue(r[1]).value > 0).length;
+    const looks = wide === 0 && pairs >= Math.max(1, Math.ceil(sample.length / 2));
     if (!looks) {
       warnings.push("No header row found — no room name / area columns in this file. Nothing imported.");
       return empty;
@@ -705,9 +709,13 @@ function gridToRooms(grid, rowNums, warnings, { sheetName = "", headerlessHint =
     warnings.push("No header row found — reading column 1 as the room name and column 2 as the area (m²).");
   } else {
     firstData = headerIdx + 1;
-    // skip a units row directly under the header ("m²", "mm", "nos", ...)
+    // two-row headers are common: fold a units/qualifier row ("m²", "mm", "nos", "(designation)")
+    // into the header — a row with an explicit unit and no readable area is never data
     const next = grid[firstData] || [];
-    if (next.length && next.filter((c) => c).length >= 2 && next.every((c) => !c || UNITROW_RE.test(c))) {
+    const filled = next.filter((c) => c);
+    if (filled.length >= 2
+      && filled.some((c) => UNITROW_RE.test(c))
+      && !next.some((c) => c && parseAreaValue(c).value > 0)) {
       headers = next.map((c, i) => (headers[i] ? `${headers[i]} ${c}` : c));
       firstData++;
     }
@@ -732,6 +740,20 @@ function gridToRooms(grid, rowNums, warnings, { sheetName = "", headerlessHint =
   const rooms = [];
   const seen = new Map();
   let rowCount = 0;
+  const mapped = Object.entries(columns);
+  const nameColIdx = columns.name !== undefined ? columns.name : columns.number;
+  // a row is a REPEATED HEADER when its own name column says "name/number" and >= 2 of its cells
+  // map back to the columns this header defined (a data row rarely matches its own header)
+  const isRepeatedHeader = (row) => {
+    let hits = 0, nameMatches = false;
+    for (const [key, ci] of mapped) {
+      if (row[ci] && detectColumnKey(row[ci]) === key) {
+        hits++;
+        if (ci === nameColIdx) nameMatches = true;
+      }
+    }
+    return nameMatches && hits >= 2;
+  };
   const cell = (row, key) => (columns[key] === undefined ? "" : cellText(row[columns[key]]));
   const warnUnit = (i, what, unit) =>
     warnings.push(`Row ${rowNums[i] || i + 1}: unknown unit "${unit}" in the ${what} column — read as written.`);
@@ -747,7 +769,7 @@ function gridToRooms(grid, rowNums, warnings, { sheetName = "", headerlessHint =
     if (!row.some((c) => c)) continue;                                  // blank row
     const n = rowNums[i] || i + 1;
     const name = cell(row, "name") || (columns.name === undefined ? cell(row, "number") : "");
-    if (knownKeysIn(row).size >= 2) { warnings.push(`Row ${n}: repeated header row skipped.`); continue; }
+    if (isRepeatedHeader(row)) { warnings.push(`Row ${n}: repeated header row skipped.`); continue; }
     if (TOTALS_RE.test(row[0] || "")) { warnings.push(`Row ${n}: totals row "${row[0]}" skipped.`); continue; }
     if (!name) { warnings.push(`Row ${n}: no room name — row skipped.`); continue; }
     if (TOTALS_RE.test(name)) { warnings.push(`Row ${n}: totals row "${name}" skipped.`); continue; }
