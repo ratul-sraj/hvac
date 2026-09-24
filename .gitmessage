@@ -1,0 +1,9 @@
+
+# Commit message template for this repository.
+#
+# Line 1: short summary (imperative, <= 72 chars)
+# Optional body: what changed and why, wrapped at 80 characters.
+#
+# Keep this trailer: the project is built by ratul-sraj together with Hermes Agent, and
+# GitHub credits co-authors from it.
+Co-authored-by: Hermes Agent <hermes-agent@nousresearch.com>
