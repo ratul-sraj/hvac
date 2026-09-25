@@ -97,7 +97,7 @@ sed -e "s|__OIDC_PROVIDER_ARN__|${PROVIDER_ARN}|g" \
     -e "s|__GITHUB_SUB__|${GITHUB_SUB}|g" \
     "$INFRA_DIR/oidc-trust-policy.json.tmpl" > "$TP_FILE"
 
-if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$TP_FILE" 2>/dev/null; then
+if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$(nativepath "$TP_FILE")" 2>/dev/null; then
   log_ok "trust policy rendered"
 else
   die "the rendered trust policy is not valid JSON (check GITHUB_SUB for odd characters)"
@@ -107,14 +107,14 @@ ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${OIDC_ROLE}"
 if aws iam get-role --role-name "$OIDC_ROLE" --no-cli-pager >/dev/null 2>&1; then
   log_step "Role $OIDC_ROLE exists — updating its trust policy"
   aws iam update-assume-role-policy --role-name "$OIDC_ROLE" \
-    --policy-document "file://$TP_FILE" --no-cli-pager
+    --policy-document "$(awsfile "$TP_FILE")" --no-cli-pager
   log_ok "trust policy updated"
 else
   log_step "Creating role $OIDC_ROLE"
   ROLE_ARN="$(aws iam create-role --role-name "$OIDC_ROLE" \
     --description "Assumed by GitHub Actions (${GITHUB_REPO}) to deploy LoadLens to S3/CloudFront/Lambda" \
     --max-session-duration 3600 \
-    --assume-role-policy-document "file://$TP_FILE" \
+    --assume-role-policy-document "$(awsfile "$TP_FILE")" \
     --tags Key=project,Value=loadlens \
     --query 'Role.Arn' --output text --no-cli-pager)"
   log_ok "created: $ROLE_ARN"
@@ -183,7 +183,7 @@ cat > "$POLICY_FILE" <<JSON
 JSON
 
 if aws iam put-role-policy --role-name "$OIDC_ROLE" \
-      --policy-name "loadlens-deploy" --policy-document "file://$POLICY_FILE" --no-cli-pager; then
+      --policy-name "loadlens-deploy" --policy-document "$(awsfile "$POLICY_FILE")" --no-cli-pager; then
   log_ok "inline policy 'loadlens-deploy' applied (list/put/delete the site bucket, update one Lambda, invalidate one distribution)"
 else
   die "could not apply the inline policy"

@@ -51,7 +51,9 @@ CF_POLICY_ALL_VIEWER_EXCEPT_HOST="${CF_POLICY_ALL_VIEWER_EXCEPT_HOST:-b689b0a8-5
 # Lambda
 LAMBDA_FUNCTION="${LAMBDA_FUNCTION:-loadlens-api}"
 LAMBDA_ROLE="${LAMBDA_ROLE:-loadlens-lambda-role}"
-LAMBDA_HANDLER="${LAMBDA_HANDLER:-index.handler}"
+# The zip keeps the handler under lambda/ (see tools/build-lambda.mjs), so the handler path
+# must include that folder — "index.handler" yields Runtime.ImportModuleError at invoke time.
+LAMBDA_HANDLER="${LAMBDA_HANDLER:-lambda/index.handler}"
 LAMBDA_RUNTIME="${LAMBDA_RUNTIME:-nodejs22.x}"
 LAMBDA_MEMORY_MB="${LAMBDA_MEMORY_MB:-1024}"     # see infra/40-lambda.sh
 LAMBDA_TIMEOUT_S="${LAMBDA_TIMEOUT_S:-30}"       # see infra/40-lambda.sh

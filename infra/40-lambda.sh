@@ -71,12 +71,12 @@ JSON
 if aws iam get-role --role-name "$LAMBDA_ROLE" --no-cli-pager >/dev/null 2>&1; then
   save_state LAMBDA_ROLE_ARN "$(aws iam get-role --role-name "$LAMBDA_ROLE" --query Role.Arn --output text --no-cli-pager)"
   aws iam update-assume-role-policy --role-name "$LAMBDA_ROLE" \
-    --policy-document "file://$ROLE_JSON" --no-cli-pager >/dev/null
+    --policy-document "$(awsfile "$ROLE_JSON")" --no-cli-pager >/dev/null
   log_ok "role exists — trust policy re-applied"
 else
   LAMBDA_ROLE_ARN="$(aws iam create-role --role-name "$LAMBDA_ROLE" \
       --description "Execution role for the LoadLens /api Lambda (basic execution only)" \
-      --assume-role-policy-document "file://$ROLE_JSON" \
+      --assume-role-policy-document "$(awsfile "$ROLE_JSON")" \
       --tags Key=project,Value=loadlens \
       --query Role.Arn --output text --no-cli-pager)"
   save_state LAMBDA_ROLE_ARN "$LAMBDA_ROLE_ARN"
@@ -119,12 +119,14 @@ JSON
 if aws lambda get-function --function-name "$LAMBDA_FUNCTION" --no-cli-pager >/dev/null 2>&1; then
   log_ok "function exists — updating code and configuration"
   aws lambda update-function-code --function-name "$LAMBDA_FUNCTION" \
-    --zip-file "fileb://$LAMBDA_ZIP" --no-cli-pager >/dev/null
+    --zip-file "$(awsbin "$LAMBDA_ZIP")" --no-cli-pager >/dev/null
   aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION"
+  # NOTE: --architectures is create-only — update-function-configuration rejects it, which is
+  # fine because a function's architecture cannot change after creation anyway.
   aws lambda update-function-configuration --function-name "$LAMBDA_FUNCTION" \
     --runtime "$LAMBDA_RUNTIME" --handler "$LAMBDA_HANDLER" \
     --memory-size "$LAMBDA_MEMORY_MB" --timeout "$LAMBDA_TIMEOUT_S" \
-    --architectures "$LAMBDA_ARCH" --environment "file://$ENV_JSON" \
+    --environment "$(awsfile "$ENV_JSON")" \
     --no-cli-pager >/dev/null
   aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION"
   log_ok "code + configuration updated"
@@ -135,8 +137,8 @@ else
       --role "$LAMBDA_ROLE_ARN" \
       --memory-size "$LAMBDA_MEMORY_MB" --timeout "$LAMBDA_TIMEOUT_S" \
       --architectures "$LAMBDA_ARCH" \
-      --environment "file://$ENV_JSON" \
-      --zip-file "fileb://$LAMBDA_ZIP" \
+      --environment "$(awsfile "$ENV_JSON")" \
+      --zip-file "$(awsbin "$LAMBDA_ZIP")" \
       --tags project=loadlens \
       --query FunctionArn --output text --no-cli-pager)"
   save_state FUNCTION_ARN "$FUNCTION_ARN"
@@ -194,7 +196,7 @@ cat > "$CORS_JSON" <<JSON
 {
   "AllowCredentials": false,
   "AllowHeaders": [ "content-type", "accept" ],
-  "AllowMethods": [ "GET", "POST", "OPTIONS" ],
+  "AllowMethods": [ "*" ],
   "AllowOrigins": ${ALLOWED_ORIGINS},
   "ExposeHeaders": [ "content-type" ],
   "MaxAge": 600
@@ -202,12 +204,12 @@ cat > "$CORS_JSON" <<JSON
 JSON
 log_info "CORS allow-origins: $ALLOWED_ORIGINS"
 
-if LOG_OUT="$(aws lambda create-function-url-config "${URL_ARGS[@]}" --cors "file://$CORS_JSON" \
+if LOG_OUT="$(aws lambda create-function-url-config "${URL_ARGS[@]}" --cors "$(awsfile "$CORS_JSON")" \
       --query FunctionUrl --output text --no-cli-pager 2>&1)"; then
   LAMBDA_URL="$LOG_OUT"
 else
   # already exists -> update instead, then read it back
-  aws lambda update-function-url-config "${URL_ARGS[@]}" --cors "file://$CORS_JSON" --no-cli-pager >/dev/null \
+  aws lambda update-function-url-config "${URL_ARGS[@]}" --cors "$(awsfile "$CORS_JSON")" --no-cli-pager >/dev/null \
     || die "could not create or update the Function URL: $LOG_OUT"
   LAMBDA_URL="$(aws lambda get-function-url-config --function-name "$LAMBDA_FUNCTION" \
       --query FunctionUrl --output text --no-cli-pager)"
@@ -220,8 +222,27 @@ esac
 LAMBDA_HOST_ORIGIN="$(printf '%s' "$LAMBDA_URL" | sed -e 's#^https://##' -e 's#/$##')"
 save_state LAMBDA_URL "$LAMBDA_URL" LAMBDA_HOST_ORIGIN "$LAMBDA_HOST_ORIGIN"
 
-# A public Function URL needs no extra resource policy: creating it with
-# AuthType=NONE makes AWS add the public-invoke statement itself.
+# A public Function URL needs TWO resource-policy statements. Since October 2025 AWS requires both
+# lambda:InvokeFunctionUrl AND lambda:InvokeFunction (see docs: lambda/latest/dg/urls-auth.html),
+# and the statement is not reliably added for you — when it is missing, every request gets a bare
+# 403 AccessDeniedException from the front door and never reaches the function.
+ensure_invoke_permission() {
+  local sid="$1" action="$2"; shift 2
+  local policy
+  policy="$(aws lambda get-policy --function-name "$LAMBDA_FUNCTION" --query Policy --output text --no-cli-pager 2>/dev/null || true)"
+  if printf '%s' "$policy" | grep -q "\\\"$sid\\\""; then
+    log_ok "permission $sid already present"
+  else
+    aws lambda add-permission --function-name "$LAMBDA_FUNCTION" --statement-id "$sid" \
+      --action "$action" --principal "*" "$@" --no-cli-pager >/dev/null \
+      || die "could not add the $sid permission"
+    log_ok "added permission $sid ($action)"
+  fi
+}
+ensure_invoke_permission FunctionURLAllowPublicAccess lambda:InvokeFunctionUrl --function-url-auth-type NONE
+# --function-url-auth-type is rejected for lambda:InvokeFunction (the CLI says it is "only supported
+# for lambda:InvokeFunctionUrl action"), so it is passed for the first statement only.
+ensure_invoke_permission FunctionURLAllowPublicInvoke lambda:InvokeFunction
 
 # ---------------------------------------------------------------------------
 log_title "Done"

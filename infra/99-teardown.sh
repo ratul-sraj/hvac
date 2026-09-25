@@ -70,7 +70,7 @@ else
 
   ETAG="$(node -e 'const f=require("fs");process.stdout.write(JSON.parse(f.readFileSync(process.argv[1],"utf8")).ETag)' "$GET_FILE")"
   aws cloudfront update-distribution --id "$DIST_ID" --if-match "$ETAG" \
-    --distribution-config "file://$DIS_FILE" --no-cli-pager >/dev/null
+    --distribution-config "$(awsfile "$DIS_FILE")" --no-cli-pager >/dev/null
   log_ok "disable accepted — waiting for the edge network"
 
   WAITED=0

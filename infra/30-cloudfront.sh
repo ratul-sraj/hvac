@@ -104,7 +104,7 @@ if [ -z "$OAC_ID" ]; then
 }
 JSON
   OAC_ID="$(aws cloudfront create-origin-access-control \
-      --origin-access-control-config "file://$OAC_JSON" \
+      --origin-access-control-config "$(awsfile "$OAC_JSON")" \
       --query OriginAccessControl.Id --output text --no-cli-pager)"
   log_ok "created OAC: $OAC_ID"
 else
@@ -169,7 +169,7 @@ cat > "$CFG_FILE" <<JSON
           "OriginSslProtocols": { "Quantity": 1, "Items": ["TLSv1.2"] },
           "OriginReadTimeout": ${LAMBDA_TIMEOUT_S},
           "OriginKeepaliveTimeout": 5,
-          "IPAddressType": "ipv4"
+          "IpAddressType": "ipv4"
         },
         "ConnectionAttempts": 3,
         "ConnectionTimeout": 10
@@ -236,7 +236,7 @@ cat > "$CFG_FILE" <<JSON
 JSON
 
 log_step "Validating the generated config JSON"
-node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log("     config parses as JSON")' "$CFG_FILE" \
+node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log("     config parses as JSON")' "$(nativepath "$CFG_FILE")" \
   || die "the generated CloudFront config is not valid JSON — this is a bug in infra/30-cloudfront.sh"
 
 # ---------------------------------------------------------------------------
@@ -246,13 +246,13 @@ if [ -n "$DIST_ID" ]; then
   log_step "Updating the existing distribution $DIST_ID"
   ETAG="$(aws cloudfront get-distribution-config --id "$DIST_ID" --query ETag --output text --no-cli-pager)"
   read -r _ID DIST_DOMAIN <<< "$(aws cloudfront update-distribution --id "$DIST_ID" --if-match "$ETAG" \
-      --distribution-config "file://$CFG_FILE" \
+      --distribution-config "$(awsfile "$CFG_FILE")" \
       --query 'Distribution.[Id,DomainName]' --output text --no-cli-pager)"
   log_ok "update accepted"
 else
   log_step "Creating the distribution"
   read -r DIST_ID DIST_DOMAIN <<< "$(aws cloudfront create-distribution \
-      --distribution-config "file://$CFG_FILE" \
+      --distribution-config "$(awsfile "$CFG_FILE")" \
       --query 'Distribution.[Id,DomainName]' --output text --no-cli-pager)"
   log_ok "created distribution $DIST_ID"
 fi
@@ -282,7 +282,7 @@ cat > "$POLICY_FILE" <<JSON
   ]
 }
 JSON
-aws s3api put-bucket-policy --bucket "$BUCKET" --policy "file://$POLICY_FILE" --no-cli-pager
+aws s3api put-bucket-policy --bucket "$BUCKET" --policy "$(awsfile "$POLICY_FILE")" --no-cli-pager
 log_ok "only $DIST_ARN may read the bucket (read-only, no list, no write)"
 
 # ---------------------------------------------------------------------------

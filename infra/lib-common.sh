@@ -48,12 +48,41 @@ confirm() {
   esac
 }
 
+nativepath() {
+  # Any NATIVE Windows program (aws.exe, node.exe) cannot read an MSYS path like /d/webhvac/x and
+  # needs D:/webhvac/x instead. cygpath does the conversion.
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$p"; else printf '%s' "$p"; fi
+}
+
+awsbin() {
+  # Same as awsfile(), but for the binary scheme the AWS CLI uses for --zip-file uploads.
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then p="$(cygpath -m "$p")"; fi
+  printf 'fileb://%s' "$p"
+}
+
+awsfile() {
+  # Build a file:// parameter for the AWS CLI. aws.exe is a NATIVE Windows program, so it cannot
+  # read an MSYS path like /d/webhvac/... — it must get D:/webhvac/... . cygpath does that.
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then p="$(cygpath -m "$p")"; fi
+  printf 'file://%s' "$p"
+}
+
 # ---------------------------------------------------------------------------
 # requirements
 # ---------------------------------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }
 
 require_cmd() {
+  # The AWS CLI MSI installs to C:\Program Files\Amazon\AWSCLIV2 but a non-interactive shell
+  # (cron / a detached background job) may not have it on PATH yet, so look there before giving up.
+  if [ "$1" = "aws" ] && ! command -v aws >/dev/null 2>&1; then
+    for _d in "/c/Program Files/Amazon/AWSCLIV2" "/c/Program Files (x86)/Amazon/AWSCLIV2"; do
+      [ -x "$_d/aws.exe" ] && PATH="$PATH:$_d" && export PATH && break
+    done
+  fi
   have "$1" || die "required command '$1' is not on PATH"
 }
 

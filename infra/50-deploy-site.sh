@@ -114,21 +114,25 @@ fi
 # ---------------------------------------------------------------------------
 log_step "Uploading to s3://$BUCKET"
 
+# aws.exe is a NATIVE program: it cannot read an MSYS path like /d/webhvac/..., so the sync sources
+# are handed to it in native form while the shell keeps using $SRC.
+SRC_NATIVE="$(nativepath "$SRC")"
+
 # html at the root
-aws s3 sync "$SRC" "s3://$BUCKET" --exclude "*" --include "*.html" \
+aws s3 sync "$SRC_NATIVE" "s3://$BUCKET" --exclude "*" --include "*.html" \
   --content-type "$CT_HTML" --cache-control "$CACHE_HTML" --no-progress
 log_ok "*.html -> cache-control: $CACHE_HTML"
 
 # favicon
 if [ -f "$SRC/favicon.svg" ]; then
-  aws s3 sync "$SRC" "s3://$BUCKET" --exclude "*" --include "favicon.svg" \
+  aws s3 sync "$SRC_NATIVE" "s3://$BUCKET" --exclude "*" --include "favicon.svg" \
     --content-type "$CT_SVG" --cache-control "$CACHE_SHORT" --no-progress
   log_ok "favicon.svg -> cache-control: $CACHE_SHORT"
 fi
 
 # css/
 if [ -d "$SRC/css" ]; then
-  aws s3 sync "$SRC/css" "s3://$BUCKET/css" \
+  aws s3 sync "$SRC_NATIVE/css" "s3://$BUCKET/css" \
     --content-type "$CT_CSS" --cache-control "$CACHE_LONG" --no-progress
   log_ok "css/ -> immutable"
 fi
@@ -136,7 +140,7 @@ fi
 # js/  (content type matters: these are ES modules, a wrong MIME type makes the
 # browser refuse to import them)
 if [ -d "$SRC/js" ]; then
-  aws s3 sync "$SRC/js" "s3://$BUCKET/js" \
+  aws s3 sync "$SRC_NATIVE/js" "s3://$BUCKET/js" \
     --content-type "$CT_JS" --cache-control "$CACHE_LONG" --no-progress
   log_ok "js/ -> immutable"
 fi
@@ -145,20 +149,20 @@ fi
 # ES module must be a JavaScript type or the import fails, and the CLI's guess
 # is not reliable for .mjs or .gz on every platform.
 if [ -d "$SRC/vendor" ]; then
-  aws s3 sync "$SRC/vendor" "s3://$BUCKET/vendor" \
+  aws s3 sync "$SRC_NATIVE/vendor" "s3://$BUCKET/vendor" \
     --exclude "*" --include "*.mjs" --include "*.js" \
     --content-type "$CT_JS" --cache-control "$CACHE_LONG" --no-progress
-  aws s3 sync "$SRC/vendor" "s3://$BUCKET/vendor" \
+  aws s3 sync "$SRC_NATIVE/vendor" "s3://$BUCKET/vendor" \
     --exclude "*" --include "*.gz" \
     --content-type "$CT_GZIP" --cache-control "$CACHE_LONG" --no-progress
-  aws s3 sync "$SRC/vendor" "s3://$BUCKET/vendor" \
+  aws s3 sync "$SRC_NATIVE/vendor" "s3://$BUCKET/vendor" \
     --exclude "*.mjs" --exclude "*.js" --exclude "*.gz" \
     --cache-control "$CACHE_LONG" --no-progress
   log_ok "vendor/ -> immutable (mjs/js forced to $CT_JS, no Content-Encoding set on .gz)"
 fi
 
 if [ -d "$SRC/samples" ]; then
-  aws s3 sync "$SRC/samples" "s3://$BUCKET/samples" \
+  aws s3 sync "$SRC_NATIVE/samples" "s3://$BUCKET/samples" \
     --cache-control "$CACHE_SHORT" --no-progress
   log_ok "samples/ uploaded"
 fi

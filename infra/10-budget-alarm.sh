@@ -100,12 +100,12 @@ if aws budgets describe-budget --account-id "$ACCOUNT_ID" --budget-name "$BUDGET
   "BudgetType": "COST"
 }
 JSON
-  aws budgets update-budget --account-id "$ACCOUNT_ID" --new-budget "file://$UPD_JSON" \
+  aws budgets update-budget --account-id "$ACCOUNT_ID" --new-budget "$(awsfile "$UPD_JSON")" \
     --region "$BUDGETS_REGION" --no-cli-pager >/dev/null
   log_ok "budget limit is now USD ${BUDGET_LIMIT_USD}/month"
 else
   log_info "not found — creating it"
-  aws budgets create-budget --cli-input-json "file://$BUDGET_JSON" \
+  aws budgets create-budget --cli-input-json "$(awsfile "$BUDGET_JSON")" \
     --region "$BUDGETS_REGION" --no-cli-pager >/dev/null
   log_ok "budget created"
 fi
@@ -127,7 +127,7 @@ add_notification() { # add_notification <threshold> <type> <operator>
 JSON
   SUBS_JSON="$(aws budgets describe-subscribers-for-notification \
       --account-id "$ACCOUNT_ID" --budget-name "$BUDGET_NAME" \
-      --notification "file://$_n" --region "$BUDGETS_REGION" \
+      --notification "$(awsfile "$_n")" --region "$BUDGETS_REGION" \
       --query 'Subscribers[].Address' --output text --no-cli-pager 2>/dev/null | tr '\t' '\n' || true)"
 
   if printf '%s\n' "$SUBS_JSON" | grep -qx "$BUDGET_EMAIL"; then
@@ -137,7 +137,7 @@ JSON
 
   if _out="$(aws budgets create-notification \
         --account-id "$ACCOUNT_ID" --budget-name "$BUDGET_NAME" \
-        --notification "file://$_n" \
+        --notification "$(awsfile "$_n")" \
         --subscribers "[{\"SubscriptionType\":\"EMAIL\",\"Address\":\"$BUDGET_EMAIL\"}]" \
         --region "$BUDGETS_REGION" --no-cli-pager 2>&1)"; then
     log_ok "alert created: $2 ${1}% -> $BUDGET_EMAIL"
