@@ -23,6 +23,17 @@ const browser = await puppeteer.launch({
   protocolTimeout: 120000,
 });
 const page = await browser.newPage();
+
+// Deny real file downloads. Capturing the CSV needs URL.createObjectURL, but that call cannot stop
+// the following anchor click from saving a file — without this, EVERY test run dropped another
+// "HVAC-Load-Calculation-cooling-load (n).csv" into the user's Downloads folder (26 of them piled up
+// before this was noticed). CDP's deny is the only reliable way to stop it inside the page.
+try {
+  const cdp = await page.target().createCDPSession();
+  await cdp.send("Page.setDownloadBehavior", { behavior: "deny" });
+} catch (e) {
+  console.warn("warning: could not disable downloads:", e.message);
+}
 await page.setViewport({ width: 1400, height: 1000 });
 
 const consoleErrors = [];
