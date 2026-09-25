@@ -90,11 +90,17 @@ else
   if [ "$WITH_SAMPLES" = "1" ]; then
     if [ -d "$REPO_ROOT/tests/samples" ]; then
       mkdir -p "$STAGE_DIR/samples"
-      cp "$REPO_ROOT"/tests/samples/*.pdf "$STAGE_DIR/samples/" 2>/dev/null || true
-      cp "$REPO_ROOT"/tests/samples/*.csv "$STAGE_DIR/samples/" 2>/dev/null || true
-      cp "$REPO_ROOT"/tests/samples/*.xlsx "$STAGE_DIR/samples/" 2>/dev/null || true
+      # ONLY the synthetic fixtures by name. tests/samples still holds the user's PRIVATE drawings
+      # locally (now gitignored), and a `*.pdf` wildcard here would publish them to the world.
+      for _f in sample-plan.pdf schedule-sample.pdf schedule.csv schedule.xlsx room-types.csv; do
+        [ -f "$REPO_ROOT/tests/samples/$_f" ] && cp "$REPO_ROOT/tests/samples/$_f" "$STAGE_DIR/samples/"
+      done
+      # Belt and braces: refuse to upload if anything private slipped into the staging folder.
+      if ls "$STAGE_DIR/samples" 2>/dev/null | grep -qiE 'headquarters|^hq_p'; then
+        die "refusing to publish: a private drawing is staged under samples/ — fix the list in this script"
+      fi
       log_ok "samples: $(ls "$STAGE_DIR/samples" | wc -l | tr -d ' ') file(s) -> /samples/"
-      log_warn "these drawings become PUBLIC. Leave the flag off unless you want that."
+      log_warn "these files become PUBLIC. The synthetic sample is safe; never add a real drawing here."
     else
       log_warn "tests/samples/ does not exist — nothing to copy"
     fi

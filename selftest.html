@@ -47,8 +47,9 @@ try {
   pdfjs.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.min.mjs";
   log(`pdf.js ${pdfjs.version} loaded, worker = ${pdfjs.GlobalWorkerOptions.workerSrc}`);
 
-  // 1. sample drawing. A deployment may deliberately not publish it (infra/50-deploy-site.sh needs
-  // --with-samples, because it makes the drawing public). A static host then answers the missing
+  // 1. sample drawing. tests/samples/sample-plan.pdf is synthetic (tools/make-sample-plan.mjs), so
+  // publishing it is safe — but a deployment may still not ship it (infra/50-deploy-site.sh only
+  // uploads /samples with --with-samples). A static host then answers the missing
   // file with its SPA fallback page, so a 200 is NOT proof of a PDF: check the magic bytes and skip
   // the sample-dependent checks instead of failing with "Invalid PDF structure".
   const res = await fetch("samples/sample-plan.pdf");

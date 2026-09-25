@@ -69,7 +69,7 @@ is also accepted). `application/pdf` / `.pdf` only, magic bytes must start with 
 
 ```bash
 curl -s -X POST \
-  -F "files=@tests/samples/headquarters.pdf;type=application/pdf" \
+  -F "files=@tests/samples/sample-plan.pdf;type=application/pdf" \
   http://localhost:3000/api/parse
 ```
 
@@ -78,12 +78,12 @@ curl -s -X POST \
 ```json
 {
   "files": [
-    { "name": "headquarters.pdf", "pages": 3, "roomCount": 149, "levelCount": 3,
+    { "name": "sample-plan.pdf", "pages": 3, "roomCount": 159, "levelCount": 3,
       "rooms": [ /* … */ ], "warnings": [], "ms": 246 }
   ],
   "rooms": [ { "id": "r1", "name": "TEL.C.", "level": "Ground Floor", "area": 1.5,
                "type": "general", "include": false, "source": "label", "page": 1,
-               "sourceFile": "headquarters.pdf" } ],
+               "sourceFile": "sample-plan.pdf" } ],
   "warnings": [ "…" ],
   "ms": 246
 }
@@ -118,7 +118,7 @@ curl -s http://localhost:3000/api/climates
 ## Static files
 
 The server also serves the app: `/`, `/index.html`, `/selftest.html`, `/favicon.svg`, `/css/*`,
-`/js/*`, `/vendor/*`, and the sample drawing at `/samples/headquarters.pdf` (so the "load sample"
+`/js/*`, `/vendor/*`, and the sample drawing at `/samples/sample-plan.pdf` (so the "load sample"
 button works on the server too).
 
 **Never served:** `tests/` (except its read-only `samples/` subfolder), `node_modules/`, `.git/`,
@@ -127,13 +127,13 @@ dotfiles, and `package.json` / `package-lock.json` — all answer `404`.
 ## Tests
 
 ```bash
-npm test            # the existing engine/parser/node tests (23 tests)
+npm test            # the existing engine/parser/node tests (24 tests)
 npm run test:api    # this server's HTTP API (25 checks, plain node, no framework)
 npm run test:browser # optional: drives a real Chrome via puppeteer-core
 ```
 
 `npm run test:api` starts its own server on a free port with `MAX_UPLOAD_MB=1` and
-`LOG_REQUESTS=0`, checks health, a real 3-page / 149-room PDF, multi-file uploads, the `.txt`,
+`LOG_REQUESTS=0`, checks health, the synthetic 3-page / 159-room sample PDF, multi-file uploads, the `.txt`,
 fake-PDF, empty and oversize rejections, `/api/calc`, `/api/climates`, the JSON 404, the served UI
 and that `tests/`/`node_modules/` stay private — then shuts the server down (also when a check
 fails). It exits `1` if anything fails.

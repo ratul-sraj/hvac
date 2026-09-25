@@ -77,8 +77,8 @@ Never serve `tests/`, `node_modules/`, `.git/`, or dotfiles.
   and the limits (text-layer PDFs only, handbook-level load method — must be checked by an engineer).
 - `tests/api-test.mjs` — plain node (no test framework), starts the server on a random free port with
   `PORT=0`-style handling (or spawn `node server.js` with a free port), uses `fetch` + `FormData`/`Blob`
-  (Node 22 has both), and asserts: health ok; `/api/parse` on `tests/samples/headquarters.pdf` returns
-  149 rooms and 3 pages; a `.txt` file and a fake `%PDF`-less file are rejected with 400; an oversize file
+  (Node 22 has both), and asserts: health ok; `/api/parse` on `tests/samples/sample-plan.pdf` returns
+  159 rooms and 3 pages; a `.txt` file and a fake `%PDF`-less file are rejected with 400; an oversize file
   is rejected (set `MAX_UPLOAD_MB=1` for the test run and post >1 MB); `/api/calc` with 2 rooms returns
   totals with `tr > 0`; unknown `/api/x` is 404 JSON; `GET /` returns the HTML with `WebHVAC` in it and
   `GET /tests/run.mjs` is NOT served (403/404). Print PASS/FAIL per check and exit 1 on failure.

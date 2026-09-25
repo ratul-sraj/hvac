@@ -69,7 +69,7 @@ Drag a file onto the dashed box (or click it and choose the file). The drop zone
 You can select several files at once — up to 10 files per upload, max 25 MB each. Two buttons help
 you test:
 
-- **Try sample drawing** loads `tests/samples/headquarters.pdf`, a real 3-page sample building.
+- **Try sample drawing** loads `tests/samples/sample-plan.pdf`, a synthetic 3-page sample building.
 - **Add room manually** adds one empty room you can type into.
 
 **Reading a scanned drawing.** A scan or a photo has no text layer, so the normal reader finds
@@ -87,7 +87,7 @@ instead. What to expect, honestly:
   and suggests the better route — **import the Excel / CSV room schedule** for a scanned sheet.
 
 A progress bar shows the file and the page being read, then a status line reports what happened,
-for example `149 room(s) added, 6 looked like duplicates and were skipped`. Parser notes
+for example `159 room(s) added`. Parser notes
 (duplicate labels, labels without an area, pages with no text) are collected in the
 **"parser note(s) — click to read"** box. Read them: they tell you what the reader could not
 make sense of.
@@ -96,8 +96,8 @@ make sense of.
 
 ![The room table and the summary cards after loading the sample drawing](img/app-loaded.png)
 
-The sample building gives **149 rooms** in **3 floors** (Ground Floor, L1 Floor, L2 Floor). In the
-table, `93 included in the load` and `149 shown` — the other 56 rows are toilets, shafts, stores,
+The sample building gives **159 rooms** in **3 floors** (Ground Floor, L1 Floor, L2 Floor). In the
+table, `120 included in the load` and `159 shown` — the other 39 rows are toilets, shafts, stores,
 stairs and similar, which the app sets to *not air conditioned* by itself.
 
 The top of this page is the summary: **total cooling load in TR**, total heat in W, supply air
@@ -105,8 +105,8 @@ L/s, fresh-air L/s, conditioned area in m² and ft², area per tonne (ft²/TR), 
 sensible heat and room latent heat. Under it, the **level-wise subtotal** table shows the same
 numbers floor by floor — which is how you normally report a job.
 
-For the sample the totals are: **5,608.5 m² conditioned**, **233.78 TR**, **35,978 L/s supply air**,
-**3,974 L/s fresh air**, about **258 ft²/TR**.
+For the sample the totals are: **7,006.8 m² conditioned**, **363.86 TR**, **52,157 L/s supply air**,
+**6,995 L/s fresh air**, about **207 ft²/TR**.
 
 ### Step 4 — fix the wrong rooms
 
@@ -334,7 +334,7 @@ Say this clearly, the same way the printed report does:
 | File | What it shows |
 |---|---|
 | [`img/app-empty.png`](img/app-empty.png) | The calculator before anything is uploaded — project and design conditions, upload panel, empty summary |
-| [`img/app-loaded.png`](img/app-loaded.png) | The sample building loaded: summary cards and the floor-wise subtotals above the 149-row room table |
+| [`img/app-loaded.png`](img/app-loaded.png) | The sample building loaded: summary cards and the floor-wise subtotals above the 159-row room table |
 | [`img/app-detail.png`](img/app-detail.png) | The load breakdown panel for one room — every heat-gain component in W with its share |
 | [`img/method.png`](img/method.png) | The "Method and assumptions" page |
 | [`img/help.png`](img/help.png) | The "Help and FAQ" page |

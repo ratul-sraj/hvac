@@ -12,7 +12,7 @@
 // Sizing notes (see tools/build-lambda.mjs + tests/test-lambda.mjs):
 //   * Memory: 512 MB is comfortable / 1024 MB is fast; a 3-page drawing needs
 //     well under 300 MB of RSS. Below ~256 MB pdf.js on a big drawing may OOM.
-//   * Timeout: give it at least 30 s. The 3-page tests/samples/headquarters.pdf
+//   * Timeout: give it at least 30 s. The 3-page synthetic tests/samples/sample-plan.pdf
 //     parses in ~1-3 s cold (pdf.js + worker bootstrap on first call), then a
 //     few hundred ms per warm call.
 //   * Function URL payloads are synchronous and capped at 6 MB, while the app's

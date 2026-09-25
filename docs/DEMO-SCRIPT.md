@@ -15,17 +15,18 @@ Open **http://localhost:3000/** and leave the page at the top. If you want to al
 landing / method pages from a static copy, that is a second terminal with
 `python -m http.server 8230 --bind 127.0.0.1` — but the demo below only needs the one page.
 
-Numbers to remember before you speak (real, from `tests/samples/headquarters.pdf`):
+Numbers to remember before you speak (real and measured, from the synthetic sample
+`tests/samples/sample-plan.pdf` that ships with the app):
 
 | | |
 |---|---|
 | Pages / floors | 3 — Ground Floor, L1 Floor, L2 Floor |
-| Rooms read from the PDF | **149** |
-| Rooms air-conditioned (included in the load) | **93** |
-| Conditioned area | **5,608.5 m²** (60,369 ft²) |
-| Total cooling load | **233.8 TR** (822,190 W) |
-| Supply air | **35,978 L/s**; fresh air **3,974 L/s** |
-| Area per tonne | **258 ft²/TR** |
+| Rooms read from the PDF | **159** |
+| Rooms air-conditioned (included in the load) | **120** |
+| Conditioned area | **7,006.8 m²** (75,413 ft²) |
+| Total cooling load | **363.86 TR** (1,279,702 W) |
+| Supply air | **52,157 L/s**; fresh air **6,995 L/s** |
+| Area per tonne | **207 ft²/TR** |
 | Load by floor | Ground 88.1 TR, L1 70.2 TR, L2 75.5 TR |
 | Biggest room | ATRIUM, Ground Floor, 1,249 m² → 34.6 TR, SHF 0.68 |
 | Safety factor / assumptions | 10 %; Kochi 35 °C DB / 28 °C WB; 24 °C / 50 % RH inside |
@@ -57,14 +58,14 @@ PDF**. Click nothing yet.
 **What to do:** click **Try sample drawing**. Wait — about 10 seconds. Say nothing for a second
 while it fills, then point at the summary cards.
 
-> "One click. It reads all three pages and here is the load summary: **233.8 tonnes of
-> refrigeration**, **35,978 L/s supply air**, **3,974 L/s fresh air**, **5,609 square metres
+> "One click. It reads all three pages and here is the load summary: **363.9 tonnes of
+> refrigeration**, **52,157 L/s supply air**, **6,995 L/s fresh air**, **7,006.8 square metres
 > conditioned**, and **258 square feet per tonne**."
 
 Then scroll a little, to the level-wise table, then into the room table:
 
 > "Under the cards is the floor-wise subtotal: Ground Floor 88 tonnes, Level One 70, Level Two 75.
-> And here is the room list — **149 rooms found, 93 air-conditioned**. The app decided by itself
+> And here is the room list — **159 rooms found, 120 air-conditioned**. The app decided by itself
 > that the toilets, shafts, stores and stairs are not conditioned — they stay in the list but they
 > are out of the totals. Every row is editable: area, height, people, lighting, equipment,
 > orientation, wall and glass area, roof, partitions."
@@ -107,7 +108,7 @@ PDF report** and let the report window appear (do not print).
 chart, no coil selection. For a signed job you still use HAP or Carrier or TRACE. And it reads
 > the **text layer** of the PDF — a scanned drawing has no text, so for a scan you either import the
 > room schedule as Excel/CSV (much better) or tick the OCR box. Within those limits, in a few seconds it turns a drawing I would normally read
-> by hand into a 93-room load sheet with the whole calculation shown line by line."
+> by hand into a 120-room load sheet with the whole calculation shown line by line."
 
 ---
 
@@ -116,9 +117,9 @@ chart, no coil selection. For a signed job you still use HAP or Carrier or TRACE
 **Do:** open the page → click **Try sample drawing** → wait → click the **TR** header to sort →
 click the **ATRIUM** row → say the numbers → stop.
 
-> "This app reads a floor plan PDF and calculates the cooling load. It found **149 rooms in three
-> floors** and decided **93 of them are air-conditioned** — **5,609 square metres** — for a total of
-> **233.8 tonnes of refrigeration**, about **258 square feet per tonne**, with **35,900 L/s** of
+> "This app reads a floor plan PDF and calculates the cooling load. It found **159 rooms in three
+> floors** and decided **120 of them are air-conditioned** — **7,006.8 square metres** — for a total of
+> **363.9 tonnes of refrigeration**, about **207 square feet per tonne**, with **52,200 L/s** of
 > supply air and **3,970 L/s** of fresh air at the Kochi design condition of 35 dry bulb and 28 wet
 > bulb. This panel is one room's breakdown — solar, wall, roof, people, lighting, equipment,
 > infiltration, fresh air, sensible and latent, with percentages. Everything is editable, and the
@@ -168,12 +169,12 @@ the browser tab at all — the PDF engine is bundled inside the page. There is n
 account, no analytics, and the server keeps nothing after the response.
 
 **Can it be wrong about a room?**
-Yes, and it says so. It found 149 rooms here but flagged six parser notes (duplicate labels, a
+Yes, and it says so. It found 159 rooms here and flagged one parser note (a label with no area, a
 label with no area). A room called `TEL.C.` is a drafting abbreviation, not a real name; the area
 can be missing. That is exactly why the table is editable and why the report says the areas must be
 confirmed against the drawing and the room schedule.
 
-**What is 258 ft²/TR telling me?**
+**What is 207 ft²/TR telling me?**
 It is a sanity check on the whole building: how much floor area one tonne of refrigeration serves.
 Typical Indian office practice is roughly 200–300 ft²/TR; a well-insulated office with efficient
 glazing can be better, a glass-box restaurant or a lab can be far worse. If a number in that range

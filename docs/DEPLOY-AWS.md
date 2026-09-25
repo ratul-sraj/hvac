@@ -374,7 +374,7 @@ result was verified over HTTP. Everything below was measured, not assumed.
 | credits | none — the account predates 15 Jul 2025, so the $200 pot never applied |
 
 Verified: landing page 200 (12.5 kB), `/api/health` 200 through CloudFront, and
-`POST /api/parse` with the 748 kB 3-page sample returned **200 with 149 rooms in 2.3 s**.
+`POST /api/parse` with the 24 kB synthetic sample returned **200 with 159 rooms in ~2 s**.
 
 ### Bugs this first real run exposed (all fixed here)
 
@@ -413,7 +413,7 @@ deployment surfaced three things that localhost could not:
 
 7. **A 200 is not proof of a PDF.** The deployment deliberately does not publish the sample
    drawing (`--with-samples` would make it public), and CloudFront's 403/404 -> /index.html
-   fallback answered the missing `samples/headquarters.pdf` with 12,539 bytes of HTML. The app
+   fallback answered the missing `samples/sample-plan.pdf` with 12,539 bytes of HTML. The app
    then failed with the cryptic `InvalidPDFException: Invalid PDF structure`. `js/app.js` and
    `selftest.html` now check the `%PDF-` magic bytes and report "the sample drawing is not part
    of this deployment" instead; the sample-dependent checks in both test files are skipped rather

@@ -48,8 +48,10 @@ Requirements and hints:
 - In Node (tests) tesseract.js can use its own bundled paths — the test may OCR a real fixture.
 - Rendering: `page.getViewport({ scale })` then `page.render({ canvasContext, viewport })`. Use an
   OffscreenCanvas when available, else a detached `<canvas>`. scale 4 ≈ 300 dpi for A1 sheets.
-- **Rotation matters** — the sample drawing is a 90°-rotated sheet. Detect it: OCR once, then (if the
-  result is thin) rotate the raster by 90/180/270 and keep the orientation that yields the most words.
+- **Rotation matters** — rotated sheets are common in the wild, and the private local fixtures cover
+  that case; the synthetic `sample-plan.pdf` that ships with the repo deliberately has **no `/Rotate`
+  entries**, so it does not exercise this path. Detect it: OCR once, then (if the result is thin)
+  rotate the raster by 90/180/270 and keep the orientation that yields the most words.
   Put the chosen rotation in `rotation` and report it in `warnings`.
 - Map tesseract word boxes to the item shape: `x = bbox.x0`, `y = bbox.y0`, `h = bbox.y1 - bbox.y0`
   (tesseract boxes are already top-left origin, y down — same as our display coords). Drop words with
@@ -58,14 +60,20 @@ Requirements and hints:
 - OCR is slow and memory heavy: cap `scale` so the raster stays under ~4000 px on the long edge.
 
 Tests (`tests/test-ocr.mjs`, plain node, no framework, PASS/FAIL + exit 1): unit-test
-`isProbablyScanned()`; build a **real scanned fixture** with
-`tests/make-scanned-fixture.mjs` — use the installed Edge via puppeteer-core (see
-`tests/browser-check.mjs` for the launch options): open a page that draws
+`isProbablyScanned()`; the scanned fixtures are built **on this machine only** by
+`tests/make-scanned-fixture.mjs` (there is no way to synthesise a real image-only scan here without
+image tooling). It uses the installed Edge via puppeteer-core (see `tests/browser-check.mjs` for the
+launch options): open a page that draws **the private, git-ignored local drawing**
 `tests/samples/headquarters.pdf` page 1 into a canvas at scale 3, turn that canvas into a JPEG, then
-use `page.pdf()` to save an image-only PDF as `tests/samples/headquarters-scanned.pdf`. Assert the
-fixture has NO text layer (pdf.js returns < 12 items) and then that `ocrPdf()` on it finds a
-reasonable number of rooms (report the real number; do not invent a threshold you cannot meet — if
-OCR finds only a few rooms, say so plainly and assert what it really does).
+use `page.pdf()` to save an image-only PDF as `tests/samples/headquarters-scanned.pdf`. Both files
+are **local-only and gitignored** — the private drawing and the scan built from it are never
+committed and do not exist in a published checkout, so this path cannot run there. Because of that,
+every check that needs the fixture is **skipped loudly, never failed**: the suite prints `SKIP` for
+its 10 fixture-dependent checks (and a `skipped` count in the summary), so a fresh clone still gets a
+green run. Where the fixture **is** present, assert it has NO text layer (pdf.js returns < 12 items)
+and then that `ocrPdf()` on it finds a reasonable number of rooms (report the real number; do not
+invent a threshold you cannot meet — if OCR finds only a few rooms, say so plainly and assert what it
+really does).
 
 ## Contract 2 — `js/schedule.js` (SCHEDULE worker implements exactly this)
 
@@ -128,7 +136,7 @@ guard the tesseract paths with `configureOcr()` called lazily, so a browser that
 never loads the wasm.
 
 ## Finish line
-- `cd D:/webhvac && node tests/run.mjs` (existing 23) still passes, plus the two new suites.
+- `cd D:/webhvac && node tests/run.mjs` (existing 24) still passes, plus the two new suites.
 - `node tests/browser-check.mjs http://127.0.0.1:3000/app.html` still passes 26/26.
 - Real end-to-end evidence in your final answer: the CSV/XLSX import through the page, and one OCR
   run on the scanned fixture, with the numbers you actually got.

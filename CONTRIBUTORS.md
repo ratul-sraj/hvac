@@ -10,8 +10,10 @@ collaboration between its owner and an AI agent working in this repository.
 
 - Set the goal and the scope: a cooling-load tool that reads the room tags already drawn in
   a floor plan PDF, in SI units (TR, L/s, m²), for Kerala and Gulf design conditions.
-- Provided the real drawing used to develop and test the reader
-  (`tests/samples/headquarters.pdf` — a 3-page, 90°-rotated ducting layout, 149 room tags).
+- Supplied real room schedules for verification. The project was developed and verified against
+  the synthetic fixture that ships in the repo, `tests/samples/sample-plan.pdf` (3 pages,
+  159 room tags, built by `tools/make-sample-plan.mjs`) — the owner's real drawings are
+  deliberately **not** in the repository and never published.
 - Chose the product name, the deployment target (one repository, no other repos touched), and
   reviewed what shipped.
 

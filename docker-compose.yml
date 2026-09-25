@@ -36,8 +36,8 @@ services:
       start_period: 10s
     # ---------------------------------------------------------------------------
     # OPTIONAL: serve your own PDF drawings from a local folder.
-    # The image already ships the sample at tests/samples (reachable as
-    # /samples/headquarters.pdf). To add your own files, create a folder called
+    # The image already ships the synthetic sample at tests/samples (reachable as
+    # /samples/sample-plan.pdf). To add your own files, create a folder called
     # "samples" next to this file and uncomment the two lines below — they appear
     # on the server at http://localhost:3000/samples/<your-file>.pdf
     #

@@ -43,7 +43,7 @@ If they want the longer version:
 | Calculation engine | `js/calc.js` — pure module, SI units inside | The engineering lives in one file with the factor tables visible, not hidden in the UI |
 | Reporting | `js/report.js` — pure string builders | CSV for Excel and a printable A4 report with the assumptions and the caveats on it |
 | Server (optional) | Node 22 + Express, `POST /api/parse`, `/api/calc`, `/api/health` | Same app works two ways: PDF read in the browser, or read on the server. Docker-ready |
-| Tests | Node test scripts, an HTTP API test, and a real-browser test with puppeteer-core | The sample building (3 pages, 149 rooms) is a regression test, not a demo |
+| Tests | Node test scripts, an HTTP API test, and a real-browser test with puppeteer-core | The sample building (3 pages, 159 rooms) is a regression test, not a demo |
 | Docs | A user guide, a demo script, these notes, and a screenshot script | Documentation is part of the deliverable |
 
 Two words for the architecture: **same engine, two runtimes.** The engine has no DOM and no Node
@@ -86,16 +86,16 @@ interview.
 - **TR (tonne of refrigeration).** 1 TR = 3,517 W = 12,000 BTU/h. Converting the SI result into TR
   is what the client and the equipment schedule speak.
 - **Airflow (L/s) and supply ΔT.** Supply air quantity = sensible heat ÷ (1.23 × supply ΔT). With an 11 K
-  supply-to-room ΔT, 35,978 L/s here. The air quantity is the bridge from the load to the duct and
+  supply-to-room ΔT, 52,157 L/s here. The air quantity is the bridge from the load to the duct and
   AHU design, even though this tool does not size them.
-- **ft²/TR as a sanity check.** 5,609 m² / 233.8 TR = **258 ft²/TR**. The rule of thumb for Indian
+- **ft²/TR as a sanity check.** 7,006.8 m² / 363.86 TR = **207 ft²/TR**. The rule of thumb for Indian
   office work is roughly 200–300 ft²/TR. A number inside that band, with the biggest rooms verified,
   is a sign the estimate is behaving — and outside it is a sign something is wrong.
 - **Why Kerala's humid climate pushes ft²/TR down (more TR for the same area).** Fresh air at
   28 °C wet bulb carries a lot of moisture. Removing that moisture costs latent heat; the fresh-air
-  load is a large fraction of the total here (3,974 L/s of outdoor air), and roof and west-wall
+  load is a large fraction of the total here (6,995 L/s of outdoor air), and roof and west-wall
   gains are high all year. So for the same floor area, a Kochi building needs more tonnes than a
-  dry-climate building — which is why 258 ft²/TR appears instead of the 350–400 ft²/TR someone may
+  dry-climate building — which is why 207 ft²/TR appears instead of the 350–400 ft²/TR someone may
   quote from a dry city.
 - **Safety factor and diversity.** A flat 10 % on room sensible and latent, shown separately in the
   breakdown. No diversity on people or equipment — conservative by design, and stated in the report.
@@ -116,7 +116,7 @@ Say them before you are asked. It reads as competence, not as an excuse.
 | No duct, pipe, coil or equipment selection | "It stops at the load and the air quantity. Duct sizing, pipe sizing, coil selection and equipment selection are the next step, and I did not build that." |
 | No OCR | "It reads the PDF text layer. A scanned drawing has no text, so there it finds nothing — you would type the rooms in or use the schedule sheet." |
 | No Revit / IFC connection | "It reads a PDF, not a model. Exporting a Revit room schedule to PDF works well; reading the model directly would need the Revit API or IFC." |
-| Areas and names can be wrong | "It read 149 rooms here and flagged six parser notes. Every row is editable and the report tells you to confirm the areas against the drawing — that is the workflow, not a bug." |
+| Areas and names can be wrong | "It read 159 rooms here and flagged one parser note. Every row is editable and the report tells you to confirm the areas against the drawing — that is the workflow, not a bug." |
 | Simplified solar and shading | "One peak value per orientation and a single shading coefficient. Overhangs, fins, adjacent buildings, glass framing and interior shades are not modelled one by one." |
 | Fresh-air rates from the app's table | "The rates are ASHRAE 62.1 type-of-use values; for a real project you take the project specification and the local code (NBC, ECBC) and type them in." |
 | I am not a licensed HVAC designer | "I am training as a modeller and coordinator. This shows I understand how the load is built up and where it can go wrong; the sign-off belongs to the engineer." |
@@ -164,7 +164,7 @@ sensible and latent. Correct the glazing area and the orientation from the actua
 number comes down."
 
 **6. "How do you know the answer is not nonsense?"**
-"Three checks. First, ft²/TR: 5,609 m² over 233.8 TR is 258 ft²/TR, inside the 200–300 band for
+"Three checks. First, ft²/TR: 7,006.8 m² over 363.86 TR is 207 ft²/TR, inside the 200–300 band for
 Indian office work. Second, the breakdown of the biggest rooms — the ATRIUM at 1,249 m² gives
 34.6 TR, and its components are solar, ventilation and people, which is what I would expect for an
 atrium. Third, the level-wise totals: 88, 70 and 75 TR across three floors, with the ground floor
@@ -180,9 +180,9 @@ code."
 
 **8. "How is the app tested?"**
 "Node tests for the engine and the parser, an HTTP API test that uploads the real 3-page sample PDF
-and expects 149 rooms, and a real-browser test driven with puppeteer-core that loads the sample,
+and expects 159 rooms, and a real-browser test driven with puppeteer-core that loads the sample,
 edits an area, exports the CSV, checks the printed report and reloads the page to see the state
-restored. The total of 233.78 TR from the sample is a regression value — if a factor changes by
+restored. The total of 363.86 TR from the sample is a regression value — if a factor changes by
 mistake, the test catches it."
 
 **9. "Could it read my Revit model?"**
@@ -208,5 +208,5 @@ else's engineering numbers against your own understanding is exactly what a coor
 
 Use `docs/DEMO-SCRIPT.md`. The short version: open `http://localhost:3000/` → **Try sample
 drawing** → sort by **TR** → open the **ATRIUM** breakdown → **Download CSV** → **Print / Save PDF
-report**. Say the numbers as facts: 149 rooms, 93 conditioned, 5,609 m², 233.8 TR, 258 ft²/TR,
+report**. Say the numbers as facts: 159 rooms, 120 conditioned, 7,006.8 m², 363.86 TR, 207 ft²/TR,
 three floors. Then say the limits before they ask.

@@ -55,11 +55,11 @@ try {
   // 2. no console errors on load
   ok("no console errors on load", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
 
-  // 3. sample drawing -> rooms. A deployment may deliberately not publish the sample drawing
-  // (infra/50-deploy-site.sh only uploads it with --with-samples, because it makes the drawing
-  // public). In that case the app says so clearly, and the sample-dependent checks below are
-  // skipped rather than failed — what matters on such a deployment is that the page, the API and
-  // the in-browser parser all work.
+  // 3. sample drawing -> rooms. tests/samples/sample-plan.pdf is synthetic (tools/make-sample-plan.mjs),
+  // so publishing it is safe — but a deployment may still not ship it (infra/50-deploy-site.sh only
+  // uploads /samples with --with-samples). In that case the app says so clearly, and the
+  // sample-dependent checks below are skipped rather than failed — what matters on such a deployment
+  // is that the page, the API and the in-browser parser all work.
   const t0 = Date.now();
   await page.click("#btnSample");
   let sampleMissing = false;
