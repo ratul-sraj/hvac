@@ -87,6 +87,10 @@ code, kbd {
   padding: 8px 18px;
 }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; color: var(--accent-dark); }
+/* The brand is a link home on every page: kill the anchor underline, keep a visible hover/focus cue. */
+a.brand { text-decoration: none; }
+a.brand:hover .brand-text { color: var(--accent); }
+a.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
 .brand .brand-mark { color: var(--accent); flex: 0 0 auto; }
 .brand .brand-text { font-size: 17px; letter-spacing: .2px; white-space: nowrap; }
 .brand .brand-sub { display: block; font-size: 11px; font-weight: 600; color: var(--ink-soft); letter-spacing: .4px; }
