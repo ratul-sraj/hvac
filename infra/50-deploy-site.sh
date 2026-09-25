@@ -221,12 +221,14 @@ else
     log_info "If 30-cloudfront.sh has not been run yet, that is expected."
     log_info "Set DISTRIBUTION_ID=... or run:  bash infra/30-cloudfront.sh"
   else
-    log_step "Invalidating / , /index.html , /*.html on $DIST_ID"
+    log_step "Invalidating / , /index.html , /*.html , /js/* , /css/* on $DIST_ID"
+    # /js/* and /css/* MUST be here: their filenames are not content-hashed, so an edge that cached
+    # an earlier copy keeps serving it (this hid a fixed js/app.js behind a stale edge copy).
     INVALIDATION_ID="$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" \
-      --paths "/" "/index.html" "/*.html" \
+      --paths "/" "/index.html" "/*.html" "/js/*" "/css/*" \
       --query 'Invalidation.Id' --output text --no-cli-pager)"
-    log_ok "invalidation $INVALIDATION_ID requested (3 paths)"
-    log_info "The first 1,000 invalidation paths each month are free; this uses 3."
+    log_ok "invalidation $INVALIDATION_ID requested (5 path groups)"
+    log_info "The first 1,000 invalidation paths each month are free; this uses 5."
   fi
 fi
 
