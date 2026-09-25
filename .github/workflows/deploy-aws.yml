@@ -1,0 +1,157 @@
+# .github/workflows/deploy-aws.yml
+#
+# Deploy LoadLens to AWS: the static site to S3 through CloudFront, and the API
+# to Lambda. This workflow coexists with pages.yml — GitHub Pages keeps working
+# exactly as before and is not affected by anything here.
+#
+# Authentication is OIDC: no AWS access key is stored in GitHub. The workflow
+# trades a short-lived OIDC token for temporary credentials by assuming the role
+# created by infra/oidc-github-role.sh.
+#
+# SETUP (repository -> Settings -> Secrets and variables -> Actions -> Variables):
+#     AWS_DEPLOY_ROLE_ARN   required  (the role ARN printed by infra/oidc-github-role.sh)
+#     AWS_REGION            optional  (defaults to ap-south-1)
+#     SITE_BUCKET           optional  (defaults to loadlens-site-<account id>)
+#     DISTRIBUTION_ID       optional  (found by comment if unset)
+#     LAMBDA_FUNCTION       optional  (defaults to loadlens-api)
+#
+# If AWS_DEPLOY_ROLE_ARN is not set yet, this workflow SKIPS cleanly: it does not
+# fail the build and it does not touch AWS.
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege for the workflow itself; id-token is what OIDC needs.
+permissions:
+  contents: read
+  id-token: write
+
+# Never run two AWS deploys at once. A queued deploy is better than two
+# competing S3 syncs and two invalidations.
+concurrency:
+  group: aws-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Is the AWS target configured at all?
+  # ---------------------------------------------------------------------------
+  check:
+    name: Check the AWS target
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        name: Is AWS_DEPLOY_ROLE_ARN set?
+        run: |
+          set -eu
+          if [ -n "${AWS_DEPLOY_ROLE_ARN}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "AWS_DEPLOY_ROLE_ARN is set — the deploy job will run."
+            echo "region: ${AWS_REGION}"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=AWS deploy skipped::Repository variable AWS_DEPLOY_ROLE_ARN is not set, so this workflow skipped the AWS deploy (this is not a failure). Run 'bash infra/oidc-github-role.sh' once and add the ARN it prints as a repository variable. GitHub Pages still deploys normally."
+            echo "AWS_DEPLOY_ROLE_ARN is not set: skipping the AWS deploy. Nothing in AWS was touched."
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 2. Deploy
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy site + API
+    needs: check
+    if: needs.check.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Unit + PDF tests
+        run: npm test
+
+      - name: Build the Lambda package
+        run: |
+          set -eu
+          if [ -f tools/build-lambda.mjs ]; then
+            node tools/build-lambda.mjs
+          else
+            echo "::warning title=Lambda build script missing::tools/build-lambda.mjs does not exist, so the API code will not be redeployed. The static site is still deployed."
+          fi
+          if [ -f dist/loadlens-lambda.zip ]; then
+            echo "zip: $(wc -c < dist/loadlens-lambda.zip) bytes"
+          else
+            echo "no dist/loadlens-lambda.zip"
+          fi
+          echo "HAS_ZIP=$([ -f dist/loadlens-lambda.zip ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+
+      # OIDC: exchanges the workflow's signed token for 1-hour credentials.
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-loadlens
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Verify the assumed identity
+        run: aws sts get-caller-identity --no-cli-pager
+
+      - name: Deploy the Lambda code
+        if: env.HAS_ZIP == '1'
+        env:
+          LAMBDA_FUNCTION: ${{ vars.LAMBDA_FUNCTION || 'loadlens-api' }}
+        run: |
+          set -eu
+          echo "updating ${LAMBDA_FUNCTION} in ${AWS_REGION}"
+          aws lambda update-function-code \
+            --function-name "${LAMBDA_FUNCTION}" \
+            --zip-file fileb://dist/loadlens-lambda.zip \
+            --no-cli-pager
+          aws lambda wait function-updated --function-name "${LAMBDA_FUNCTION}"
+          aws lambda get-function-configuration --function-name "${LAMBDA_FUNCTION}" \
+            --query '{runtime:Runtime,memory:MemorySize,timeout:Timeout,state:State,lastModified:LastModified}' \
+            --output table --no-cli-pager
+
+      - name: Publish the site to S3 and refresh CloudFront
+        env:
+          # empty values make infra/50-deploy-site.sh fall back to the
+          # naming convention (loadlens-site-<account id>) and to a lookup
+          SITE_BUCKET: ${{ vars.SITE_BUCKET }}
+          DISTRIBUTION_ID: ${{ vars.DISTRIBUTION_ID }}
+        run: |
+          set -eu
+          # Builds the same file set as pages.yml (*.html favicon.svg css js vendor),
+          # uploads it with the right content types and cache headers, then
+          # invalidates / , /index.html and /*.html.
+          bash infra/50-deploy-site.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### AWS deploy"
+            echo ""
+            echo "| what | value |"
+            echo "| --- | --- |"
+            echo "| region | ${AWS_REGION} |"
+            echo "| lambda | ${{ vars.LAMBDA_FUNCTION || 'loadlens-api' }} (zip: ${HAS_ZIP:-0}) |"
+            echo "| bucket | ${SITE_BUCKET:-loadlens-site-<account id>} |"
+            echo "| distribution | ${DISTRIBUTION_ID:-looked up by comment} |"
+            echo ""
+            echo "Nothing above is proof of a successful upload — see the step logs for that."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -9,12 +9,15 @@
     "dev": "node --watch server.js",
     "test": "node tests/run.mjs",
     "test:api": "node tests/api-test.mjs",
-    "test:browser": "node tests/browser-check.mjs"
+    "test:browser": "node tests/browser-check.mjs",
+    "build:lambda": "node tools/build-lambda.mjs",
+    "test:lambda": "node tests/test-lambda.mjs"
   },
   "dependencies": {
     "express": "^5.2.1",
     "multer": "^2.4.0",
-    "pdfjs-dist": "4.10.38"
+    "pdfjs-dist": "4.10.38",
+    "serverless-http": "^4.0.0"
   },
   "devDependencies": {
     "puppeteer-core": "^25.12.0",

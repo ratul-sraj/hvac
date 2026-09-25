@@ -5,3 +5,11 @@ _*.mjs
 tests/_*.mjs
 tools/keepalive.log
 tools/server.pid
+
+# AWS deploy toolkit (infra/): local state, scratch files, built lambda zip.
+# Never commit these — they are per-machine and the state file is regenerated.
+infra/.state
+infra/.state.*
+infra/.stage/
+infra/.tmp/
+dist/
