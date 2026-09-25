@@ -1134,6 +1134,16 @@ async function loadSample() {
       const res = await fetch(path, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       buf = await res.arrayBuffer();
+      // A 200 does not prove it is a PDF: on a static host a missing sample can be answered by the
+      // single-page-app fallback with index.html, and pdf.js then fails with a cryptic
+      // "Invalid PDF structure". Check the magic bytes and treat anything else as "not available".
+      const magic = new Uint8Array(buf, 0, Math.min(5, buf.byteLength));
+      const isPdf = magic.length === 5 && String.fromCharCode(...magic) === '%PDF-';
+      if (!isPdf) {
+        lastErr = new Error(`not a PDF (${res.headers.get('content-type') || 'unknown type'})`);
+        buf = null;
+        continue;
+      }
       used = path;
       break;
     } catch (err) { lastErr = err; }
@@ -1142,8 +1152,8 @@ async function loadSample() {
     setProgress(null);
     state.ui.busy = false;
     setStatus('warn',
-      'Could not load the sample drawing (samples/headquarters.pdf). ' +
-      'This is normal if the file is not present. Please upload your own PDF or use "Add room manually". ' +
+      'The sample drawing is not part of this deployment, so there is nothing to load here. ' +
+      'Upload your own PDF, import a room schedule (Excel/CSV), or use "Add room manually". ' +
       `(${(lastErr && lastErr.message) || lastErr})`);
     return;
   }

@@ -55,15 +55,40 @@ try {
   // 2. no console errors on load
   ok("no console errors on load", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
 
-  // 3. sample drawing -> rooms
+  // 3. sample drawing -> rooms. A deployment may deliberately not publish the sample drawing
+  // (infra/50-deploy-site.sh only uploads it with --with-samples, because it makes the drawing
+  // public). In that case the app says so clearly, and the sample-dependent checks below are
+  // skipped rather than failed — what matters on such a deployment is that the page, the API and
+  // the in-browser parser all work.
   const t0 = Date.now();
   await page.click("#btnSample");
-  await page.waitForFunction(() => {
-    const b = document.querySelector("#roomsBody");
-    return b && b.querySelectorAll("tr").length > 100;
-  }, { timeout: 120000 });
-  const roomRows = await page.$$eval("#roomsBody tr", (r) => r.length);
-  ok("sample drawing parsed in a real browser", roomRows > 100, `${roomRows} room rows in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  let sampleMissing = false;
+  let roomRows = 0; // used again by the filter check below
+  try {
+    await page.waitForFunction(() => {
+      const b = document.querySelector("#roomsBody");
+      return b && b.querySelectorAll("tr").length > 100;
+    }, { timeout: 120000 });
+  } catch (e) {
+    const statusText = await page.evaluate(() => {
+      const el = document.querySelector("#status") || document.querySelector(".status");
+      return el ? el.innerText.replace(/\s+/g, " ") : "";
+    });
+    sampleMissing = /not part of this deployment/.test(statusText);
+  }
+  if (sampleMissing) {
+    ok("sample drawing absent -> app says so clearly", true, "the app reports the sample is not published here");
+    const health = await page.evaluate(async () => {
+      try { const r = await fetch("/api/health"); return `${r.status} ${(await r.text()).slice(0, 90)}`; }
+      catch (e) { return "threw: " + e.message; }
+    });
+    ok("server-side API reachable from this deployment", /^200 /.test(health), health);
+  } else {
+    roomRows = await page.$$eval("#roomsBody tr", (r) => r.length);
+    ok("sample drawing parsed in a real browser", roomRows > 100, `${roomRows} room rows in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  }
+
+if (!sampleMissing) {
 
   const summary = await page.$$eval("#summaryCards .card, #summaryCards > *", (cards) =>
     cards.map((c) => c.innerText.replace(/\s+/g, " ").trim()).filter(Boolean));
@@ -199,7 +224,9 @@ try {
   ok("no failed network requests", failedRequests.length === 0, failedRequests.slice(0, 3).join(" | ") || "none");
   ok("no console errors during the whole flow", consoleErrors.length === 0, consoleErrors.slice(0, 4).join(" | ") || "none");
 
-  // 12. selftest page (real pdf.js worker + engine in the browser)
+} // end of the checks that need the sample drawing
+
+  // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
   for (let i = 0; i < 60; i++) {

@@ -34,11 +34,24 @@ try {
   pdfjs.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.min.mjs";
   log(`pdf.js ${pdfjs.version} loaded, worker = ${pdfjs.GlobalWorkerOptions.workerSrc}`);
 
-  // 1. sample drawing
+  // 1. sample drawing. A deployment may deliberately not publish it (infra/50-deploy-site.sh needs
+  // --with-samples, because it makes the drawing public). A static host then answers the missing
+  // file with its SPA fallback page, so a 200 is NOT proof of a PDF: check the magic bytes and skip
+  // the sample-dependent checks instead of failing with "Invalid PDF structure".
   const res = await fetch("samples/headquarters.pdf");
-  check("sample PDF fetched from the site", res.ok, `HTTP ${res.status}`);
   const buf = await res.arrayBuffer();
-  check("sample PDF has bytes", buf.byteLength > 1000, `${buf.byteLength} bytes`);
+  const magic = new Uint8Array(buf, 0, Math.min(5, buf.byteLength));
+  const haveSample = res.ok && magic.length === 5 && String.fromCharCode(...magic) === "%PDF-";
+  if (haveSample) {
+    check("sample PDF fetched from the site", true, `HTTP ${res.status}`);
+    check("sample PDF has bytes", buf.byteLength > 1000, `${buf.byteLength} bytes`);
+  } else {
+    log(`SKIP  the sample drawing is not published on this deployment ` +
+        `(${buf.byteLength} bytes of ${res.headers.get("content-type") || "unknown type"}) — ` +
+        `the PDF and calculation checks below need it`, "warn");
+  }
+
+if (haveSample) {
 
   // 2. parse
   const parsed = await parsePdf(buf, { pdfjs, onProgress: (p, t) => log(`  reading page ${p} of ${t} ...`) });
@@ -61,6 +74,7 @@ try {
   // 4. a known room
   const atrium = parsed.rooms.find((r) => /atrium/i.test(r.name) && r.area > 1000);
   check("ATRIUM 1249.3 m² found", !!atrium, atrium ? `${atrium.name} / ${atrium.level} / ${atrium.area} m²` : "not found");
+} // end of the checks that need the sample drawing
 
   // 5. country / city table
   check("12 countries in the climate table", Object.keys(calc.COUNTRIES).length === 12, Object.keys(calc.COUNTRIES).join(", "));
