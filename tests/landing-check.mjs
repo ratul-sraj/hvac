@@ -90,7 +90,7 @@ const PAGES = [
   { key: "help", label: "help.html", file: "help.html", name: "help.html" },
 ];
 
-const NAV_HREFS = ["app.html", "about.html", "method.html", "help.html"];
+const NAV_HREFS = ["index.html", "app.html", "about.html", "method.html", "help.html"];
 const PLACEHOLDER = /lorem ipsum|\bTODO\b|\bXXX\b/i;
 
 console.log(`\nbase directory : ${DIR}`);
@@ -140,7 +140,7 @@ try {
     const navHrefs = await page.$$eval("nav a", (as) => as.map((a) => a.getAttribute("href")))
       .catch(() => []);
     const navOk = navHrefs.length === NAV_HREFS.length && NAV_HREFS.every((h) => navHrefs.includes(h));
-    ok(`${p.label} — nav has the 4 links (app/about/method/help)`, navOk, JSON.stringify(navHrefs));
+    ok(`${p.label} — nav has the 5 links (home/app/about/method/help)`, navOk, JSON.stringify(navHrefs));
 
     // no leftover placeholder text
     const html = await page.content();

@@ -87,6 +87,27 @@ for (const spec of PAGES) {
   ok(`${spec.url}: menu is closed until tapped`, narrowClosed.linksShown === false && narrowClosed.expanded === "false");
   ok(`${spec.url}: no sideways overflow at 390 px`, narrowClosed.overflow === false);
 
+  // The LoadLens brand must reach the home page from EVERY page, and the nav must carry a Home link —
+  // on a phone the ☰ menu is the only nav there is, so a missing Home there strands you on a subpage.
+  const home = await page.evaluate((sel) => {
+    const nav = document.querySelector(sel);
+    const brand = nav.querySelector("a.brand, a.app-nav-brand");
+    return {
+      brandTag: brand ? brand.tagName : null,
+      brandHref: brand ? brand.getAttribute("href") : null,
+      links: [...nav.querySelectorAll(".nav-links a, .app-nav-links a")].map((a) => ({
+        text: a.textContent.trim(), href: a.getAttribute("href"),
+      })),
+    };
+  }, spec.nav);
+  const goesHome = (h) => !!h && /^(?:\.\/|\/)?(?:index\.html)?\/?$/i.test(h) && h !== "";
+  ok(`${spec.url}: clicking the brand goes to the home page`,
+    home.brandTag === "A" && goesHome(home.brandHref), `${home.brandTag} href=${home.brandHref}`);
+  const homeLink = home.links.find((l) => /^home$/i.test(l.text));
+  ok(`${spec.url}: the nav offers a Home link`,
+    !!homeLink && goesHome(homeLink.href),
+    home.links.map((l) => `${l.text}->${l.href}`).join(", "));
+
   await page.click(spec.burger);
   await new Promise((r) => setTimeout(r, 350));
   const open = await page.evaluate((sel) => {
