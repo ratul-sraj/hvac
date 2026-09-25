@@ -433,6 +433,12 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .app-nav-brand .brand-mark { color: var(--accent); flex: 0 0 auto; }
 .app-nav-brand .brand-text { font-size: 17px; letter-spacing: .2px; white-space: nowrap; }
 .app-nav-brand .brand-sub { display: block; font-size: 11px; font-weight: 600; color: var(--ink-soft); letter-spacing: .4px; }
+/* The brand is a link home, so it must LOOK like one on this page too: the marketing pages give it
+   a hover colour and a focus ring, and without the same rules here it read as plain text — a link
+   with no feedback is indistinguishable from a label. Keep these two blocks in step. */
+a.app-nav-brand { text-decoration: none; }
+a.app-nav-brand:hover .brand-text { color: var(--accent); }
+a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
 .app-nav-links { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .app-nav-links a {
   display: inline-block;

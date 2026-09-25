@@ -25,6 +25,7 @@ const NAV = `<!-- shared top navigation (injected by tools/update-app-nav.mjs) -
       <span class="brand-text">LoadLens<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
     </a>
     <span class="app-nav-links">
+      <a href="index.html">Home</a>
       <a href="app.html" aria-current="page">Calculator</a>
       <a href="about.html">About</a>
       <a href="method.html">Method</a>
