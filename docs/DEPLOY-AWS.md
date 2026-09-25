@@ -354,3 +354,54 @@ Verified on the authoring machine (Windows, git-bash, AWS CLI 2.37.2, node 22):
 Practically: run `infra/00-preflight.sh` first, then the steps in §3. If a step
 fails, its message names the resource and the likely cause. The scripts only ever
 create the names in §3 — nothing else — so a failed step leaves nothing hidden.
+
+---
+
+## Status: this toolkit HAS now been run — 25 Sep 2026
+
+It was executed end to end against a real account (395298786586, ap-south-1) and the live
+result was verified over HTTP. Everything below was measured, not assumed.
+
+| what | value |
+| --- | --- |
+| site | https://d3cf28rp8goz0w.cloudfront.net/ (CloudFront `EJNXG9UBKL2OD`, status `Deployed`) |
+| api | https://d3cf28rp8goz0w.cloudfront.net/api/health |
+| function url | https://cwawlz2scsmtvbuewmfhcvai4i0gevpy.lambda-url.ap-south-1.on.aws/ |
+| bucket | `loadlens-site-395298786586` |
+| lambda | `loadlens-api` (nodejs22.x, 1024 MB, 30 s, x86_64, public Function URL) |
+| deploy role | `arn:aws:iam::395298786586:role/loadlens-github-deploy` |
+| month-to-date spend | **USD 0.00004** |
+| credits | none — the account predates 15 Jul 2025, so the $200 pot never applied |
+
+Verified: landing page 200 (12.5 kB), `/api/health` 200 through CloudFront, and
+`POST /api/parse` with the 748 kB 3-page sample returned **200 with 149 rooms in 2.3 s**.
+
+### Bugs this first real run exposed (all fixed here)
+
+1. **MSYS paths are invisible to native programs.** `aws.exe` and `node.exe` cannot open
+   `/d/webhvac/...`; they need `D:/webhvac/...`. This broke file parameters
+   (`file://`, `fileb://`), `aws s3 sync` sources and two JSON validators. Fixed with the
+   `nativepath()`, `awsfile()` and `awsbin()` helpers in `lib-common.sh` — use them for every
+   path handed to a native program.
+2. **The handler path must include its folder:** the zip keeps the entry point at
+   `lambda/index.mjs`, so the handler is `lambda/index.handler`, not `index.handler`
+   (`index.handler` gives `Runtime.ImportModuleError`).
+3. **A Function URL needs TWO resource-policy statements.** Since October 2025 AWS requires
+   both `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`; with only the first, every
+   request gets a bare 403 `AccessDeniedException` from the front door. Note the CLI rejects
+   `--function-url-auth-type` on the `InvokeFunction` statement.
+4. **`Cors.AllowMethods` members must be at most 6 characters** — `"OPTIONS"` (7) is rejected;
+   use `["*"]`.
+5. **`IpAddressType` is not spelled `IPAddressType`** in a CloudFront `CustomOriginConfig`.
+6. The AWS CLI is not on PATH inside a non-interactive shell: `lib-common.sh` now looks in
+   `C:\Program Files\Amazon\AWSCLIV2` before failing.
+
+### Still to do by hand
+
+GitHub Actions needs repository **variables** (Settings → Secrets and variables → Actions →
+Variables): `AWS_DEPLOY_ROLE_ARN=arn:aws:iam::395298786586:role/loadlens-github-deploy`,
+`SITE_BUCKET=loadlens-site-395298786586`, `DISTRIBUTION_ID=EJNXG9UBKL2OD`
+(`AWS_REGION` and `LAMBDA_FUNCTION` have working defaults). Nothing long-lived is stored —
+the workflow exchanges a short-lived OIDC token. Until those exist the workflow skips itself
+instead of failing. The subject is `repo:ratul-sraj/hvac:*`; tighten to
+`repo:ratul-sraj/hvac:ref:refs/heads/main` if you want a branch-pinned deploy.
