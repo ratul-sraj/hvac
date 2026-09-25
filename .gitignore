@@ -13,3 +13,12 @@ infra/.state.*
 infra/.stage/
 infra/.tmp/
 dist/
+
+# PRIVATE client drawings: this repository is PUBLIC, so these must never be tracked again.
+# Keep them on disk for local verification only; tests/samples/sample-plan.pdf (synthetic) is the
+# publishable fixture. Removing them from the working tree does not erase them from old commits —
+# the user chose not to rewrite history, so treat anything ever committed as public already.
+tests/samples/headquarters.pdf
+tests/samples/headquarters-scanned.pdf
+tests/samples/hq_p*.txt
+tests/samples/schedule-sample.pdf

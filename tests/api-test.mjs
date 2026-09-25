@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const SAMPLE = path.join(HERE, "samples", "headquarters.pdf");
+const SAMPLE = path.join(HERE, "samples", "sample-plan.pdf");   // synthetic, publishable fixture
+const SAMPLE_ROOMS = 159;                                       // measured (tools/make-sample-plan.mjs)
 const MAX_UPLOAD_MB = 1; // tiny limit so the 413 check stays fast
 
 let pass = 0;
@@ -136,23 +137,23 @@ async function main() {
       assert.ok(Number.isFinite(j.uptimeSec), "uptimeSec");
     });
 
-    // 2. real PDF -------------------------------------------------------
-    await check("POST /api/parse headquarters.pdf -> 3 pages, 149 rooms", async () => {
+    // 2. sample drawing ---------------------------------------------------
+    await check(`POST /api/parse sample-plan.pdf -> 3 pages, ${SAMPLE_ROOMS} rooms`, async () => {
       const { res, json } = await postFiles([pdfEntry(SAMPLE)]);
       assert.equal(res.status, 200, JSON.stringify(json));
       assert.equal(json.files.length, 1);
       const f = json.files[0];
-      assert.equal(f.name, "headquarters.pdf");
+      assert.equal(f.name, "sample-plan.pdf");
       assert.equal(f.pages, 3, `pages = ${f.pages}`);
-      assert.equal(f.rooms.length, 149, `file rooms = ${f.rooms.length}`);
-      assert.equal(f.roomCount, 149);
+      assert.equal(f.rooms.length, SAMPLE_ROOMS, `file rooms = ${f.rooms.length}`);
+      assert.equal(f.roomCount, SAMPLE_ROOMS);
       assert.equal(f.levelCount, 3, `levelCount = ${f.levelCount}`);
-      assert.equal(json.rooms.length, 149, `rooms = ${json.rooms.length}`);
+      assert.equal(json.rooms.length, SAMPLE_ROOMS, `rooms = ${json.rooms.length}`);
       assert.ok(Array.isArray(json.warnings), "warnings array");
       assert.ok(Number.isFinite(json.ms), "ms");
       // every room carries the file it came from
       assert.ok(
-        json.rooms.every((r) => r.sourceFile === "headquarters.pdf"),
+        json.rooms.every((r) => r.sourceFile === "sample-plan.pdf"),
         "every room has sourceFile"
       );
       assert.ok(json.rooms.every((r) => r.id && r.sourceFile && r.name), "room shape");
@@ -168,7 +169,7 @@ async function main() {
       ]);
       assert.equal(res.status, 200, JSON.stringify(json));
       assert.equal(json.files.length, 2);
-      assert.equal(json.rooms.length, 298, `rooms = ${json.rooms.length}`);
+      assert.equal(json.rooms.length, SAMPLE_ROOMS * 2, `rooms = ${json.rooms.length}`);
     });
 
     // 4. single field named "file" --------------------------------------
@@ -176,7 +177,7 @@ async function main() {
       const { res, json } = await postFiles([pdfEntry(SAMPLE)], "file");
       assert.equal(res.status, 200, JSON.stringify(json));
       assert.equal(json.files.length, 1);
-      assert.equal(json.rooms.length, 149);
+      assert.equal(json.rooms.length, SAMPLE_ROOMS);
     });
 
     // 5. wrong type -----------------------------------------------------
@@ -288,8 +289,8 @@ async function main() {
       });
     }
 
-    await check("GET /samples/headquarters.pdf -> the sample drawing (for the sample button)", async () => {
-      const res = await fetch(base + "/samples/headquarters.pdf");
+    await check("GET /samples/sample-plan.pdf -> the sample drawing (for the sample button)", async () => {
+      const res = await fetch(base + "/samples/sample-plan.pdf");
       assert.equal(res.status, 200);
       const buf = Buffer.from(await res.arrayBuffer());
       assert.ok(buf.subarray(0, 5).toString("latin1").startsWith("%PDF"), "it is the PDF");
@@ -297,7 +298,7 @@ async function main() {
     });
 
     // 13. test sources stay private -------------------------------------
-    for (const hidden of ["/tests/run.mjs", "/tests/test-headquarters.mjs", "/node_modules/express/package.json", "/.git/config", "/package-lock.json", "/AGENTS-SERVER.md"]) {
+    for (const hidden of ["/tests/run.mjs", "/tests/test-sample-plan.mjs", "/node_modules/express/package.json", "/.git/config", "/package-lock.json", "/AGENTS-SERVER.md"]) {
       await check(`GET ${hidden} -> 403/404 (never served)`, async () => {
         const res = await fetch(base + hidden);
         assert.ok(

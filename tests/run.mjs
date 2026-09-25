@@ -2,8 +2,9 @@
 //   cd D:/webhvac && node tests/run.mjs
 // Prints PASS/FAIL per test and exits 1 on the first failing run.
 import { writeSample } from "./make-sample.mjs";
+import { writeSamplePlan } from "../tools/make-sample-plan.mjs";
 import * as calc from "./test-calc.mjs";
-import * as headquarters from "./test-headquarters.mjs";
+import * as samplePlan from "./test-sample-plan.mjs";
 import * as parseText from "./test-parseText.mjs";
 import * as samplePdf from "./test-sample-pdf.mjs";
 
@@ -11,13 +12,15 @@ const suites = [
   ["engine/calc", calc],
   ["text/parseText", parseText],
   ["pdf/sample", samplePdf],
-  ["pdf/headquarters", headquarters],
+  ["pdf/sample-plan", samplePlan],
 ];
 
 const only = process.argv[2];
 
-// the synthetic sample PDF is (re)generated on every run
+// the synthetic fixtures are (re)generated on every run: schedule-sample.pdf (hand-built
+// schedule table) and sample-plan.pdf (the 3-page sample drawing the sample button loads)
 writeSample();
+writeSamplePlan();
 
 let pass = 0;
 const failures = [];

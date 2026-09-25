@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const SAMPLE = path.join(HERE, "samples", "headquarters.pdf");
+const SAMPLE = path.join(HERE, "samples", "sample-plan.pdf");   // synthetic, publishable fixture
+const SAMPLE_ROOMS = 159;                                       // measured (tools/make-sample-plan.mjs)
 
 let pass = 0;
 const failures = [];
@@ -123,7 +124,7 @@ async function main() {
   handler = mod.handler;
   assert.equal(typeof handler, "function", "lambda/index.mjs must export a handler function");
   assert.ok(fs.existsSync(SAMPLE), `sample drawing missing: ${SAMPLE}`);
-  console.log(`lambda handler loaded in-process (no AWS), sample = tests/samples/headquarters.pdf`);
+  console.log(`lambda handler loaded in-process (no AWS), sample = tests/samples/sample-plan.pdf`);
 
   // 1. health -------------------------------------------------------------
   await check("Function URL GET /api/health -> 200 + ok:true + app LoadLens", async () => {
@@ -139,11 +140,11 @@ async function main() {
     assert.ok(/application\/json/.test(String(ctype)), `content-type header: ${ctype}`);
   });
 
-  // 2. real PDF through /api/parse ----------------------------------------
-  await check("Function URL POST /api/parse headquarters.pdf -> 200, 3 pages, 149 rooms", async () => {
+  // 2. sample drawing through /api/parse ----------------------------------
+  await check(`Function URL POST /api/parse sample-plan.pdf -> 200, 3 pages, ${SAMPLE_ROOMS} rooms`, async () => {
     const pdf = fs.readFileSync(SAMPLE);
     const { body, contentType } = multipart([
-      { field: "files", filename: "headquarters.pdf", type: "application/pdf", data: pdf },
+      { field: "files", filename: "sample-plan.pdf", type: "application/pdf", data: pdf },
     ]);
     const res = await invoke(
       fnUrlEvent({
@@ -158,12 +159,12 @@ async function main() {
     const j = jsonOf(res);
     assert.equal(j.files.length, 1, "one parsed file");
     const f = j.files[0];
-    assert.equal(f.name, "headquarters.pdf");
+    assert.equal(f.name, "sample-plan.pdf");
     assert.equal(f.pages, 3, `pages = ${f.pages}`);
-    assert.equal(f.rooms.length, 149, `file rooms = ${f.rooms.length}`);
-    assert.equal(f.roomCount, 149);
-    assert.equal(j.rooms.length, 149, `rooms = ${j.rooms.length}`);
-    assert.ok(j.rooms.every((r) => r.id && r.name && r.sourceFile === "headquarters.pdf"), "room shape + sourceFile");
+    assert.equal(f.rooms.length, SAMPLE_ROOMS, `file rooms = ${f.rooms.length}`);
+    assert.equal(f.roomCount, SAMPLE_ROOMS);
+    assert.equal(j.rooms.length, SAMPLE_ROOMS, `rooms = ${j.rooms.length}`);
+    assert.ok(j.rooms.every((r) => r.id && r.name && r.sourceFile === "sample-plan.pdf"), "room shape + sourceFile");
     assert.ok(Number.isFinite(j.ms), "ms");
   });
 

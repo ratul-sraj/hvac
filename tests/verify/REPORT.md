@@ -133,7 +133,7 @@ Impact: the room is silently deleted from the room list totals, level subtotals,
 report — the largest single-answer change of anything found in this review (one 100 m² room =
 5.14 TR). `guessSpaceType` (calc.js:87) explicitly maps `/open plan|workstation/` → `office`, so
 the two functions contradict each other for the most common Indian office-schedule label.
-Note the supplied sample schedule (`tests/samples/hq_p2.txt`) uses "WORKSTATIONS",
+Note the supplied sample schedule uses "WORKSTATIONS",
 "CHIEF OFFICE", "S. MAN. OFFICE", so the existing test suite does not catch this.
 
 Tested fix (drop-in, verified against all cases in the table above):

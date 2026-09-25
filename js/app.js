@@ -1126,7 +1126,7 @@ async function loadSample() {
   state.ui.busy = true;
   setStatus(null);
   setProgress('Downloading the sample drawing ...', 5);
-  const paths = ['samples/headquarters.pdf', 'tests/samples/headquarters.pdf'];
+  const paths = ['samples/sample-plan.pdf', 'tests/samples/sample-plan.pdf'];
   let buf = null, used = '';
   let lastErr = null;
   for (const path of paths) {

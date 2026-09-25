@@ -51,7 +51,7 @@ try {
   // --with-samples, because it makes the drawing public). A static host then answers the missing
   // file with its SPA fallback page, so a 200 is NOT proof of a PDF: check the magic bytes and skip
   // the sample-dependent checks instead of failing with "Invalid PDF structure".
-  const res = await fetch("samples/headquarters.pdf");
+  const res = await fetch("samples/sample-plan.pdf");
   const buf = await res.arrayBuffer();
   const magic = new Uint8Array(buf, 0, Math.min(5, buf.byteLength));
   const haveSample = res.ok && magic.length === 5 && String.fromCharCode(...magic) === "%PDF-";

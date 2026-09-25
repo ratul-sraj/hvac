@@ -30,7 +30,7 @@ const ROOT = path.resolve(HERE, "..");
 const QA = path.join(HERE, "qa");
 export const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 
-export const SOURCE_PDF = path.join(HERE, "samples", "headquarters.pdf");
+export const SOURCE_PDF = path.join(HERE, "samples", "headquarters.pdf");   // PRIVATE, git-ignored, local-only
 export const SCANNED_PDF = path.join(HERE, "samples", "headquarters-scanned.pdf");
 export const SCAN_JPEG = path.join(QA, "hq-p1-scan.jpg");
 export const SCHEDULE_PDF = path.join(QA, "schedule-scanned.pdf");
@@ -147,6 +147,17 @@ window.__scan = (async () => {
  * @returns {{pdf:string, jpeg:string, width:number, height:number, pdfBytes:number, jpegBytes:number, textItems:number}}
  */
 export async function makeScannedFixture({ browser = null } = {}) {
+  // The scanned drawing fixture can only be built where the (private, git-ignored) source drawing
+  // still exists on disk. A published checkout does not have it — say so plainly instead of failing
+  // with a 404 from the little static server; tests/test-ocr.mjs SKIPs the drawing checks in that
+  // case. The schedule and blank fixtures below do not need the private drawing.
+  if (!fs.existsSync(SOURCE_PDF)) {
+    throw new Error(
+      `the private source drawing is not on this machine (${SOURCE_PDF} is git-ignored and never ` +
+      `published). Only the synthetic tests/samples/sample-plan.pdf can be generated here; rebuild ` +
+      `the scanned fixtures locally with: node tests/make-scanned-fixture.mjs`
+    );
+  }
   fs.mkdirSync(QA, { recursive: true });
   const harnessPath = path.join(QA, "ocr-fixture.html");   // temporary, deleted below
   fs.writeFileSync(harnessPath, HARNESS);
