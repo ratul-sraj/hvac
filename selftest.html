@@ -26,6 +26,19 @@ const log = (s, cls) => {
 const check = (label, ok, detail = "") => { if (!ok) failed++; log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? "  — " + detail : ""}`, ok ? "pass" : "fail"); };
 
 try {
+  // Opened by double-clicking the file (file://)? ES modules cannot be imported from file:// —
+  // the browser blocks it with "Failed to fetch dynamically imported module" — so say that
+  // plainly instead of looking like a broken page.
+  if (location.protocol === "file:") {
+    log("This page must be served over HTTP, not opened from disk.", "fail");
+    log("", "");
+    log("Browsers refuse to import ES modules (vendor/pdf.min.mjs, js/*.js) over file://.", "");
+    log("Use one of these instead:", "");
+    log("  * the local server      http://127.0.0.1:3000/selftest.html", "pass");
+    log("  * the deployed site     https://d3cf28rp8goz0w.cloudfront.net/selftest.html", "pass");
+    log("  * GitHub Pages          https://ratul-sraj.github.io/hvac/selftest.html", "pass");
+    document.title = "SELFTEST: serve this over HTTP";
+  } else {
   const [pdfjs, { parsePdf }, calc] = await Promise.all([
     import("./vendor/pdf.min.mjs"),
     import("./js/pdfparse.js"),
@@ -86,6 +99,7 @@ if (haveSample) {
   log("");
   log(failed === 0 ? "ALL SELF TESTS PASSED" : `${failed} CHECK(S) FAILED`, failed === 0 ? "pass" : "fail");
   document.title = failed === 0 ? "SELFTEST OK" : "SELFTEST FAILED";
+  } // end of the real self test (skipped entirely when opened over file://)
 } catch (err) {
   failed++;
   log("FAIL  the page threw an error", "fail");
