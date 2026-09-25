@@ -137,16 +137,16 @@ fi
 # css/
 if [ -d "$SRC/css" ]; then
   aws s3 sync "$SRC_NATIVE/css" "s3://$BUCKET/css" \
-    --content-type "$CT_CSS" --cache-control "$CACHE_LONG" --no-progress
-  log_ok "css/ -> immutable"
+    --content-type "$CT_CSS" --cache-control "$CACHE_CODE" --no-progress
+  log_ok "css/ -> $CACHE_CODE"
 fi
 
 # js/  (content type matters: these are ES modules, a wrong MIME type makes the
 # browser refuse to import them)
 if [ -d "$SRC/js" ]; then
   aws s3 sync "$SRC_NATIVE/js" "s3://$BUCKET/js" \
-    --content-type "$CT_JS" --cache-control "$CACHE_LONG" --no-progress
-  log_ok "js/ -> immutable"
+    --content-type "$CT_JS" --cache-control "$CACHE_CODE" --no-progress
+  log_ok "js/ -> $CACHE_CODE"
 fi
 
 # vendor/ : pdf.js + tesseract. Three passes because the MIME type of a .mjs

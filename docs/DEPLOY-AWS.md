@@ -405,3 +405,27 @@ Variables): `AWS_DEPLOY_ROLE_ARN=arn:aws:iam::395298786586:role/loadlens-github-
 the workflow exchanges a short-lived OIDC token. Until those exist the workflow skips itself
 instead of failing. The subject is `repo:ratul-sraj/hvac:*`; tighten to
 `repo:ratul-sraj/hvac:ref:refs/heads/main` if you want a branch-pinned deploy.
+
+### Second pass: the hosted build's own bugs (found by pointing the browser test at CloudFront)
+
+Running `node tests/browser-check.mjs https://<distribution>/app.html` against the live
+deployment surfaced three things that localhost could not:
+
+7. **A 200 is not proof of a PDF.** The deployment deliberately does not publish the sample
+   drawing (`--with-samples` would make it public), and CloudFront's 403/404 -> /index.html
+   fallback answered the missing `samples/headquarters.pdf` with 12,539 bytes of HTML. The app
+   then failed with the cryptic `InvalidPDFException: Invalid PDF structure`. `js/app.js` and
+   `selftest.html` now check the `%PDF-` magic bytes and report "the sample drawing is not part
+   of this deployment" instead; the sample-dependent checks in both test files are skipped rather
+   than failed, so a deployment can be verified honestly either way.
+8. **Unhashed code must not be cached immutably.** `js/` and `css/` were uploaded with
+   `max-age=31536000, immutable`, so a fixed `js/app.js` would never reach a browser that already
+   had the old copy — the fix had to be invalidated by hand to appear. They now use
+   `public, max-age=300, must-revalidate`; `vendor/` stays immutable because those are libraries.
+9. The browser check now runs with Chrome's download behaviour denied, because capturing the CSV
+   Blob did not stop the following anchor click from saving a real file into the user's Downloads
+   folder on every run.
+
+Current state of the deployment check: **6/6 pass** against CloudFront
+(site loads, title, no console errors, sample-absent message is clear, `/api/health` 200 from the
+page itself, and the in-browser self test passes).
