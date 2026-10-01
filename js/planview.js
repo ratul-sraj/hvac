@@ -173,6 +173,50 @@ export function roomsOnPage(rooms, page) {
 }
 
 /**
+ * A PLACED region for a room that has no drawn geometry: a rectangle centred on the point where the
+ * plan names the room, sized from the room's OWN area at the drawing scale.
+ *
+ * This is a locator, not a traced boundary. The plan's text layer says "CONFERENCE ROOM 24.5 M2" at a
+ * point on the sheet; it says nothing about where the walls are. So the box is sized BACK from the
+ * area the table already carries — which is why placing rooms can never change the load: the area is
+ * the input here, not the output. Move or resize a placed box by hand and it becomes a hand-drawn one
+ * (the app re-reads its area from the rectangle instead).
+ *
+ * `at` is PDF user space (points, y up) — the same space a room's `rect` uses.
+ * Pass `length`/`width` (metres) to keep a known room's proportions; otherwise it is a square.
+ */
+export function rectFromLabel(at, areaM2, denom = DEFAULT_SCALE_DENOM, { length, width } = {}) {
+  if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return null;
+  const a = Number(areaM2);
+  if (!Number.isFinite(a) || a <= 0) return null;
+  const mPerPt = ((Number(denom) || DEFAULT_SCALE_DENOM) * M_PER_INCH) / PT_PER_INCH;
+  if (!(mPerPt > 0)) return null;
+  const l = Number(length), w = Number(width);
+  let sideXm, sideYm;
+  if (Number.isFinite(l) && Number.isFinite(w) && l > 0 && w > 0) {
+    sideXm = Math.max(l, w);
+    sideYm = Math.min(l, w);
+  } else {
+    sideXm = Math.sqrt(a);
+    sideYm = sideXm;
+  }
+  const wPt = sideXm / mPerPt;
+  const hPt = sideYm / mPerPt;
+  return {
+    x: round2(at.x - wPt / 2),
+    y: round2(at.y - hPt / 2),
+    w: round2(wPt),
+    h: round2(hPt),
+    placed: true,
+  };
+}
+
+/** Does this room carry a placed (label-derived) region? */
+export function isPlacedRoom(room) {
+  return !!(room && room.rect && room.rect.placed === true);
+}
+
+/**
  * Build a Room from a drawn rectangle. The returned object satisfies the shared Room contract in
  * AGENTS.md, so addRooms()/calcProject()/the table accept it unchanged.
  * `name` is left for the caller to fill or ask for.

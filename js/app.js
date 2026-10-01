@@ -10,6 +10,7 @@ import { parsePdf } from './pdfparse.js';
 import * as pdfjs from '../vendor/pdf.min.mjs';
 import {
   roomFromRect, areaFromRect, dimsFromRect, round2, isDrawnRoom,
+  rectFromLabel, isPlacedRoom,
   DRAWING_SCALES, DEFAULT_SCALE_DENOM,
 } from './planview.js';
 
@@ -119,6 +120,8 @@ const el = {
   planScale: $('#planScale'),
   planModeDraw: $('#planModeDraw'),
   planModeSelect: $('#planModeSelect'),
+  planPlaceAll: $('#planPlaceAll'),
+  planPlaceClear: $('#planPlaceClear'),
   planHint: $('#planHint'),
   reportView: $('#reportView'),
   reportFrame: $('#reportFrame'),
@@ -1261,15 +1264,19 @@ function planScaleDenom() {
 }
 
 function planHintText() {
-  const drawn = state.rooms.filter(isDrawnRoom).length;
+  // A PLACED room (a locator box sized back from its own area, see planPlaceAllRooms) carries a rect
+  // too, so isDrawnRoom() alone cannot tell it from a hand-drawn one — planview.isPlacedRoom() can.
+  const drawn = state.rooms.filter((r) => isDrawnRoom(r) && !isPlacedRoom(r)).length;
+  const placed = state.rooms.filter(isPlacedRoom).length;
   if (state.ui.planMode === 'select') {
     return `Click a room box to open its load breakdown. Drag a room to move it, drag a corner to ` +
       `resize, Delete to remove, middle-drag or hold Space to pan. ` +
-      `${drawn} room(s) placed on the plan so far.`;
+      `${drawn} hand-drawn and ${placed} placed room box(es) on the plan.`;
   }
-  return `Drag a rectangle over a room in the drawing to add it as a room. ` +
+  return `Drag a rectangle over a room in the drawing to add it as a room, or use ` +
+    `"Place all rooms on the plan" to give every room the drawing names a locator box. ` +
     `Areas are measured at 1:${planScaleDenom()} — change the drawing scale above if the sheet differs. ` +
-    `${drawn} room(s) drawn so far. Switch to Select / edit to move, resize or delete a box.`;
+    `${drawn} room(s) drawn so far, ${placed} placed. Switch to Select / edit to move, resize or delete a box.`;
 }
 
 function planSync() {
@@ -1363,6 +1370,81 @@ function planDeleteRoom(id) {
   deleteRoom(idx);   // splices state, closes the description if it showed this room, renderAll + save
 }
 
+/* ---- "Place all rooms on the plan": a locator box for every room the sheet names -----------------
+ * The plan's text layer says where a room is NAMED ("CONFERENCE ROOM 24.5 M2") but nothing about
+ * where its walls are, so a placed box is a LOCATOR, not a traced boundary: it is centred on that
+ * point and sized BACK from the room's own area at the drawing scale (planview.rectFromLabel). The
+ * area is the INPUT to the box, never an output of it — so placing rooms can never change a load
+ * figure. A room the plan does not name has no point to sit on and stays in the table only; so does
+ * a room with no usable area (nothing to size a box from). Both are counted and said out loud.
+ * Rooms are placed on THEIR OWN page (room.page), not the page being viewed. */
+
+/** Give every table room that the drawing names a clickable locator box on its own page. */
+function planPlaceAllRooms() {
+  if (!state.rooms.length) {
+    setStatus('warn', 'There are no rooms in the table to place yet. Load a drawing or add rooms first.');
+    return;
+  }
+  const denom = planScaleDenom();
+  let placed = 0, noAt = 0, noArea = 0, already = 0, handDrawn = 0;
+  for (const room of state.rooms) {
+    if (isPlacedRoom(room)) { already += 1; continue; }        // already has a locator box
+    if (isDrawnRoom(room)) { handDrawn += 1; continue; }        // a hand-drawn box already sits where it was traced
+    if (!room.at) { noAt += 1; continue; }                      // the plan does not name this room
+    const area = Number(room.area);
+    if (!Number.isFinite(area) || area <= 0) { noArea += 1; continue; }
+    const rect = rectFromLabel(room.at, area, denom, { length: room.length, width: room.width });
+    if (!rect) { noArea += 1; continue; }
+    // each room's box goes on ITS OWN page, not the page the user happens to be looking at
+    room.rect = { ...rect, page: room.page || 1 };
+    placed += 1;
+  }
+
+  if (!placed) {
+    if (already) {
+      setStatus('ok', `All ${already} room(s) the drawing names are already on the plan.`);
+      return;
+    }
+    setStatus('warn', noAt
+      ? `No room to place: ${noAt} room(s) are not named on the sheet, so they stay in the table only.`
+      : 'No room to place — none of the rooms carries a usable area to size a box from.');
+    return;
+  }
+
+  planSync();     // refresh the hint (draw counts changed)
+  renderAll();    // rebuild the table + summary and redraw the boxes (the table rows do not change)
+  saveSoon();
+
+  let msg = `Placed ${placed} room(s) on the plan. `;
+  const notes = [];
+  if (noAt) notes.push(`${noAt} ${noAt === 1 ? 'is' : 'are'} not named on the sheet, so ${noAt === 1 ? 'it stays' : 'they stay'} in the table only`);
+  if (noArea) notes.push(`${noArea} ${noArea === 1 ? 'has' : 'have'} no usable area to size a box from, so ${noArea === 1 ? 'it stays' : 'they stay'} in the table only`);
+  if (handDrawn) notes.push(`${handDrawn} hand-drawn box(es) were left where you traced them`);
+  if (already) notes.push(`${already} were already on the plan`);
+  msg += notes.length ? `${notes.join('; ')}.` : 'Each box is a locator centred on the point that names the room, sized back from its own area — the load has not changed.';
+  setStatus('ok', msg);
+}
+
+/** Remove ONLY the locator boxes made by "Place all rooms on the plan". Hand-drawn rooms and rooms
+ *  that were never placed are untouched: their rectangle, area, name and include flag all stay. */
+function planClearPlaced() {
+  let removed = 0;
+  for (const room of state.rooms) {
+    if (!isPlacedRoom(room)) continue;
+    delete room.rect;       // area, name, include and source are deliberately left alone
+    removed += 1;
+  }
+  if (!removed) {
+    setStatus('warn', 'There are no placed rooms on the plan to remove.');
+    return;
+  }
+  planSync();
+  renderAll();
+  saveSoon();
+  setStatus('ok', `Removed ${removed} placed room(s) from the plan. Hand-drawn boxes were left alone; ` +
+    `the rooms and the load are unchanged.`);
+}
+
 /** A level for a room drawn on page N: the levels the parser found, in the order it found them,
  *  usually correspond to the pages in order. Best effort — the user can retype it in the editor. */
 function planLevelForPage(page) {
@@ -1377,7 +1459,7 @@ function planLevelForPage(page) {
 function planDrawRoom(rect, info) {
   const page = (info && info.page) || plan.page || 1;
   const denom = planScaleDenom();
-  const n = state.rooms.filter(isDrawnRoom).length + 1;
+  const n = state.rooms.filter((r) => isDrawnRoom(r) && !isPlacedRoom(r)).length + 1;
   const room = roomFromRect(rect, {
     id: newId(),
     name: `Drawn room ${n}`,
@@ -1397,13 +1479,16 @@ function planDrawRoom(rect, info) {
 }
 
 /** The drawing scale is the one input the whole panel depends on, so changing it re-measures every
- *  room that was drawn (their areas are derived from the rectangle, not typed). */
+ *  room that was drawn (their areas are derived from the rectangle, not typed). PLACED rooms are
+ *  deliberately skipped: their box was computed BACK from the room's own area, so their area is the
+ *  input, not the output — re-measuring them from the box at a new scale would silently change the
+ *  load. Only hand-drawn rooms (a real traced boundary) own their area through their rectangle. */
 function planApplyScale(denom) {
   const n = Number(denom) || DEFAULT_SCALE_DENOM;
   state.project.planScale = n;
   let changed = 0;
   for (const r of state.rooms) {
-    if (!isDrawnRoom(r)) continue;
+    if (!isDrawnRoom(r) || isPlacedRoom(r)) continue;
     const dims = dimsFromRect(r.rect, n);
     r.scaleDenom = n;
     r.area = round2(areaFromRect(r.rect, n));
@@ -1551,6 +1636,8 @@ function planWire() {
   if (el.planFit) el.planFit.addEventListener('click', planFitWidth);
   if (el.planModeDraw) el.planModeDraw.addEventListener('change', () => planSetMode('draw'));
   if (el.planModeSelect) el.planModeSelect.addEventListener('change', () => planSetMode('select'));
+  if (el.planPlaceAll) el.planPlaceAll.addEventListener('click', planPlaceAllRooms);
+  if (el.planPlaceClear) el.planPlaceClear.addEventListener('click', planClearPlaced);
 }
 
 /** Open a drawing in the plan panel. Safe to call for every upload: the panel is an enhancement. */
@@ -1951,4 +2038,4 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom };
+window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced };

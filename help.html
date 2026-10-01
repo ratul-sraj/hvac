@@ -194,9 +194,11 @@
           <p>
             <strong>The scale has to be right for the area to be right:</strong> the area is measured
             from the rectangle at the scale you pick, so a wrong scale gives a wrong area, and changing
-            the scale re-measures every room you drew. Rooms read from the PDF have no position on the
-            sheet yet, so the plan shows only the boxes you place yourself &mdash; the rooms found by
-            reading the PDF stay in the table.
+            the scale re-measures every room you drew. Rooms read from the PDF have no boundary of their
+            own on the sheet, so by default the plan shows only the boxes you place yourself. Use
+            <strong>Place all rooms on the plan</strong> to give every room the drawing names a
+            <em>locator</em> box as well &mdash; a marker centred on the label and sized back from that
+            room's area, never its traced walls (see the FAQ entry above).
           </p>
           <p class="muted small">
             Drawn rooms (their rectangle and scale) are saved with the project &mdash; in the browser and
@@ -237,6 +239,38 @@
             box is where you left it. The keystroke only deletes when the focus is not in a table cell,
             so pressing Delete while typing never removes a room by accident.
           </p>
+        </details>
+
+        <details>
+          <summary>Can I see all the rooms from the table on the drawing?</summary>
+          <p>
+            Yes &mdash; click <strong>Place all rooms on the plan</strong> in the plan view
+            (<strong>3. Draw rooms on the plan</strong>). Every room whose label the PDF reader found
+            gets a box on the sheet, so you can click a room in the drawing instead of hunting for its
+            row. <strong>Remove placed rooms</strong> takes those boxes away again.
+          </p>
+          <p>
+            Be clear about what the box is: it is a <strong>locator, not the room's walls</strong>. The
+            text on a plan says <em>where the room is named</em> (CONFERENCE ROOM 24.5 m&sup2;) but
+            nothing about where its boundaries are, so LoadLens puts a box centred on that label and
+            sizes it <strong>back from the room's own area</strong> at the drawing scale. The box is
+            therefore a marker that shows you where the room sits and how big it reads &mdash; it is not
+            a traced outline, and it is not measured off the drawing.
+          </p>
+          <ul>
+            <li><strong>The load does not change.</strong> The area is the input to the box, not an
+              output of it, so placing rooms cannot alter any load figure. Removing them cannot either.</li>
+            <li><strong>Rooms the plan does not name</strong> (a schedule import, or a room added by
+              hand with no label) have no point on the sheet to sit on, so they stay in the table only.
+              The status line tells you exactly how many that is. The same applies to a room with no
+              area &mdash; there is nothing to size a box from.</li>
+            <li>A box you <strong>move or resize by hand</strong> stops being a placed box and becomes a
+              drawn room, and then <em>its area is re-measured from the box</em> &mdash; see
+              &ldquo;I drew a room box in the wrong place&rdquo; above. So only ever drag a placed box
+              if you really mean to re-measure that room.</li>
+            <li>Boxes you drew yourself are left alone by both buttons, and the placed boxes are saved
+              with the project, so they are still there after a reload.</li>
+          </ul>
         </details>
 
         <details>

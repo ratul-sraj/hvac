@@ -4,7 +4,8 @@
 //   export function parseText(items) -> { rooms, warnings }   // pure + testable
 //
 // `items` are in DISPLAY coordinates: x to the right, y DOWN, page coordinates at scale 1
-// (exactly what pdfjs.Util.transform(viewport.transform, item.transform) gives us).
+// (exactly what pdfjs.Util.transform(viewport.transform, item.transform) gives us). Each item also
+// carries `atPdf` — the same point in PDF user space (y UP), which is what a room's `rect` uses.
 // parsePdf never imports pdf.js itself — the caller passes the module in (`{ pdfjs }`).
 // Room objects follow the shared contract in AGENTS.md.
 
@@ -391,7 +392,12 @@ function parseLabels(items, levelByPage, warnings, usedSet) {
 
     if (!name) { orphan.set(page, (orphan.get(page) || 0) + 1); continue; }
     usedSet.add(a.it);
-    rooms.push(makeRoom({ name, number, area: a.value, level: levelByPage.get(page) || "", source: "label", page }));
+    rooms.push(makeRoom({
+      name, number, area: a.value, level: levelByPage.get(page) || "", source: "label", page,
+      // where on the sheet this room is named, in PDF user space (y up). Lets the app place every
+      // room of the table on the plan instead of only the ones the user drew by hand.
+      at: a.it && a.it.atPdf ? { x: +a.it.atPdf.x.toFixed(2), y: +a.it.atPdf.y.toFixed(2) } : undefined,
+    }));
   }
 
   for (const [page, n] of [...orphan].sort((x, y) => x[0] - y[0]))
@@ -404,7 +410,7 @@ function parseLabels(items, levelByPage, warnings, usedSet) {
 
 // ---------------------------------------------------------------- assembly
 
-function makeRoom({ name, number, area, length, width, level, source, page }) {
+function makeRoom({ name, number, area, length, width, level, source, page, at }) {
   const a = num(area) || (num(length) && num(width) ? +(num(length) * num(width)).toFixed(2) : 0);
   const room = {
     id: "",
@@ -416,6 +422,7 @@ function makeRoom({ name, number, area, length, width, level, source, page }) {
     source,
     page,
   };
+  if (at && Number.isFinite(at.x) && Number.isFinite(at.y)) room.at = { x: at.x, y: at.y };
   if (number) room.number = String(number);
   if (num(length)) room.length = num(length);
   if (num(width)) room.width = num(width);
@@ -452,6 +459,9 @@ export function parseText(items) {
       page: num(raw && raw.page, 1) || 1,
       h: num(raw && raw.h) || 8,
       w: num(raw && raw.w),
+      // carried through: the item's position in PDF user space (y up), used to place a room on the plan
+      atPdf: raw && raw.atPdf && Number.isFinite(raw.atPdf.x) && Number.isFinite(raw.atPdf.y)
+        ? { x: raw.atPdf.x, y: raw.atPdf.y } : null,
       _k: k,
     }))
     .filter((it) => it.str);
@@ -502,6 +512,14 @@ export async function parsePdf(arrayBuffer, { pdfjs, onProgress } = {}) {
     for (const it of tc.items) {
       if (!it.str || !it.str.trim()) continue;
       const m = pdfjs.Util.transform(viewport.transform, it.transform);
+      // Where this text sits in PDF USER SPACE (points, origin bottom-left, y UP) — the same
+      // convention a drawn room's `rect` uses, so a room can later be placed where the plan names
+      // it. pdf.js's own inverse transform does the work, so a /Rotate page needs no special case.
+      let atPdf = null;
+      try {
+        const [px, py] = viewport.convertToPdfPoint(m[4], m[5]);
+        if (Number.isFinite(px) && Number.isFinite(py)) atPdf = { x: px, y: py };
+      } catch { atPdf = null; }
       items.push({
         str: it.str,
         x: m[4],
@@ -509,6 +527,7 @@ export async function parsePdf(arrayBuffer, { pdfjs, onProgress } = {}) {
         h: Math.hypot(m[2], m[3]),                // font size after un-rotation
         w: Number.isFinite(it.width) ? it.width : 0,
         page: p,
+        atPdf,
       });
       lines.push("[" + m[4].toFixed(1) + "," + m[5].toFixed(1) + "] " + it.str);
     }

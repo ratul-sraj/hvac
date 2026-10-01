@@ -6,7 +6,7 @@ import {
   PT_PER_INCH, M_PER_INCH, SQIN_PER_SQM, DRAWING_SCALES, DEFAULT_SCALE_DENOM, MIN_RECT_PT,
   normalizeRect, rectIsUsable, areaFromRect, dimsFromRect, clampRectToPage, rectCenter,
   rectContainsPoint, moveRect, resizeRect, handlePoints, roomAtPoint, roomsOnPage, roomFromRect,
-  round2, isDrawnRoom, pdfPointToView, viewPointToPdf, rectToViewBox,
+  round2, isDrawnRoom, rectFromLabel, isPlacedRoom, pdfPointToView, viewPointToPdf, rectToViewBox,
   handleAtPoint,
 } from '../js/planview.js';
 import { normalizeRoom, calcRoom, calcProject, DEFAULT_PROJECT } from '../js/calc.js';
@@ -193,6 +193,34 @@ ok('dragging a corner across the box still gives a positive rectangle',
   JSON.stringify(flippedRect));
 ok('the opposite corner stays pinned while resizing',
   resizeRect(gRect, 'nw', { x: 120, y: 220 }).x + resizeRect(gRect, 'nw', { x: 120, y: 220 }).w === 500);
+
+
+// ---- placing a room where the plan names it -----------------------------------------------------
+// The whole point: a placed box must measure back to exactly the area the table already carries,
+// otherwise putting rooms on the plan would silently change the load.
+const placed = rectFromLabel({ x: 640.5, y: 498.25 }, 24.5, 100);
+ok('a placed room is a rectangle', !!placed && placed.w > 0 && placed.h > 0, JSON.stringify(placed));
+ok('a placed room measures back to its own area',
+  Math.abs(areaFromRect(placed, 100) - 24.5) < 0.05,
+  `${areaFromRect(placed, 100).toFixed(3)} m2 for a 24.5 m2 room`);
+ok('a placed room is centred on the point that names it',
+  Math.abs((placed.x + placed.w / 2) - 640.5) < 0.05 && Math.abs((placed.y + placed.h / 2) - 498.25) < 0.05,
+  `centre ${(placed.x + placed.w / 2).toFixed(2)},${(placed.y + placed.h / 2).toFixed(2)}`);
+ok('a smaller drawing scale means less paper for the same room',
+  Math.abs(areaFromRect(rectFromLabel({ x: 0, y: 0 }, 24.5, 200), 200) - 24.5) < 0.05 &&
+  Math.abs(rectFromLabel({ x: 0, y: 0 }, 24.5, 200).w - rectFromLabel({ x: 0, y: 0 }, 24.5, 100).w / 2) < 0.05,
+  `1:100 ${rectFromLabel({ x: 0, y: 0 }, 24.5, 100).w} pt, 1:200 ${rectFromLabel({ x: 0, y: 0 }, 24.5, 200).w} pt ` +
+  `(both measure ${(areaFromRect(rectFromLabel({ x: 0, y: 0 }, 24.5, 200), 200)).toFixed(2)} m2 at their own scale)`);
+ok('a room with known sides keeps its proportions',
+  (() => { const r = rectFromLabel({ x: 0, y: 0 }, 30, 100, { length: 10, width: 3 });
+    return Math.abs(areaFromRect(r, 100) - 30) < 0.05 && r.w > r.h * 3; })(),
+  JSON.stringify(rectFromLabel({ x: 0, y: 0 }, 30, 100, { length: 10, width: 3 })));
+ok('a placed room is marked as placed, so the app can tell it from a hand-drawn one',
+  isPlacedRoom({ rect: placed }) === true && isPlacedRoom({ rect: { x: 1, y: 1, w: 2, h: 2 } }) === false);
+ok('a room with no position or no area cannot be placed',
+  rectFromLabel(null, 20, 100) === null && rectFromLabel({ x: 1, y: 2 }, 0, 100) === null &&
+  rectFromLabel({ x: 1, y: 2 }, 'nonsense', 100) === null);
+ok('a bigger room gets a bigger box', rectFromLabel({ x: 0, y: 0 }, 100, 100).w > rectFromLabel({ x: 0, y: 0 }, 25, 100).w * 1.9);
 
 console.log(`\n${pass}/${pass + fail} plan view checks passed`);
 if (fail) { console.log(`${fail} FAILED`); process.exit(1); }

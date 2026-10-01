@@ -200,8 +200,11 @@
     <p class="muted small plan-intro">
       Set the drawing scale, then drag a rectangle over a room to add it as a room — the area is
       measured from the rectangle and that scale. The boxes below are the rooms you have placed;
-      rooms found by reading the PDF have no position on the sheet yet, so they stay in the table.
-      Click a box in <em>Select / edit</em> to open that room's breakdown. In
+      rooms found by reading the PDF stay in the table, but <em>Place all rooms on the plan</em> gives
+      every one the drawing names a locator box where the sheet names it, sized back from that room's
+      own area (it is a locator, not the traced room boundary). <em>Remove placed rooms</em> takes those
+      boxes away again and never touches the rooms you drew yourself. Click a box in
+      <em>Select / edit</em> to open that room's breakdown. In
       <em>Select / edit</em> you can also drag a room to move it, drag a corner to resize it,
       press <em>Delete</em> to remove it, and middle-drag or hold <em>Space</em> to pan the sheet.
       All of this stays in your browser, and the drawing is kept here too — reload the page, or come
@@ -227,6 +230,10 @@
       <div class="plan-group">
         <label for="planScale">Drawing scale</label>
         <select id="planScale"></select>
+      </div>
+      <div class="plan-group plan-place-actions">
+        <button type="button" class="btn btn-small" id="planPlaceAll">Place all rooms on the plan</button>
+        <button type="button" class="btn btn-small btn-ghost" id="planPlaceClear">Remove placed rooms</button>
       </div>
     </div>
 

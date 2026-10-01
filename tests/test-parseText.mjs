@@ -145,3 +145,27 @@ export function testEmptyInput() {
   assert.deepEqual(rooms, []);
   assert.ok(warnings.length);
 }
+
+// ---------------------------------------------------------------- where the plan names a room
+/** A room read from a name+area label must keep WHERE the plan names it, because that is what lets
+ *  the table's rooms be placed on the drawing. The position arrives in PDF user space (y up) and must
+ *  land on the room untouched — the display coordinates (y down) the layout logic uses are separate
+ *  and must not leak into it. */
+export function testLabelRoomsKeepThePointThatNamesThem() {
+  const withPos = [
+    { str: "OFFICE", x: 100, y: 200, h: 10, page: 1, atPdf: { x: 640.5, y: 498.25 } },
+    { str: "24.5 M2", x: 100, y: 214, h: 10, page: 1, atPdf: { x: 640.5, y: 484.25 } },
+  ];
+  const { rooms } = parseText(withPos);
+  const office = byName(rooms, "OFFICE");
+  assert.equal(office.area, 24.5);
+  assert.deepEqual(office.at, { x: 640.5, y: 484.25 },
+    "the room keeps the point where the plan names it, in PDF user space (y up)");
+
+  // a plan whose text carries no position at all (an imported schedule, say) simply has no `at`, and
+  // must not gain a junk one
+  const plain = parseText([it("STORE", 10, 10), it("6.00 M2", 10, 24)]);
+  const store = byName(plain.rooms, "STORE");
+  assert.equal(store.area, 6);
+  assert.equal("at" in store, false, "no position on the sheet means no at");
+}

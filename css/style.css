@@ -546,6 +546,11 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 .plan-pos { min-width: 78px; text-align: center; }
 .plan-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
 .plan-mode input { margin: 0; }
+/* "Place all rooms on the plan" / "Remove placed rooms" — a two-button group that stays together
+   when the toolbar wraps on a narrow window. The boxes they create reuse the .plan-room-box
+   contract below: a placed box is an ordinary locator box, so it needs no style of its own. */
+.plan-place-actions { flex-wrap: wrap; gap: 6px; }
+.plan-place-actions .btn { white-space: nowrap; }
 #planScale {
   padding: 4px 6px; font-size: 13px; color: var(--ink);
   border: 1px solid var(--line); border-radius: 6px; background: #fff;

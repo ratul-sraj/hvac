@@ -21,6 +21,11 @@ js/planview.js        PLANNER — plan geometry (pure: rects, drawing scale, are
                       CONTRACT: a drawn room adds `rect:{page,x,y,w,h}` (PDF points, y-up),
                       `scaleDenom` and `source:'manual'`. Screen coords are NEVER stored; the
                       overlay converts per render through the pdf.js viewport (see planview.js).
+                      A PLACED region (rectFromLabel) adds `rect.placed = true` instead: the room was
+                      not drawn, it was put where the plan names it, sized BACK from the area the
+                      table already carries — so placing can never change a load. isPlacedRoom()
+                      tells the two apart; once the user moves or resizes a placed box it is handled
+                      as a hand-drawn one and its area is re-read from the rectangle.
 js/viewer.js          VIEWER agent — renders a PDF page to a canvas, page nav, zoom/fit
 js/overlay.js         OVERLAY agent — SVG layer over the canvas: draws rooms, drag to create
                       Room-box class names are part of its contract (see the comment at the top of
@@ -66,6 +71,12 @@ js/drawstore.js       PLANNER — the uploaded drawing, kept in this browser's I
                       The buffer handed to pdf.js is DETACHED by it — pass putDrawing a private
                       copy (owned: true), never the buffer the viewer is loading.
 js/pdfparse.js        PDF agent — PDF -> rooms[] (also runs server-side in Node)
+                      A room read from a name+area label also carries `at:{x,y}`: where the plan names
+                      it, in PDF user space (y up — the same space `rect` uses). pdf.js's own
+                      convertToPdfPoint does the conversion, so a /Rotate page needs no special case.
+                      Rooms the sheet does not name have no `at` and cannot be placed on the plan.
+                      The DISPLAY coordinates (x right, y down) that the layout logic depends on are
+                      unchanged — never "fix" y in place.
 js/app.js             UI agent  — calculator behaviour; uses the Express API when present
 js/report.js          UI agent  — printable report + CSV builders
 vendor/pdf.*.mjs      pdf.js 4.10.38 — read-only

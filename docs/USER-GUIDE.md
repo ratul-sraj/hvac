@@ -167,7 +167,9 @@ opening the page again restores the last table. **Clear all rooms** empties it.
 As soon as a drawing is loaded — an uploaded PDF, or the **Try sample drawing** button — the
 calculator shows a plan view, **3. Draw rooms on the plan**. It renders the actual page of the
 drawing and lets you place rooms by dragging a rectangle on it. Use it to add a room the reader
-missed, or to measure a room straight off the sheet.
+missed, or to measure a room straight off the sheet. **Place all rooms on the plan** also drops a
+box on the sheet for every room the reader found, so you can click a room in the drawing instead of
+in the table.
 
 The page is rendered **one page at a time, on demand** (a dense A1 CAD sheet takes roughly **0.3–0.5 s**
 to render on a normal PC). A room you draw is an ordinary room: it appears in the room table at once,
@@ -182,6 +184,8 @@ applies to it.
 | **− / +** with a **%** readout | Zoom out / zoom in |
 | **Fit width** | Zoom the page to the width of the panel |
 | **Draw room** / **Select / edit** | Choose the mode: add a room, or click an existing box to open it |
+| **Place all rooms on the plan** | Give every table room the drawing *names* a locator box on the sheet (see below) |
+| **Remove placed rooms** | Take those locator boxes away again — your own drawn boxes are untouched |
 | **Drawing scale** | 1:20, 1:50, **1:100 (default)**, 1:200, 1:500 — the scale a drawn room is measured at |
 
 ### Load a drawing and set the scale
@@ -202,6 +206,30 @@ applies to it.
    the room table immediately and is **already counted in the cooling load**.
 4. Its **load breakdown** opens so you can set the name, space type, orientation, glazing and the rest
    — exactly like any other room.
+
+### Place every room from the table on the plan
+
+**Place all rooms on the plan** puts a box on the sheet for every room the PDF reader found a name and
+an area for, so you can click a room **in the drawing** instead of hunting for its row in the table.
+A placed box behaves like any other box: click it in **Select / edit** to open that room's breakdown.
+
+Be clear about what the box is. It is a **locator, not the room's traced boundary**. The text layer of
+a drawing says *where a room is named* (`CONFERENCE ROOM 24.5 m²`) but nothing about where its walls
+are, so LoadLens centres the box on that label and sizes it **back from the room's own area** at the
+drawing scale. That means:
+
+- **The load does not change.** The area is the **input** to the box, not an output of it, so placing
+  rooms (or removing them) leaves every load figure exactly as it was. Only a box you move or resize
+  by hand becomes a drawn room whose area is re-measured from the rectangle.
+- Each room's box goes on **its own page**, not the page you happen to be looking at. Use
+  **← Prev / Next →** to see the rooms of another floor.
+- **Rooms the sheet does not name** have nowhere to sit and stay in the table only — the status line
+  tells you how many that is. The same is true of a room with **no area**: there is nothing to size a
+  box from. Nothing is invented to fill the gap.
+- **Remove placed rooms** takes away only the locator boxes. Rooms you drew yourself keep their box;
+  the rooms, their areas, names, and the load are untouched.
+- Placed boxes are saved with the project (the browser's local storage and the **Save project
+  (.json)** file), so they are still on the sheet after a reload.
 
 ### Select and edit a drawn room
 
@@ -236,9 +264,11 @@ draw a floor, and check the area in the table afterwards.
 
 ### What the plan cannot do — the honest limit
 
-- Rooms **read from the PDF** — or imported from an Excel / CSV schedule — have **no position on the
-  sheet yet**, so the plan shows the boxes **you** place yourself. The rooms found by reading the PDF
-  stay in the room table; they are not drawn on the plan.
+- Rooms **read from the PDF** — or imported from an Excel / CSV schedule — have **no traced boundary
+  of their own** on the sheet, so the plan shows the boxes **you** place yourself. Use **Place all
+  rooms on the plan** to give each of them a **locator** box where the drawing names it, sized back
+  from that room's area. It is a marker, not the room's walls; rooms the sheet does not name (a
+  schedule import, or a hand-added room) have nowhere to sit and stay in the table only.
 - A drawn area is **only as accurate as the scale you set**. If the sheet is not 1:100, change the
   scale first.
 - The plan view **uploads nothing**: the drawing is rendered inside your browser, like the rest of the
