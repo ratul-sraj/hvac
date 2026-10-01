@@ -17,7 +17,15 @@ if the PDF cannot be read.
 
 There are two copies of the same app.
 
-**A. On your own PC (full version: server reads the PDFs)**
+**A. On the web — https://loadlens.net/ (nothing to install)**
+
+The live copy is at **https://loadlens.net/**, and the calculator is
+**https://loadlens.net/app.html**. Open it and click **Open the calculator**. On this copy the PDF is
+read inside your browser, so it works offline and needs no sign-up. The same static copy is also
+served from GitHub Pages (`ratul-sraj/hvac`); that address is shown in the repository under
+**Settings → Pages**.
+
+**B. On your own PC (full version: server reads the PDFs)**
 
 ```bash
 cd D:/webhvac
@@ -32,13 +40,6 @@ When the page is served by this server, the line under "2. Upload a drawing or a
 **"Reading PDFs on the server (faster)"** and the PDF is parsed by Node instead of by your browser.
 If the server is not answering, the same page falls back to reading the PDF in the browser by
 itself and says so. You never have to choose.
-
-**B. GitHub Pages (static copy, nothing to install)**
-
-The repo `ratul-sraj/hvac` is published with GitHub Pages. The address (something like
-`https://<user>.github.io/hvac/`) is shown in the repository under **Settings → Pages**, or in the
-output of the "Deploy to GitHub Pages" workflow run. On Pages the PDF is always read inside your
-browser — that path works offline too.
 
 For deploying to a real server (Docker, Render, Railway, Fly.io) see [the deploy guide](DEPLOY.md).
 

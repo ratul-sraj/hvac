@@ -10,11 +10,14 @@ onto it — each rectangle becomes a room whose area is measured at the drawing 
 rendered in the browser, like everything else, and kept in the browser so the sheet is still there
 after a refresh.
 
+The live site is **https://loadlens.net/** (calculator **https://loadlens.net/app.html**). The
+server described below is the optional full/local copy; both keep working.
+
 The app works **two ways**, and both keep working:
 
 | Mode | Who reads the PDF | Where it runs |
 |---|---|---|
-| Static site (GitHub Pages) | your browser (pdf.js from `vendor/`) | any static host |
+| Static site (loadlens.net / GitHub Pages) | your browser (pdf.js from `vendor/`) | any static host |
 | **This server** | the server (Node + pdf.js) | `npm start`, Docker, or a Node host |
 
 When the page is opened through this server it asks `GET /api/health` once and, if the server

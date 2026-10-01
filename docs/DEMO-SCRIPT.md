@@ -11,7 +11,8 @@ it for you).
 cd D:/webhvac
 npm start
 ```
-Open **http://localhost:3000/** and leave the page at the top. If you want to also show the
+Open **https://loadlens.net/** — the live copy (or **http://localhost:3000/** if you are running it on
+this PC) — and leave the page at the top. If you want to also show the
 landing / method pages from a static copy, that is a second terminal with
 `python -m http.server 8230 --bind 127.0.0.1` — but the demo below only needs the one page.
 

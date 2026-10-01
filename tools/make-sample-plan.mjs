@@ -67,8 +67,58 @@ const WALL_RGB = "0.53333 0.53333 0.53333";  // rgb(136,136,136) — the line cl
 const WALL_GAP = 8;                          // pt of clear paper kept between two rooms' walls
 const WALL_MARGIN = 30;                      // pt kept clear of the page edge (so no region leaks out)
 const WALL_RES = 2;                          // pt — resolution of the occupancy grid the packer uses
-const WALL_H_MAX = 195;                      // tallest honest rectangle the 100 pt row pitch allows
+const WALL_H_MAX = 195;                      // tallest honest outline the 100 pt row pitch allows
 const WALL_HEIGHTS = [60, 75, 90, 105, 120, 140, 160, 180, 195];
+
+// Not every room is a plain rectangle: a decent share of the walled rooms get an L/stepped outline
+// (a rectangle with one corner notched out) so the sample contains VISIBLY non-rectangular rooms and
+// a first-time viewer can see that the tracer read real shapes rather than boxes the app drew. The
+// outline's own area still equals the room's stated area at 1:100 — the notch is paid for by growing
+// the box (1 / (1 - L_NOTCH²)), so the traced/stated ratio stays honest.
+const L_NOTCH = 0.38;                        // each notch side as a fraction of the box side it cuts
+const L_MIN_SIDE = 16;                       // pt — a notch thinner than this would look like a sliver
+const L_CAND_MIN_M2 = 12;                    // rooms smaller than this keep a plain rectangle
+const L_CAND_MAX_M2 = 250;                   // …and so do the very large halls
+const L_TRY_P = 0.45;                        // deterministic share of the mid-size rooms that try an L
+
+/** CCW polygon for rectangle [l,b,w,h] with the named corner ("tl"/"tr"/"bl"/"br") notched out. */
+function lPolygon(l, b, w, h, corner, nw, nh) {
+  const x0 = l, x1 = l + w, y0 = b, y1 = b + h;
+  const left = corner[1] === "l", top = corner[0] === "t";
+  const mx = left ? x0 + nw : x1 - nw;      // the notch's inner vertical edge
+  const my = top ? y1 - nh : y0 + nh;       // the notch's inner horizontal edge
+  if (corner === "tr") return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: my }, { x: mx, y: my }, { x: mx, y: y1 }, { x: x0, y: y1 }];
+  if (corner === "tl") return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: mx, y: y1 }, { x: mx, y: my }, { x: x0, y: my }];
+  if (corner === "br") return [{ x: x0, y: y0 }, { x: mx, y: y0 }, { x: mx, y: my }, { x: x1, y: my }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  return [{ x: mx, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: my }, { x: mx, y: my }];
+}
+
+/** Even-odd point-in-polygon test in PDF space. */
+function pointInPoly(pts, x, y) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** The corner to notch: the one diagonally opposite the room's own tag, so the tag stays clear. */
+function notchCorner(l, b, w, h, t) {
+  const cx = (t.bx0 + t.bx1) / 2, cy = (t.by0 + t.by1) / 2;
+  return (cy > b + h / 2 ? "b" : "t") + (cx > l + w / 2 ? "l" : "r");
+}
+
+/** The tag box (grown 2 pt) must miss the notch entirely — then the tag is strictly inside the L. */
+function notchClearOfTag(nx0, ny0, nx1, ny1, t) {
+  return t.bx1 <= nx0 - 2 || t.bx0 >= nx1 + 2 || t.by1 <= ny0 - 2 || t.by0 >= ny1 + 2;
+}
+
+/** Deterministic per-room choice: does this room try an L/stepped outline before falling back? */
+function wantL(t) {
+  if (!(t.m2 >= L_CAND_MIN_M2 && t.m2 <= L_CAND_MAX_M2)) return false;
+  return mulberry32(((t.idx * 7919) ^ Math.round(t.m2 * 10)) >>> 0)() < L_TRY_P;
+}
 
 
 // ---------------------------------------------------------------- deterministic PRNG
@@ -209,10 +259,11 @@ function spread(lo, hi) {
 }
 
 /**
- * The rooms that can hold their own tag inside an honest, non-overlapping rectangle at 1:100.
+ * The rooms that can hold their own tag inside an honest, non-overlapping outline at 1:100. Most are
+ * plain rectangles; a chosen share are L/stepped outlines whose area is still exactly the stated one.
  * Greedy, smallest stated area first: the small rooms fit anywhere, so letting them take their space
  * first leaves the large ones the leftover paper, which places more rooms in total than the reverse.
- * @returns {Array<{l,b,w,h,m2}>} rectangles in PDF user space (y up, origin bottom-left).
+ * @returns {Array<{l,b,w,h,poly,m2}>} outlines in PDF user space (y up, origin bottom-left).
  */
 function wallRectangles(tags) {
   const gw = Math.ceil(PAGE_W / WALL_RES), gh = Math.ceil(PAGE_H / WALL_RES);
@@ -222,7 +273,7 @@ function wallRectangles(tags) {
     const y0 = Math.max(0, Math.floor(b / WALL_RES)), y1 = Math.min(gh, Math.ceil((b + h) / WALL_RES));
     for (let gy = y0; gy < y1; gy++) for (let gx = x0; gx < x1; gx++) occ[gy * gw + gx] = 1;
   };
-  // Is this rectangle (plus WALL_GAP/2 on every side) free paper, inside the page margins?
+  // Is this box (plus WALL_GAP/2 on every side) free paper, inside the page margins?
   const free = (l, b, w, h) => {
     const lim0 = Math.floor((WALL_MARGIN - WALL_GAP / 2) / WALL_RES);
     const limX = Math.floor((PAGE_W - WALL_MARGIN + WALL_GAP / 2) / WALL_RES);
@@ -243,27 +294,67 @@ function wallRectangles(tags) {
     const heights = [...new Set([Math.round(Math.sqrt(A)), ...WALL_HEIGHTS]
       .map((h) => Math.min(WALL_H_MAX, Math.max(Math.ceil(bh), h)))
       .filter((h) => h >= bh && h <= WALL_H_MAX))].sort((a, b) => a - b);
+    // The box must contain the tag: l <= bx0, l + w >= bx1, b <= by0, b + h >= by1.
+    const limits = (w, h) => ({
+      lLo: Math.max(WALL_MARGIN, t.bx1 - w), lHi: Math.min(PAGE_W - WALL_MARGIN - w, t.bx0),
+      bLo: Math.max(WALL_MARGIN, t.by1 - h), bHi: Math.min(PAGE_H - WALL_MARGIN - h, t.by0),
+    });
     let hit = null;
-    for (const h of heights) {
-      const w = A / h;                                    // area is EXACTLY the stated one at 1:100
-      if (w < bw + 2 || w > PAGE_W - 2 * WALL_MARGIN) continue;
-      // The rectangle must contain the tag: l <= bx0, l + w >= bx1, b <= by0, b + h >= by1.
-      const lLo = Math.max(WALL_MARGIN, t.bx1 - w), lHi = Math.min(PAGE_W - WALL_MARGIN - w, t.bx0);
-      const bLo = Math.max(WALL_MARGIN, t.by1 - h), bHi = Math.min(PAGE_H - WALL_MARGIN - h, t.by0);
-      if (lLo > lHi || bLo > bHi) continue;
-      for (const l of spread(lLo, lHi)) {
-        for (const b of spread(bLo, bHi)) {
-          // Never enclose another room's tag: the region would hold two labels and be refused.
-          if (ats.some((p) => p.idx !== t.idx
-            && p.x > l + 1 && p.x < l + w - 1 && p.y > b + 1 && p.y < b + h - 1)) continue;
-          if (!free(l, b, w, h)) continue;
-          hit = { l, b, w, h };
-          break;
+
+    // (1) For the chosen share, try an L/stepped outline FIRST: the notch is cut from the corner
+    // diagonally opposite the tag, and the box is grown so the notch costs no area. Falling back to
+    // a rectangle (step 2) keeps this a no-lose bet for the room, so the walled count never drops.
+    if (wantL(t)) {
+      const factor = 1 / (1 - L_NOTCH * L_NOTCH);         // grow the box so box - notch == A
+      for (const h of heights) {
+        const w = (A * factor) / h;
+        if (w < bw + 2 || w > PAGE_W - 2 * WALL_MARGIN) continue;
+        const nw = L_NOTCH * w, nh = L_NOTCH * h;
+        if (nw < L_MIN_SIDE || nh < L_MIN_SIDE) continue;  // a thin notch looks like a sliver
+        const { lLo, lHi, bLo, bHi } = limits(w, h);
+        if (lLo > lHi || bLo > bHi) continue;
+        for (const l of spread(lLo, lHi)) {
+          for (const b of spread(bLo, bHi)) {
+            const corner = notchCorner(l, b, w, h, t);
+            const poly = lPolygon(l, b, w, h, corner, nw, nh);
+            const nr = corner[1] === "l"
+              ? { nx0: l, ny0: corner[0] === "t" ? b + h - nh : b, nx1: l + nw, ny1: corner[0] === "t" ? b + h : b + nh }
+              : { nx0: l + w - nw, ny0: corner[0] === "t" ? b + h - nh : b, nx1: l + w, ny1: corner[0] === "t" ? b + h : b + nh };
+            if (!notchClearOfTag(nr.nx0, nr.ny0, nr.nx1, nr.ny1, t)) continue;
+            // Never enclose another room's tag: the region would hold two labels and be refused.
+            if (ats.some((p) => p.idx !== t.idx && pointInPoly(poly, p.x, p.y))) continue;
+            if (!free(l, b, w, h)) continue;
+            hit = { l, b, w, h, poly };
+            break;
+          }
+          if (hit) break;
         }
         if (hit) break;
       }
-      if (hit) break;
     }
+
+    // (2) A plain rectangle, exactly as before.
+    if (!hit) {
+      for (const h of heights) {
+        const w = A / h;                                  // area is EXACTLY the stated one at 1:100
+        if (w < bw + 2 || w > PAGE_W - 2 * WALL_MARGIN) continue;
+        const { lLo, lHi, bLo, bHi } = limits(w, h);
+        if (lLo > lHi || bLo > bHi) continue;
+        for (const l of spread(lLo, lHi)) {
+          for (const b of spread(bLo, bHi)) {
+            // Never enclose another room's tag: the region would hold two labels and be refused.
+            if (ats.some((p) => p.idx !== t.idx
+              && p.x > l + 1 && p.x < l + w - 1 && p.y > b + 1 && p.y < b + h - 1)) continue;
+            if (!free(l, b, w, h)) continue;
+            hit = { l, b, w, h, poly: [{ x: l, y: b }, { x: l + w, y: b }, { x: l + w, y: b + h }, { x: l, y: b + h }] };
+            break;
+          }
+          if (hit) break;
+        }
+        if (hit) break;
+      }
+    }
+
     if (!hit) continue;
     mark(hit.l, hit.b, hit.w, hit.h);
     placed.push({ ...hit, m2: t.m2 });
@@ -291,14 +382,17 @@ const esc = (s) =>
 
 const f2 = (n) => Number(n.toFixed(2));
 
-/** The stroked walls of one sheet, as raw path operators (a fourth `l` returns to the start, so the
- *  `h` closes nothing — every side is an explicit segment js/trace.js can read). */
+/** The stroked walls of one sheet, as raw path operators. Each outline is a closed polygon emitted
+ *  with explicit m/l/h operators (`re` would become OPS.rectangle, which js/trace.js does not read),
+ *  and a final `l` returns to the first vertex so every side is an explicit segment the tracer sees. */
 function wallOperators(walls) {
   if (!walls.length) return [];
   const out = [`${WALL_RGB} RG`, "1 w"];
   for (const w of walls) {
-    const x0 = f2(w.l), y0 = f2(w.b), x1 = f2(w.l + w.w), y1 = f2(w.b + w.h);
-    out.push(`${x0} ${y0} m`, `${x1} ${y0} l`, `${x1} ${y1} l`, `${x0} ${y1} l`, "h", "S");
+    const pts = w.poly;
+    out.push(`${f2(pts[0].x)} ${f2(pts[0].y)} m`);
+    for (let i = 1; i < pts.length; i++) out.push(`${f2(pts[i].x)} ${f2(pts[i].y)} l`);
+    out.push(`${f2(pts[0].x)} ${f2(pts[0].y)} l`, "h", "S");
   }
   return out;
 }
@@ -373,12 +467,15 @@ export function writeSamplePlan(file = OUT_PATH) {
 
 function summary() {
   const { pdf, rooms, walls } = buildSamplePlan();
+  const isL = (w) => w.poly && w.poly.length > 4;
   const lines = [
     `sample-plan.pdf: ${pdf.length} bytes, 3 pages`,
-    ...rooms.map((r, i) => `  page ${i + 1}: ${r.length} room tags, ${walls[i].length} with honest walls at 1:100`),
+    ...rooms.map((r, i) => `  page ${i + 1}: ${r.length} room tags, ${walls[i].length} with honest outlines at 1:100 ` +
+      `(${walls[i].filter(isL).length} L-shaped/stepped, ${walls[i].filter((w) => !isL(w)).length} rectangular)`),
     `  total: ${rooms.reduce((a, r) => a + r.length, 0)} room tags, ` +
-      `${walls.reduce((a, w) => a + w.length, 0)} with walls (the rest are too small or too large to ` +
-      `hold their own tag inside a rectangle of their stated area)`,
+      `${walls.reduce((a, w) => a + w.length, 0)} with outlines ` +
+      `(${walls.flat().filter(isL).length} L-shaped/stepped; the rest are too small or too large to ` +
+      `hold their own tag inside an outline of their stated area)`,
   ];
   return lines.join("\n");
 }

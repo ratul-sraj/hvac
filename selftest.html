@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <title>LoadLens self test</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://loadlens.net/selftest.html">
+<meta property="og:url" content="https://loadlens.net/selftest.html">
+<meta property="og:image" content="https://loadlens.net/favicon.svg">
+<meta name="twitter:image" content="https://loadlens.net/favicon.svg">
 <style>
   body { font: 14px/1.5 system-ui, sans-serif; margin: 20px; }
   pre { background: #f5f5f5; padding: 12px; border-radius: 6px; white-space: pre-wrap; }
@@ -34,6 +38,7 @@ try {
     log("", "");
     log("Browsers refuse to import ES modules (vendor/pdf.min.mjs, js/*.js) over file://.", "");
     log("Use one of these instead:", "");
+    log("  * loadlens.net          https://loadlens.net/selftest.html", "pass");
     log("  * the local server      http://127.0.0.1:3000/selftest.html", "pass");
     log("  * the deployed site     https://d3cf28rp8goz0w.cloudfront.net/selftest.html", "pass");
     log("  * GitHub Pages          https://ratul-sraj.github.io/hvac/selftest.html", "pass");
@@ -108,5 +113,9 @@ if (haveSample) {
   document.title = "SELFTEST FAILED";
 }
 </script>
+<footer>
+  <p>LoadLens &mdash; <a href="https://loadlens.net/">loadlens.net</a> &middot;
+    Source on GitHub: <a href="https://github.com/ratul-sraj/hvac">github.com/ratul-sraj/hvac</a></p>
+</footer>
 </body>
 </html>
