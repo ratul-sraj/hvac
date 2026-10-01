@@ -208,10 +208,40 @@ function showPlanStatus(kind, msg) {
   el.planStatus.className = 'plan-status ' + (kind || '');
   el.planStatus.textContent = msg;
   el.planStatus.classList.remove('hidden');
+  placePlanStatus();
   clearTimeout(planStatusTimer);
   if (kind !== 'warn' && kind !== 'err') {
     planStatusTimer = setTimeout(hidePlanStatus, 10000);
   }
+}
+
+/** Keep the fixed plan toast clear of the drawing. It used to sit at the bottom-centre of the
+ *  viewport, which is exactly where the plan view is while the user works on it — right after Place
+ *  all / draw the toast covered the rooms being worked on for its 10 s. Prefer the strip under the
+ *  sticky header; if that would sit over #planView, move it just below the drawing, or just above it
+ *  when the drawing reaches the bottom of the screen. Re-run on scroll/resize so it stays clear. */
+function placePlanStatus() {
+  const t = el.planStatus;
+  if (!t || t.classList.contains('hidden')) return;
+  const vh = window.innerHeight || 0;
+  const gap = 10;
+  const h = t.offsetHeight || 0;
+  const nav = document.querySelector('.app-nav');
+  const navBottom = nav ? Math.max(0, nav.getBoundingClientRect().bottom) : 0;
+  let top = navBottom + gap;
+  const view = el.planView;
+  if (view) {
+    const r = view.getBoundingClientRect();
+    const overlaps = (y) => y < r.bottom + gap && y + h > r.top - gap;
+    if (overlaps(top)) {
+      const below = r.bottom + gap;
+      const above = r.top - h - gap;
+      if (below + h <= vh - gap) top = below;
+      else if (above >= navBottom + gap) top = above;
+      else top = Math.max(navBottom + gap, Math.min(above, vh - h - gap));
+    }
+  }
+  t.style.top = Math.round(top) + 'px';
 }
 
 function hidePlanStatus() {
@@ -468,15 +498,25 @@ function outdoorFieldsEmpty() {
   return empty(projInput('outDb')) && empty(projInput('outWb'));
 }
 
+// The city shown when the location match is COUNTRY-level: the country is known but no single city was
+// assumed, so the country dropdown must not fall back to "Custom" (which would deny the match the chip
+// already announced). A sentinel that no climate row carries keeps applyClimate() from overwriting the
+// paired country-level DB/WB with some arbitrary city's values.
+const COUNTRY_LEVEL_CITY = '(country-level)';
+
 // Put the suggestion into the fields. A detected city the app's own country list knows is selected
 // properly so the two dropdowns stay consistent; anything else (e.g. London, which has no row in
 // the older js/calc.js list) is marked 'Custom', so the pair is honoured exactly as suggested
-// rather than silently relabelled as some other city's climate.
+// rather than silently relabelled as some other city's climate. A COUNTRY-level match keeps the
+// country's own name in the dropdown (the country IS known) and marks the city as country-level.
 function applyDetectedClimate(match, loc) {
   const known = loc.city ? CLIMATES[loc.city] : null;
   if (known) {
     state.project.country = known.country;
     state.project.city = loc.city;
+  } else if (match && match.matched === 'country' && loc.country && COUNTRIES[loc.country]) {
+    state.project.country = loc.country;
+    state.project.city = COUNTRY_LEVEL_CITY;
   } else {
     state.project.country = 'Custom';
     state.project.city = 'Custom';
@@ -609,7 +649,11 @@ function visibleIndices() {
   state.rooms.forEach((r, i) => {
     const rn = normalizeRoom(r, state.project);
     if (lvl !== 'all' && ((rn.level || '').trim() || 'Unspecified') !== lvl) return;
-    if (q && !String(rn.name || '').toLowerCase().includes(q)) return;
+    // Search the labels the user can SEE, not only the name: the space type is shown in its own
+    // column, so typing "conference" must find the rooms whose name is "CONF. RM." and whose type
+    // reads "Conference/Meeting".
+    if (q && !String(rn.name || '').toLowerCase().includes(q)
+      && !typeLabel(rn.type).toLowerCase().includes(q)) return;
     idc.push(i);
   });
   return idc;
@@ -660,6 +704,7 @@ const SOURCE_LABEL = {
   table: 'PDF',
   pdf: 'PDF',
   manual: 'manual',
+  drawn: 'drawn',       // a shape the user drew on the plan by hand (not traced, not placed)
 };
 
 function sourceLabel(src) {
@@ -761,7 +806,7 @@ function rowHtml(idx, calc) {
     <td class="res v-latent">${fmt(r.rlh, 0)}</td>
     <td class="res hi v-total">${fmt(r.totalW, 0)}</td>
     <td class="res hi v-tr">${fmt(r.tr, 2)}</td>
-    <td class="res v-ls">${fmt(r.supplyLs, 0)}</td>
+    <td class="res v-ls">${r.supplyOk === false ? '-' : fmt(r.supplyLs, 0)}</td>
     <td class="res v-sqftPerTr">${fmt(r.sqftPerTr, 0)}</td>
     <td class="c-src" title="Where this room came from">${esc(sourceLabel(raw.source))}</td>
     <td class="c-del"><button type="button" class="btn-del" data-act="del"
@@ -813,7 +858,7 @@ function updateLive() {
     tr.querySelector('.v-latent').textContent = fmt(r.rlh, 0);
     tr.querySelector('.v-total').textContent = fmt(r.totalW, 0);
     tr.querySelector('.v-tr').textContent = fmt(r.tr, 2);
-    tr.querySelector('.v-ls').textContent = fmt(r.supplyLs, 0);
+    tr.querySelector('.v-ls').textContent = r.supplyOk === false ? '-' : fmt(r.supplyLs, 0);
     tr.querySelector('.v-sqftPerTr').textContent = fmt(r.sqftPerTr, 0);
     for (const f of NUM_FIELDS) {
       const inp = tr.querySelector(`input[data-field="${f}"]`);
@@ -831,6 +876,10 @@ function updateLive() {
     }
   });
   renderSummary(calc);
+  // The engine's own warnings (a negative area counted as 0, a zero supply ΔT, ...) are recomputed on
+  // every render; an in-table edit must surface them immediately, not only after an unrelated
+  // re-render (the old path never called this, so typing -5 into Area moved the load silently).
+  renderWarnings(calc);
   if (state.ui.openId) renderDetail(calc);
   // the box label on the plan is drawn from room.name, so it has to be redrawn too — otherwise the
   // drawing keeps showing the name the room had before the edit
@@ -851,7 +900,7 @@ function renderSummary(calc) {
   el.summaryCards.innerHTML = [
     card('Total cooling load', fmt(t.tr, 2), 'TR', true),
     card('Total heat', fmt(t.totalW, 0), 'W', true),
-    card('Supply air', fmt(t.ls, 0), 'L/s'),
+    card('Supply air', t.supplyOk === false ? '-' : fmt(t.ls, 0), 'L/s'),
     card('Fresh / outdoor air', fmt(t.oaLs, 0), 'L/s'),
     card('Conditioned area', fmt(t.area, 1), 'm²'),
     card('Area', fmt(t.areaSqft, 0), 'ft²'),
@@ -872,13 +921,13 @@ function renderSummary(calc) {
         <td>${fmt(g.area, 1)}</td>
         <td>${fmt(g.areaSqft, 0)}</td>
         <td>${fmt(g.tr, 2)}</td>
-        <td>${fmt(g.ls, 0)}</td>
+        <td>${g.supplyOk === false ? '-' : fmt(g.ls, 0)}</td>
         <td>${fmt(g.oaCfm, 0)}</td>
         <td>${fmt(g.tr ? g.areaSqft / g.tr : 0, 0)}</td>
       </tr>`).join('') +
       `<tr class="total-row">
         <td class="l">Total</td><td>${t.rooms}</td><td>${fmt(t.area, 1)}</td><td>${fmt(t.areaSqft, 0)}</td>
-        <td>${fmt(t.tr, 2)}</td><td>${fmt(t.ls, 0)}</td><td>${fmt(t.oaLs, 0)}</td>
+        <td>${fmt(t.tr, 2)}</td><td>${t.supplyOk === false ? '-' : fmt(t.ls, 0)}</td><td>${fmt(t.oaLs, 0)}</td>
         <td>${fmt(t.sqftPerTr, 0)}</td>
       </tr>`
     : '<tr><td class="l" colspan="8">No rooms included yet.</td></tr>';
@@ -931,7 +980,7 @@ function renderDetail(calc) {
     <div class="bd-total">
       <div><div class="k">Cooling load</div><div class="v">${fmt(r.tr, 2)} TR</div></div>
       <div><div class="k">Total heat</div><div class="v">${fmt(r.totalW, 0)} W</div></div>
-      <div><div class="k">Supply air</div><div class="v">${fmt(r.supplyLs, 0)} L/s</div></div>
+      <div><div class="k">Supply air</div><div class="v">${r.supplyOk === false ? '-' : fmt(r.supplyLs, 0)} L/s</div></div>
       <div><div class="k">Fresh air</div><div class="v">${fmt(r.oaLs, 0)} L/s</div></div>
       <div><div class="k">SHF</div><div class="v">${fmt(r.shf, 2)}</div></div>
       <div><div class="k">Area / tonne</div><div class="v">${fmt(r.sqftPerTr, 0)} ft&sup2;/TR</div></div>
@@ -1111,8 +1160,8 @@ function pushWarnings(list) {
 // - file/parse notes, which are permanent until cleared (state.warnings);
 // - live engine warnings from js/calc.js (impossible conditions, clamped
 //   geometry), which are recomputed on every render, so they never pile up.
-function renderWarnings() {
-  const live = (currentCalc() && currentCalc().warnings) || [];
+function renderWarnings(calc) {
+  const live = ((calc || currentCalc()) && (calc || currentCalc()).warnings) || [];
   const list = state.warnings.concat(live);
   if (!list.length) {
     el.warnBox.classList.add('hidden');
@@ -1963,6 +2012,12 @@ async function planTraceOutlines() {
     return;
   }
 
+  // Hold the busy flag for the WHOLE job, including the awaits that recover positions and load the
+  // tracer: it used to be set only after those (≈1 s in on a live sheet), so a second click in that
+  // window re-entered the trace — double work, a doubled status. Cleared in the finally on every path.
+  planTraceBusy(true);
+  try {
+
   // A project saved before the parser recorded WHERE the sheet names each room has no `at`; recover
   // the positions exactly like Place all rooms does, so tracing works on such a project too.
   // A room the user drew BY HAND is left out on purpose: its shape is their own work, not a stale
@@ -1985,7 +2040,6 @@ async function planTraceOutlines() {
   let trace;
   try { trace = await loadTraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err), 'plan'); return; }
 
-  planTraceBusy(true);
   planHideScaleFix();   // a stale one-click fix must not survive the trace that replaces it
   setStatus(null, "Tracing the plan's linework… this can take a second or two on a big sheet.", 'plan');
   await nextFrame();
@@ -2155,6 +2209,7 @@ async function planTraceOutlines() {
     console.warn('[trace] tracing failed:', (err && err.message) || err);
     setStatus('err', `Tracing the plan's linework failed (${(err && err.message) || err}). ` +
       `The rooms and the load are unchanged.`, 'plan');
+  }
   } finally {
     planTraceBusy(false);
   }
@@ -2442,7 +2497,8 @@ function planApplyScale(denom) {
   renderAll();
   saveSoon();
   setStatus('ok', changed
-    ? `Drawing scale 1:${n} — ${changed} drawn room(s) re-measured from their rectangles.`
+    ? `Drawing scale 1:${n} — ${changed} drawn room(s) re-measured from their own shapes ` +
+      `(a rectangle from its box, a drawn shape from its ring).`
     : `Drawing scale set to 1:${n}. Rooms you draw are measured at this scale.`, 'plan');
 }
 
@@ -2864,6 +2920,10 @@ function wire() {
   for (const [key, kind] of PROJ_FIELDS) {
     const input = projInput(key);
     if (!input) continue;
+    // A blank numeric field silently uses the default (readProjectInput writes DEFAULT_PROJECT[key]),
+    // so show that default as the placeholder: the user can see the value the engine is using instead
+    // of an empty box that hides it.
+    if (kind === 'num' && Number.isFinite(DEFAULT_PROJECT[key])) input.placeholder = String(DEFAULT_PROJECT[key]);
     input.addEventListener('input', () => {
       readProjectInput(key, kind);
       if (key === 'outDb' || key === 'outWb') checkCustomClimate();
@@ -3018,6 +3078,10 @@ function wire() {
 
   // detail
   $('#btnCloseDetail').addEventListener('click', closeDetail);
+
+  // The plan toast is fixed; keep it clear of the drawing as the page scrolls or the window resizes.
+  window.addEventListener('scroll', placePlanStatus, { passive: true });
+  window.addEventListener('resize', placePlanStatus);
 
   // export / import
   $('#btnCsv').addEventListener('click', exportCsv);

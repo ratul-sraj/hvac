@@ -151,6 +151,23 @@ if (!sampleMissing) {
   await page.select("#proj-country", "India");
   await page.select("#proj-city", "Kochi");
 
+  // 4b. a blank numeric design-condition field must SHOW the default the engine is using (P3-6):
+  //     the box used to go visibly empty while the maths silently used 35 °C.
+  {
+    await page.$eval("#proj-outDb", (e) => { e.value = ""; e.dispatchEvent(new Event("input", { bubbles: true })); });
+    await new Promise((r) => setTimeout(r, 300));
+    const blank = await page.evaluate(() => ({
+      val: document.getElementById("proj-outDb").value,
+      ph: document.getElementById("proj-outDb").placeholder,
+      tr: (document.getElementById("summaryCards").innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/) || [])[1],
+    }));
+    ok("a blank design-condition field shows the default the engine will use",
+      blank.val === "" && blank.ph === String(35) && Number(blank.tr) === tr,
+      `placeholder "${blank.ph}", load ${blank.tr} TR (baseline ${tr})`);
+    await page.$eval("#proj-outDb", (e) => { e.value = "35"; e.dispatchEvent(new Event("input", { bubbles: true })); });
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
   // 5. edit a room area -> totals update
   const before = tr;
   const areaSel = "#roomsBody tr:not(.excluded) input[data-field='area']";
@@ -169,11 +186,57 @@ if (!sampleMissing) {
   ok("focus kept while typing", await page.evaluate(() => document.activeElement && document.activeElement.tagName === "INPUT"),
     await page.evaluate(() => document.activeElement && document.activeElement.tagName));
 
+  // 5b. an impossible cell edit must surface the engine's warning AT ONCE (P2-2): typing -5 used to
+  //     drop the load silently with no note until an unrelated re-render.
+  await page.$eval(areaSel, (inp) => {
+    inp.focus();
+    inp.value = "-5";
+    inp.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 250));
+  const negWarn = await page.evaluate(() => {
+    const box = document.getElementById("warnBox");
+    const list = document.getElementById("warnList");
+    return { hidden: !box || box.classList.contains("hidden"),
+      // textContent, not innerText: the notes live inside a COLLAPSED <details>, so innerText is "".
+      text: list ? list.textContent.replace(/\s+/g, " ").trim() : "" };
+  });
+  const negTotal = await page.$eval("#summaryCards", (e) => {
+    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+    return m ? parseFloat(m[1]) : NaN;
+  });
+  ok("an impossible cell edit warns immediately, without another interaction",
+    !negWarn.hidden && /negative/i.test(negWarn.text) && /area/i.test(negWarn.text),
+    `hidden ${negWarn.hidden}: "${negWarn.text.slice(0, 110)}"`);
+  ok("a negative area is clamped (the load drops) and the note explains it",
+    Number.isFinite(negTotal) && negTotal < before, `${before} -> ${negTotal} TR`);
+  await page.$eval(areaSel, (inp) => {          // put the row back exactly as the edit left it
+    inp.focus();
+    inp.value = "200";
+    inp.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 250));
+  const backTotal = await page.$eval("#summaryCards", (e) => {
+    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+    return m ? parseFloat(m[1]) : NaN;
+  });
+  ok("restoring the area puts the load back", Math.abs(backTotal - afterEdit) < 0.05,
+    `${afterEdit} -> ${backTotal} TR`);
+
   // 6. filter + sort + include toggle
   await page.type("#filterName", "MEETING");
   await new Promise((r) => setTimeout(r, 300));
   const filtered = await page.$$eval("#roomsBody tr", (r) => r.length);
   ok("name filter narrows the table", filtered > 0 && filtered < roomRows, `${roomRows} -> ${filtered} rows`);
+  await page.$eval("#filterName", (e) => { e.value = ""; e.dispatchEvent(new Event("input", { bubbles: true })); });
+  await new Promise((r) => setTimeout(r, 200));
+  // The filter must search the label the user can SEE, not only the name: the space type is shown in
+  // its own column, so "conference" must find the rooms named "CONF. RM." whose type is Conference/Meeting.
+  await page.type("#filterName", "conference");
+  await new Promise((r) => setTimeout(r, 300));
+  const byType = await page.$$eval("#roomsBody tr", (r) => r.length);
+  ok("the name filter also matches the visible space-type label", byType > 0 && byType < roomRows,
+    `"conference" -> ${byType} of ${roomRows} rows`);
   await page.$eval("#filterName", (e) => { e.value = ""; e.dispatchEvent(new Event("input", { bubbles: true })); });
   await new Promise((r) => setTimeout(r, 200));
   await page.click("#filterLevel");
@@ -192,6 +255,62 @@ if (!sampleMissing) {
   ok("CSV export produces a file", !!csv && csv.length > 1000, `${csv ? csv.length : 0} characters, ${csvLines.length} lines`);
   ok("CSV has a row per room and the totals", csvLines.length > 100 && /TR/i.test(csv || ""),
     (csvLines[0] || "").slice(0, 140));
+
+  // 7b. supply dT = 0 must show "-" on screen and in the CSV / report, never Infinity (P2-3).
+  {
+    const readSupply = () => page.evaluate(() => {
+      const cell = document.querySelector("#roomsBody tr .v-ls");
+      const card = [...document.querySelectorAll("#summaryCards .scard")].find((c) => /supply air/i.test(c.textContent));
+      return { cell: cell ? cell.textContent.trim() : null,
+        card: card ? card.textContent.replace(/\s+/g, " ").trim() : null };
+    });
+    await page.$eval("#proj-supplyDt", (e) => { e.value = "0"; e.dispatchEvent(new Event("input", { bubbles: true })); });
+    await new Promise((r) => setTimeout(r, 400));
+    const zero = await readSupply();
+    ok("a zero supply dT shows '-' on screen, not Infinity and not a blank",
+      zero.cell === "-" && /(^|\s)-\s*L\/s/.test(zero.card || "") && !/Infinity/.test((zero.cell || "") + (zero.card || "")),
+      `cell "${zero.cell}", card "${zero.card}"`);
+    const zeroWarn = await page.evaluate(() => (document.getElementById("warnList") || {}).textContent || "");
+    ok("a zero supply dT carries a warning", /supply air/i.test(zeroWarn), zeroWarn.replace(/\s+/g, " ").slice(0, 110));
+
+    await page.evaluate(() => { window.__csv = null; });
+    await page.click("#btnCsv");
+    await page.waitForFunction(() => window.__csv !== null, { timeout: 20000 }).catch(() => {});
+    const csvZero = await page.evaluate(() => window.__csv);
+    // quote-aware split, because a room name/type can contain a comma
+    const parsedZ = (csvZero || "").split(/\r?\n/).filter((l) => /^yes,/.test(l)).map((line) => {
+      const out = []; let cur = ""; let q = false;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (q) {
+          if (ch === '"' && line[i + 1] === '"') { cur += '"'; i += 1; }
+          else if (ch === '"') q = false;
+          else cur += ch;
+        } else if (ch === '"') q = true;
+        else if (ch === ",") { out.push(cur); cur = ""; }
+        else cur += ch;
+      }
+      out.push(cur);
+      return out;
+    });
+    ok("the CSV never contains Infinity and its supply column shows '-'",
+      !/Infinity/.test(csvZero || "") && parsedZ.length > 0 && parsedZ.every((f) => f[20] === "-"),
+      `${parsedZ.length} rows, first "${(csvZero || "").split(/\r?\n/).find((l) => /^yes,/.test(l)) || ""}".slice(0, 120)`);
+
+    const reportZero = await page.evaluate(() => {
+      const h = window.webhvac;
+      const html = h.buildReportHtml(h.state.project, h.currentCalc());
+      return { inf: /Infinity/.test(html), nan: /NaN/.test(html), dashes: (html.match(/>-</g) || []).length };
+    });
+    ok("the report carries no Infinity/NaN and shows '-' for the uncomputable supply flow",
+      !reportZero.inf && !reportZero.nan && reportZero.dashes > 0, JSON.stringify(reportZero));
+
+    await page.$eval("#proj-supplyDt", (e) => { e.value = "11"; e.dispatchEvent(new Event("input", { bubbles: true })); });
+    await new Promise((r) => setTimeout(r, 300));
+    const back = await readSupply();
+    ok("restoring the supply dT brings the L/s figures back", /[0-9]/.test(back.cell || ""),
+      `cell "${back.cell}"`);
+  }
 
   // 8. print report. It must NOT depend on window.open(): a pop-up blocker refuses it, and an embedded
   //    preview pane blocks it outright, where "allow pop-ups for this page" cannot help. The report is
@@ -644,12 +763,22 @@ if (!sampleMissing) {
 
     // a 20 m² manual room to assign a shape to. #btnManual opens that room's breakdown, which scrolls
     // the PAGE down to it — so the plan panel must be brought back into view AFTER this click.
-    await page.click("#btnManual");
-    await sleep2(400);
-    const manualId = await page.evaluate(() => {
+    const manualRoom = () => page.evaluate(() => {
       const r = window.webhvac.state.rooms.find((x) => x.source === "manual" && x.name === "New Room");
       return r ? r.id : null;
     });
+    // Scroll the button to the middle first and let the (asynchronously rendered) geo chip settle: a
+    // geometry click that starts while the layout is still moving can land on nothing.
+    await page.evaluate(() => document.getElementById("btnManual").scrollIntoView({ block: "center" }));
+    await sleep2(500);
+    await page.click("#btnManual");
+    await sleep2(500);
+    let manualId = await manualRoom();
+    if (!manualId) {
+      await page.evaluate(() => document.getElementById("btnManual").click());   // deterministic fallback
+      await sleep2(600);
+      manualId = await manualRoom();
+    }
     ok("there is a manual 20 m² room to give a shape to", !!manualId, String(manualId));
 
     // the mouse coordinates are viewport-relative: the plan MUST be on screen or a click delivers no
@@ -729,6 +858,11 @@ if (!sampleMissing) {
       shape1 ? `${shape1.pts.length} corners, concave ${isConcave(shape1.pts)}` : "no shape");
     ok("a hand-drawn shape is drawn as its own kind (data-shape=poly, data-source=drawn)",
       await page.$$eval('.plan-room[data-shape="poly"][data-source="drawn"]', (n) => n.length) === 1);
+    // The Source column promises "where this room came from"; a hand-drawn room used to leave it blank.
+    const drawnSrc = shape1
+      ? await page.$eval(`tr[data-id="${shape1.id}"] td.c-src`, (td) => td.textContent.trim())
+      : "(no shape)";
+    ok("the hand-drawn room's Source cell is labelled, not blank", drawnSrc === "drawn", `"${drawnSrc}"`);
 
     const afterCommit = await page.evaluate((id) => ({
       mode: window.webhvac.state.ui.planMode,
@@ -1518,6 +1652,18 @@ if (!sampleMissing) {
     ok("a plan-button result is shown inside the plan panel, next to the buttons",
       !traced.hidden && traced.onScreen && /outline|point to/i.test(traced.text),
       `"${traced.text.slice(0, 90)}" — hidden ${traced.hidden}, on screen ${traced.onScreen}`);
+    // The toast used to sit at the bottom-centre of the viewport, over the drawing the user is working
+    // on. It must now be positioned clear of #planView (P3: it must not cover what the user is looking at).
+    const toastClear = await page.evaluate(() => {
+      const s = document.getElementById("planStatus");
+      const v = document.getElementById("planView");
+      if (!s || !v || s.classList.contains("hidden")) return { ok: false, why: "toast hidden" };
+      const a = s.getBoundingClientRect(), b = v.getBoundingClientRect();
+      const overlap = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      return { ok: !overlap, toastTop: Math.round(a.top), planTop: Math.round(b.top), planBottom: Math.round(b.bottom) };
+    });
+    ok("the plan toast does not cover the plan view", toastClear.ok,
+      `toast top ${toastClear.toastTop}, plan ${toastClear.planTop}..${toastClear.planBottom}`);
     ok("tracing does not add or drop table rows", (await rows4()) === rowsBeforeTrace,
       `${rowsBeforeTrace} -> ${await rows4()}`);
 
@@ -1688,8 +1834,8 @@ if (!sampleMissing) {
     await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
     await waitChip();
     const a = await snapGeo();
-    ok("a detected city pre-fills the empty design conditions (Delhi 43/24)",
-      Number(a.db) === 43 && Number(a.wb) === 24, `DB=${a.db} WB=${a.wb}`);
+    ok("a detected city pre-fills the empty design conditions (Delhi 42.3/23.2, ASHRAE 2021)",
+      Number(a.db) === 42.3 && Number(a.wb) === 23.2, `DB=${a.db} WB=${a.wb}`);
     ok("a dismissible detection chip appears and asks the user to verify",
       !a.hidden && /Detected/.test(a.chip) && /[Vv]erify/.test(a.chip) && /ISHRAE|ASHRAE/.test(a.chip),
       a.chip.slice(0, 150));
@@ -1705,7 +1851,7 @@ if (!sampleMissing) {
     const b = await snapGeo();
     ok("a dismissed chip stays dismissed for that location on reload", b.hidden === true,
       b.chip || "(chip hidden)");
-    ok("dismissing does not undo the filled values", Number(b.db) === 43 && Number(b.wb) === 24,
+    ok("dismissing does not undo the filled values", Number(b.db) === 42.3 && Number(b.wb) === 23.2,
       `DB=${b.db} WB=${b.wb}`);
 
     // (c) a saved project's own values are never overwritten — the chip offers an Apply button
@@ -1727,7 +1873,7 @@ if (!sampleMissing) {
     await waitStable(300);
     const c2 = await snapGeo();
     ok("Use detected values applies the suggestion on request",
-      Number(c2.db) === 34 && Number(c2.wb) === 22 && c2.city === "Bengaluru",
+      Number(c2.db) === 34.3 && Number(c2.wb) === 20 && c2.city === "Bengaluru",
       `DB=${c2.db} WB=${c2.wb} city=${c2.city}`);
 
     // (d) a blocked lookup falls back to the timezone (country level) and shows no error
@@ -1743,6 +1889,8 @@ if (!sampleMissing) {
       Number(d.db) === 40 && Number(d.wb) === 26, `DB=${d.db} WB=${d.wb} chip="${d.chip.slice(0, 90)}"`);
     ok("the timezone fallback is labelled a country-level match",
       /country-level match/i.test(d.chip), d.chip.slice(0, 150));
+    ok("a country-level match keeps the known country, not 'Custom'",
+      d.country === "India" && /country-level/i.test(d.city), `country "${d.country}", city "${d.city}"`);
     ok("a blocked geo lookup surfaces no error to the user",
       !/\berr\b/.test(d.status), d.status || "(no status class)");
     ok("a blocked geo lookup raises no page error", peAfter === peBefore,
@@ -1751,6 +1899,45 @@ if (!sampleMissing) {
     // leave the interception in a neutral state for the checks that follow
     geoFail = false;
     geoResponse = { country: "India", region: "Kerala", city: "Kochi" };
+  }
+
+  // 11b. the documented sample baseline must hold on a fresh load AND after a reload. Kept at the end,
+  //      on a fresh sample with no edits, so it cannot disturb the edit-heavy flows above.
+  {
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
+    // the fresh load's geo chip renders asynchronously and can shift #btnSample between the scroll and
+    // the click, so settle first and fall back to a direct click if the geometry click misses.
+    await page.evaluate(() => document.getElementById("btnSample").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 500));
+    await page.click("#btnSample");
+    const sampleLoaded = await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 20000, polling: 300 }).then(() => true).catch(() => false);
+    if (!sampleLoaded) {
+      await page.evaluate(() => document.getElementById("btnSample").click());
+    }
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    const readTr = () => page.$eval("#summaryCards", (e) => {
+      const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+      return m ? parseFloat(m[1]) : NaN;
+    });
+    const trFresh = await readTr();
+    // the app persists on a ~300 ms debounce AND writes an empty project at load, so wait for the
+    // sample's own save (a populated rooms array) — matching merely `"rooms":` hits that empty write.
+    await page.waitForFunction(() => {
+      try {
+        const d = JSON.parse(localStorage.getItem("webhvac.state.v1") || "null");
+        return d && Array.isArray(d.rooms) && d.rooms.length > 100;
+      } catch (e) { return false; }
+    }, { timeout: 20000, polling: 200 });
+    await page.reload({ waitUntil: "networkidle2", timeout: 60000 });
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    const trAgain = await readTr();
+    ok("the sample total is 363.86 TR on load and after a reload",
+      Math.abs(trFresh - 363.86) < 0.01 && Math.abs(trAgain - 363.86) < 0.01,
+      `${trFresh} TR -> ${trAgain} TR after reload`);
   }
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample

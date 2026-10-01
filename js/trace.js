@@ -132,15 +132,30 @@ export function segmentsFromOperatorList(fnArray, argsArray, OPS, ctm) {
         flattenCurve(curX, curY, c1.x, c1.y, to.x, to.y, to.x, to.y, segments, style);
         curX = to.x; curY = to.y; continue;
       }
-      if (op === OPS.rect) {
-        const t = p();                     // rect() pushes a whole rectangle as one op
-        const t2 = p(); const t3 = p(); const t4 = p();
-        const pts = [t, t2, t3, t4];
-        for (let k = 0; k < 4; k += 1) {
-          const a = pts[k], b = pts[(k + 1) % 4];
-          segments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...style });
+      // `re` linework. In the vendored pdf.js 4.10.38 the op is OPS.rectangle (=19); OPS.rect does
+      // not exist there (the old branch was dead code, so every `re` wall was silently dropped). pdf.js
+      // emits FOUR numbers for it (x, y, w, h), not the eight a naive rename would read — so expand
+      // them into the same four corner points the historical form implied and emit one segment per
+      // edge. `OPS.rect` is kept for older/synthetic op maps; either way the width and height are
+      // validated first, so a malformed rect can never push a NaN segment (a NaN makes rasterizeWalls'
+      // Bresenham loop spin to its 1e7 guard).
+      if (op === OPS.rectangle || op === OPS.rect) {
+        const rx = coords[at], ry = coords[at + 1], rw = coords[at + 2], rh = coords[at + 3];
+        at += 4;
+        if ([rx, ry, rw, rh].every(Number.isFinite)) {
+          const pts = [
+            applyMatrix(m, rx, ry),
+            applyMatrix(m, rx + rw, ry),
+            applyMatrix(m, rx + rw, ry + rh),
+            applyMatrix(m, rx, ry + rh),
+          ];
+          for (let k = 0; k < 4; k += 1) {
+            const a = pts[k], b = pts[(k + 1) % 4];
+            segments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...style });
+          }
+          curX = startX = pts[3].x; curY = startY = pts[3].y;
         }
-        curX = startX = pts[3].x; curY = startY = pts[3].y; continue;
+        continue;
       }
       if (op === OPS.closePath) {
         if (curX !== startX || curY !== startY) segments.push({ x1: curX, y1: curY, x2: startX, y2: startY, ...style });

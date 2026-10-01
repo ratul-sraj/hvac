@@ -469,9 +469,14 @@
             asks you to verify it.
           </p>
           <p>
-            Please do verify: the table holds <b>indicative</b> ISHRAE/ASHRAE-style summer design values
-            and is only a starting point. Check them against ISHRAE / ASHRAE or your local code before you
-            use the result. The table lives in <code>js/climates.js</code> and is meant to be edited.
+            Please do verify: the city rows of the table are now <b>sourced</b> — each carries the
+            station it came from, listed city by city in
+            <code>docs/CLIMATE-SOURCES.md</code> (ASHRAE 2021
+            <i>Fundamentals</i> Ch.14, 0.4% annual cooling dry bulb / mean coincident wet bulb). Rows
+            that are <b>not</b> sourced are flagged <code>indicative</code> — a state/country-level
+            estimate or a place with no station nearby — and for those the old advice stands: check
+            them against ISHRAE / ASHRAE or your local code before you use the result. The table lives
+            in <code>js/climates.js</code> and is meant to be edited.
           </p>
           <p>
             Your own numbers always win. If you already have a saved project, the app <b>never</b>

@@ -32,11 +32,12 @@ export function groupByLevel(results) {
   for (const r of results) {
     if (!r.room.include) continue;
     const level = (r.room.level || '').trim() || 'Unspecified';
-    if (!map.has(level)) map.set(level, { level, rooms: 0, tr: 0, ls: 0, oaLs: 0, cfm: 0, oaCfm: 0, area: 0, areaSqft: 0 });
+    if (!map.has(level)) map.set(level, { level, rooms: 0, tr: 0, ls: 0, oaLs: 0, cfm: 0, oaCfm: 0, area: 0, areaSqft: 0, supplyOk: true });
     const g = map.get(level);
     g.rooms += 1;
     g.tr += r.tr;
     g.ls += r.supplyLs;
+    if (r.supplyOk === false) g.supplyOk = false;   // a zero supply ΔT makes the flow incalculable
     g.oaLs += r.oaLs;
     g.cfm += r.cfm;
     g.oaCfm += r.oaCfm;
@@ -110,7 +111,7 @@ export function toCsv(project, calcResult) {
       room.extWall, room.glass,
       room.roof ? 'yes' : 'no', room.partition || 0,
       r.rsh.toFixed(0), r.rlh.toFixed(0), r.totalW.toFixed(0),
-      r.tr.toFixed(2), r.supplyLs.toFixed(0), r.oaLs.toFixed(0),
+      r.tr.toFixed(2), (r.supplyOk === false ? '-' : r.supplyLs.toFixed(0)), r.oaLs.toFixed(0),
       r.sqftPerTr.toFixed(0), r.shf.toFixed(3),
     ]);
   }
@@ -185,6 +186,9 @@ export function buildReportHtml(project, calcResult, opts = {}) {
   const p = Object.assign({}, project || {});
   const res = (calcResult && calcResult.results) || [];
   const totals = (calcResult && calcResult.totals) || {};
+  // When the supply-air ΔT is zero/negative the supply flow is incalculable (calc.js returns 0 and a
+  // warning); the report shows "-" in every supply column rather than a misleading 0.
+  const supplyOk = totals.supplyOk !== false;
   const generated = opts.generatedAt || new Date();
   const when = generated.toLocaleString ? generated.toLocaleString('en-GB') : String(generated);
   const included = res.filter((r) => r.room.include);
@@ -210,7 +214,7 @@ export function buildReportHtml(project, calcResult, opts = {}) {
       <td>${fmt(r.oaSens + r.oaLat, 0)}</td>
       <td>${fmt(r.totalW, 0)}</td>
       <td>${fmt(r.tr, 2)}</td>
-      <td>${fmt(r.supplyLs, 0)}</td>
+      <td>${r.supplyOk === false ? '-' : fmt(r.supplyLs, 0)}</td>
       <td>${fmt(r.sqftPerTr, 0)}</td>
     </tr>`;
   }).join('');
@@ -221,7 +225,7 @@ export function buildReportHtml(project, calcResult, opts = {}) {
       <td>${fmt(g.area, 1)}</td>
       <td>${fmt(g.areaSqft, 0)}</td>
       <td>${fmt(g.tr, 2)}</td>
-      <td>${fmt(g.ls, 0)}</td>
+      <td>${g.supplyOk === false ? '-' : fmt(g.ls, 0)}</td>
       <td>${fmt(g.oaCfm, 0)}</td>
     </tr>`).join('');
 
@@ -311,7 +315,7 @@ Fresh air (outdoor air) rates follow ASHRAE 62.1 type-of-use values per person p
       <td>${fmt(totals.rsh, 0)}</td><td>${fmt(totals.rlh, 0)}</td>
       <td>${fmt((totals.totalW || 0) - (totals.rsh || 0) - (totals.rlh || 0), 0)}</td>
       <td>${fmt(totals.totalW, 0)}</td>
-      <td>${fmt(totals.tr, 2)}</td><td>${fmt(totals.ls, 0)}</td><td>${fmt(totals.sqftPerTr, 0)}</td>
+      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(totals.ls, 0) : '-'}</td><td>${fmt(totals.sqftPerTr, 0)}</td>
     </tr>
   </tfoot>
 </table>
@@ -326,8 +330,8 @@ ${skippedNote}
         <td class="l">Room latent heat (incl. safety) ${fmt(totals.rlh, 0)} W</td></tr>
     <tr><th class="l">Safety allowance (${fmt(totals.safetyPct, 0)}%)</th><td>+${fmt(totals.safetyW, 0)} W</td>
         <td class="l">inside the room heat above; fresh air is added afterwards</td></tr>
-    <tr><th class="l">Supply air quantity</th><td>${fmt(totals.cfm, 0)} CFM</td>
-        <td class="l">${fmt((totals.cfm || 0) * 0.000471947, 3)} m&sup3;/s</td></tr>
+    <tr><th class="l">Supply air quantity</th><td>${supplyOk ? fmt(totals.cfm, 0) + ' CFM' : '-'}</td>
+        <td class="l">${supplyOk ? fmt((totals.cfm || 0) * 0.000471947, 3) + ' m&sup3;/s' : '-'}</td></tr>
     <tr><th class="l">Fresh / outdoor air</th><td>${fmt(totals.oaCfm, 0)} CFM</td>
         <td class="l">${fmt((totals.oaCfm || 0) * 0.000471947, 3)} m&sup3;/s</td></tr>
     <tr><th class="l">Conditioned floor area</th><td>${fmt(totals.area, 1)} m&sup2;</td>
@@ -350,7 +354,7 @@ ${skippedNote}
     <tr class="grand">
       <td class="l">Grand total</td><td>${included.length}</td>
       <td>${fmt(totals.area, 1)}</td><td>${fmt(totals.areaSqft, 0)}</td>
-      <td>${fmt(totals.tr, 2)}</td><td>${fmt(totals.ls, 0)}</td><td>${fmt(totals.oaCfm, 0)}</td>
+      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(totals.ls, 0) : '-'}</td><td>${fmt(totals.oaCfm, 0)}</td>
     </tr>
   </tfoot>
 </table>

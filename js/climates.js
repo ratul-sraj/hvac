@@ -11,219 +11,448 @@
  *   2. a RESOLVER, resolveClimate(country, region, city), that answers with the most specific row
  *      it can find and NEVER invents a number: an unknown location comes back with nulls.
  *
- * ⚠⚠  EDITABLE DATA — VERIFY BEFORE ENGINEERING USE  ⚠⚠
- * The numbers below are a STARTING POINT, gathered from values commonly used in design practice
- * (ISHRAE / ASHRAE-style summer design conditions). They are DATA, not logic: edit them freely to
- * suit your project, your code and your edition of the standards. They are INDICATIVE ONLY and
- * must be checked against ISHRAE / ASHRAE / the local authority before any engineering use. The
- * app says the same thing to the user, next to the fields it fills in.
+ * ⚠⚠  DESIGN CONDITIONS — SOURCED WHERE POSSIBLE, VERIFY BEFORE ENGINEERING USE  ⚠⚠
+ * City rows carry the outdoor summer design conditions from the sources catalogued in
+ * docs/CLIMATE-SOURCES.md and a per-row `src` + `station` provenance
+ * (ASHRAE 2021 Handbook—Fundamentals, Ch.14, 0.4% annual cooling DB / mean coincident WB).
+ * Rows flagged `indicative: true` are ESTIMATES — either a state/country-level approximation or a
+ * place with no station value within a sensible radius — and each carries a short `why`.
+ * Every row must be one or the other: a non-null `src`, or `indicative: true`; nothing is silently
+ * unsourced (tests/test-climates.mjs enforces this). Check any value against ISHRAE / ASHRAE / the
+ * local authority before any engineering use; the app says the same thing to the user.
  *
- * To add a place: put a { db, wb } row under the country's `cities` (city-level), `regions`
- * (state/province-level), or `fallback` (whole-country default). Nothing else to change.
+ * To add a place: put a { db, wb, src, station } row under the country's `cities` (city-level),
+ * `regions` (state/province-level), or `fallback` (whole-country default); use
+ * { db, wb, indicative: true, why } when no source exists. Nothing else to change.
  */
 
 // ---------------------------------------------------------------------------------------------
-// THE TABLE — edit these numbers, not the code around them.
+// THE TABLE — edit these numbers, not the code around them. Provenance:
+// docs/CLIMATE-SOURCES.md (city | DB | WB | source | edition | url).
 // ---------------------------------------------------------------------------------------------
 export const CLIMATE_TABLE = {
   India: {
-    fallback: { db: 40, wb: 26 },
+    fallback: { db: 40, wb: 26, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
     regions: {
-      Kerala: { db: 35, wb: 28 }, Karnataka: { db: 34, wb: 23 },
-      'Tamil Nadu': { db: 38, wb: 27 }, Telangana: { db: 41, wb: 24 },
-      'Andhra Pradesh': { db: 36, wb: 27 }, Delhi: { db: 43, wb: 24 },
-      Maharashtra: { db: 36, wb: 26 }, Gujarat: { db: 42, wb: 25 },
-      Rajasthan: { db: 44, wb: 24 }, 'West Bengal': { db: 38, wb: 28 },
-      'Uttar Pradesh': { db: 43, wb: 25 }, 'Madhya Pradesh': { db: 41, wb: 24 },
-      Punjab: { db: 42, wb: 25 }, Haryana: { db: 43, wb: 24 },
-      Assam: { db: 36, wb: 27 }, Bihar: { db: 42, wb: 26 }, Goa: { db: 33, wb: 27 },
+      Kerala: { db: 35, wb: 28, indicative: true, why: 'state/province estimate; not a station value' },
+      Karnataka: { db: 34, wb: 23, indicative: true, why: 'state/province estimate; not a station value' },
+      'Tamil Nadu': { db: 38, wb: 27, indicative: true, why: 'state/province estimate; not a station value' },
+      Telangana: { db: 41, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
+      'Andhra Pradesh': { db: 36, wb: 27, indicative: true, why: 'state/province estimate; not a station value' },
+      Delhi: { db: 43, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
+      Maharashtra: { db: 36, wb: 26, indicative: true, why: 'state/province estimate; not a station value' },
+      Gujarat: { db: 42, wb: 25, indicative: true, why: 'state/province estimate; not a station value' },
+      Rajasthan: { db: 44, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
+      'West Bengal': { db: 38, wb: 28, indicative: true, why: 'state/province estimate; not a station value' },
+      'Uttar Pradesh': { db: 43, wb: 25, indicative: true, why: 'state/province estimate; not a station value' },
+      'Madhya Pradesh': { db: 41, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
+      Punjab: { db: 42, wb: 25, indicative: true, why: 'state/province estimate; not a station value' },
+      Haryana: { db: 43, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
+      Assam: { db: 36, wb: 27, indicative: true, why: 'state/province estimate; not a station value' },
+      Bihar: { db: 42, wb: 26, indicative: true, why: 'state/province estimate; not a station value' },
+      Goa: { db: 33, wb: 27, indicative: true, why: 'state/province estimate; not a station value' },
     },
     cities: {
-      Kochi: { db: 35, wb: 28 }, Thiruvananthapuram: { db: 34, wb: 27.5 },
-      Kozhikode: { db: 35, wb: 28 }, Thrissur: { db: 36, wb: 27.5 },
-      Kannur: { db: 35, wb: 28 }, Kollam: { db: 34, wb: 27.5 },
-      Kottayam: { db: 35, wb: 27.5 }, Palakkad: { db: 38, wb: 26 },
-      Mangaluru: { db: 35, wb: 27.5 }, Bengaluru: { db: 34, wb: 22 },
-      Mysuru: { db: 33, wb: 22 }, Chennai: { db: 38, wb: 28 },
-      Coimbatore: { db: 36, wb: 24 }, Madurai: { db: 39, wb: 26 },
-      Hyderabad: { db: 41, wb: 24 }, Visakhapatnam: { db: 36, wb: 28 },
-      Delhi: { db: 43, wb: 24 }, 'New Delhi': { db: 43, wb: 24 },
-      Gurugram: { db: 43, wb: 24 }, Faridabad: { db: 43, wb: 24 },
-      Mumbai: { db: 35, wb: 27.5 }, Pune: { db: 38, wb: 23 }, Nagpur: { db: 44, wb: 24 },
-      Ahmedabad: { db: 43, wb: 25 }, Surat: { db: 38, wb: 27 },
-      Jaipur: { db: 44, wb: 24 }, Kolkata: { db: 38, wb: 28 },
-      Lucknow: { db: 43, wb: 25 }, Kanpur: { db: 43, wb: 26 },
-      Bhopal: { db: 42, wb: 24 }, Indore: { db: 40, wb: 23 },
-      Amritsar: { db: 42, wb: 26 }, Ludhiana: { db: 42, wb: 26 },
-      Guwahati: { db: 36, wb: 27 }, Patna: { db: 42, wb: 27 }, Panaji: { db: 33, wb: 27 },
+      Kochi: { db: 35, wb: 28, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Thiruvananthapuram: { db: 34.2, wb: 26.2, src: 'ASHRAE 2021', station: 'THIRUVANANTHAPURAM (WMO 433710)' },
+      Kozhikode: { db: 35.2, wb: 28.2, src: 'ASHRAE 2021', station: 'KOZHIKODE (WMO 433140)' },
+      Thrissur: { db: 36, wb: 27.5, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Kannur: { db: 35, wb: 28, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Kollam: { db: 34.2, wb: 26.2, src: 'ASHRAE 2021', station: 'THIRUVANANTHAPURAM (WMO 433710)' },
+      Kottayam: { db: 35, wb: 27.5, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Palakkad: { db: 36.7, wb: 22.2, src: 'ASHRAE 2021', station: 'COIMBATORE INTL (WMO 433210)' },
+      Mangaluru: { db: 34.4, wb: 24.9, src: 'ASHRAE 2021', station: 'MANGALORE INTL (WMO 432840)' },
+      Bengaluru: { db: 34.3, wb: 20, src: 'ASHRAE 2021', station: 'BENGALURU (WMO 432950)' },
+      Mysuru: { db: 33, wb: 22, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Chennai: { db: 39, wb: 26, src: 'ASHRAE 2021', station: 'CHENNAI INTL (WMO 432790)' },
+      Coimbatore: { db: 36.7, wb: 22.2, src: 'ASHRAE 2021', station: 'COIMBATORE INTL (WMO 433210)' },
+      Madurai: { db: 39, wb: 26, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Hyderabad: { db: 41, wb: 22, src: 'ASHRAE 2021', station: 'HYDERABAD BEGUMPET (WMO 431280)' },
+      Visakhapatnam: { db: 34, wb: 27.1, src: 'ASHRAE 2021', station: 'VISHAKHAPATNAM CWC (WMO 431500)' },
+      Delhi: { db: 42.3, wb: 23.2, src: 'ASHRAE 2021', station: 'NEW DELHI SAFDARJUNG (WMO 421820)' },
+      'New Delhi': { db: 42.3, wb: 23.2, src: 'ASHRAE 2021', station: 'NEW DELHI SAFDARJUNG (WMO 421820)' },
+      Gurugram: { db: 43.8, wb: 22.2, src: 'ASHRAE 2021', station: 'NEW DELHI INDIRA GANDHI INTL (WMO 421810)' },
+      Faridabad: { db: 42.3, wb: 23.2, src: 'ASHRAE 2021', station: 'NEW DELHI SAFDARJUNG (WMO 421820)' },
+      Mumbai: { db: 36, wb: 22.7, src: 'ASHRAE 2021', station: 'MUMBAI SHIVAJI INTL (WMO 430030)' },
+      Pune: { db: 38.5, wb: 19.9, src: 'ASHRAE 2021', station: 'PUNE (WMO 430630)' },
+      Nagpur: { db: 44.2, wb: 22.6, src: 'ASHRAE 2021', station: 'NAGPUR AMBEDKAR INTL (WMO 428670)' },
+      Ahmedabad: { db: 43.1, wb: 23, src: 'ASHRAE 2021', station: 'AHMEDABAD (WMO 426470)' },
+      Surat: { db: 38.2, wb: 22.6, src: 'ASHRAE 2021', station: 'SURAT (WMO 428400)' },
+      Jaipur: { db: 42.7, wb: 20.9, src: 'ASHRAE 2021', station: 'JAIPUR (WMO 423480)' },
+      Kolkata: { db: 37.9, wb: 27.3, src: 'ASHRAE 2021', station: 'KOLKATA BOSE INTL (WMO 428090)' },
+      Lucknow: { db: 42.8, wb: 23.4, src: 'ASHRAE 2021', station: 'LUCKNOW (WMO 423690)' },
+      Kanpur: { db: 42.8, wb: 23.4, src: 'ASHRAE 2021', station: 'LUCKNOW (WMO 423690)' },
+      Bhopal: { db: 42, wb: 21.9, src: 'ASHRAE 2021', station: 'BHOPAL (WMO 426670)' },
+      Indore: { db: 40.8, wb: 20.9, src: 'ASHRAE 2021', station: 'INDORE INTL (WMO 427540)' },
+      Amritsar: { db: 43.2, wb: 23.3, src: 'ASHRAE 2021', station: 'LAHORE ALLAMA IQBAL INTL (WMO 416410)', note: 'nearest station in the edition (~46 km, in Pakistan, cross-border)' },
+      Ludhiana: { db: 42, wb: 26, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Guwahati: { db: 35.2, wb: 27.8, src: 'ASHRAE 2021', station: 'GUWAHATI INTL (WMO 424100)' },
+      Patna: { db: 41.3, wb: 23.2, src: 'ASHRAE 2021', station: 'PATNA (WMO 424920)' },
+      Panaji: { db: 34.2, wb: 25.9, src: 'ASHRAE 2021', station: 'GOA PANAJI (WMO 431920)' }
     },
   },
-
   'United Arab Emirates': {
-    fallback: { db: 46, wb: 29 },
+    fallback: { db: 46, wb: 29, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
     regions: {},
     cities: {
-      Dubai: { db: 46, wb: 29 }, 'Abu Dhabi': { db: 46, wb: 29 },
-      Sharjah: { db: 46, wb: 29 }, Ajman: { db: 46, wb: 29 },
-      Fujairah: { db: 44, wb: 30 }, 'Ras Al Khaimah': { db: 46, wb: 29 },
-      'Al Ain': { db: 48, wb: 26 },
+      Dubai: { db: 43.3, wb: 23.6, src: 'ASHRAE 2021', station: 'DUBAI INTL (WMO 411940)' },
+      'Abu Dhabi': { db: 45.1, wb: 23, src: 'ASHRAE 2021', station: 'ABU DHABI INTL (WMO 412170)' },
+      Sharjah: { db: 44.3, wb: 23.5, src: 'ASHRAE 2021', station: 'SHARJAH INTL (WMO 411960)' },
+      Ajman: { db: 44.3, wb: 23.5, src: 'ASHRAE 2021', station: 'SHARJAH INTL (WMO 411960)' },
+      Fujairah: { db: 42.9, wb: 21.9, src: 'ASHRAE 2021', station: 'FUJAIRAH INTL (WMO 411980)' },
+      'Ras Al Khaimah': { db: 44.7, wb: 24.4, src: 'ASHRAE 2021', station: 'RAS AL KHAIMAH INTL (WMO 411840)' },
+      'Al Ain': { db: 46, wb: 22.5, src: 'ASHRAE 2021', station: 'AL AIN INTL (WMO 412180)' }
     },
   },
   'Saudi Arabia': {
-    fallback: { db: 45, wb: 24 },
+    fallback: { db: 45, wb: 24, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
     regions: {},
     cities: {
-      Riyadh: { db: 46, wb: 22 }, Jeddah: { db: 43, wb: 29 },
-      Dammam: { db: 46, wb: 28 }, Makkah: { db: 46, wb: 26 },
-      Madinah: { db: 46, wb: 22 },
+      Riyadh: { db: 44.9, wb: 19.5, src: 'ASHRAE 2021', station: 'RIYADH KING SALMAN AB (WMO 404380)' },
+      Jeddah: { db: 41, wb: 23.7, src: 'ASHRAE 2021', station: 'JEDDAH KING ABDULAZIZ INTL (WMO 410240)' },
+      Dammam: { db: 45.9, wb: 22.9, src: 'ASHRAE 2021', station: 'DHAHARAN KING ABDULAZIZ AB (WMO 404160)' },
+      Makkah: { db: 45.2, wb: 24.5, src: 'ASHRAE 2021', station: 'MAKKAH (WMO 410300)' },
+      Madinah: { db: 45.2, wb: 18.8, src: 'ASHRAE 2021', station: 'MEDINA PRINCE ABDULAZIZ INTL (WMO 404300)' }
     },
   },
-  Qatar: { fallback: { db: 46, wb: 28 }, regions: {}, cities: { Doha: { db: 46, wb: 28 } } },
-  Oman: {
-    fallback: { db: 46, wb: 29 }, regions: {},
-    cities: { Muscat: { db: 46, wb: 29 }, Sohar: { db: 45, wb: 29 }, Salalah: { db: 36, wb: 28 } },
-  },
-  Kuwait: { fallback: { db: 48, wb: 24 }, regions: {}, cities: { 'Kuwait City': { db: 48, wb: 24 } } },
-  Bahrain: { fallback: { db: 43, wb: 29 }, regions: {}, cities: { Manama: { db: 43, wb: 29 } } },
-  Singapore: { fallback: { db: 33, wb: 26.5 }, regions: {}, cities: { Singapore: { db: 33, wb: 26.5 } } },
-  Malaysia: {
-    fallback: { db: 34, wb: 27 }, regions: {},
+  Qatar: {
+    fallback: { db: 46, wb: 28, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
     cities: {
-      'Kuala Lumpur': { db: 34, wb: 27 }, Penang: { db: 33, wb: 27 },
-      'Johor Bahru': { db: 33, wb: 27 }, 'George Town': { db: 33, wb: 27 },
+      Doha: { db: 44.3, wb: 22.3, src: 'ASHRAE 2021', station: 'DOHA INTL (WMO 411700)' }
     },
   },
-  'Sri Lanka': { fallback: { db: 33, wb: 27 }, regions: {}, cities: { Colombo: { db: 33, wb: 27 } } },
-  Maldives: { fallback: { db: 32, wb: 27 }, regions: {}, cities: { 'Malé': { db: 32, wb: 27 } } },
+  Oman: {
+    fallback: { db: 46, wb: 29, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Muscat: { db: 42.6, wb: 22.3, src: 'ASHRAE 2021', station: 'MUSCAT INTL (WMO 412560)' },
+      Sohar: { db: 40.4, wb: 23.5, src: 'ASHRAE 2021', station: 'SOHAR MAJIS (WMO 412460)' },
+      Salalah: { db: 33.8, wb: 21.6, src: 'ASHRAE 2021', station: 'SALALAH (WMO 413160)' }
+    },
+  },
+  Kuwait: {
+    fallback: { db: 48, wb: 24, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      'Kuwait City': { db: 48.1, wb: 21.2, src: 'ASHRAE 2021', station: 'KUWAIT INTL (WMO 405820)' }
+    },
+  },
+  Bahrain: {
+    fallback: { db: 43, wb: 29, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Manama: { db: 41.2, wb: 23.7, src: 'ASHRAE 2021', station: 'BAHRAIN INTL (WMO 411500)' }
+    },
+  },
+  Singapore: {
+    fallback: { db: 33, wb: 26.5, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Singapore: { db: 33.2, wb: 26.3, src: 'ASHRAE 2021', station: 'SINGAPORE CHANGI INTL (WMO 486980)' }
+    },
+  },
+  Malaysia: {
+    fallback: { db: 34, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      'Kuala Lumpur': { db: 35, wb: 26.3, src: 'ASHRAE 2021', station: 'KUALA LUMPUR SUBANG (WMO 486470)' },
+      Penang: { db: 33.2, wb: 26.3, src: 'ASHRAE 2021', station: 'PENANG INTL (WMO 486010)' },
+      // Served by the Singapore/Changi station ~30 km away, across the border (same station as the
+      // Singapore row) — the nearest station in the edition, exactly as Amritsar is served by Lahore.
+      'Johor Bahru': { db: 33.2, wb: 26.3, src: 'ASHRAE 2021', station: 'SINGAPORE/CHANGI INTL (WMO 486980)', note: 'nearest ASHRAE station is ~30 km away, in Singapore (cross-border, as Amritsar is served by Lahore)' },
+      'George Town': { db: 33.2, wb: 26.3, src: 'ASHRAE 2021', station: 'PENANG INTL (WMO 486010)' }
+    },
+  },
+  'Sri Lanka': {
+    fallback: { db: 33, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Colombo: { db: 33.1, wb: 24.7, src: 'ASHRAE 2021', station: 'KATUNAYAKE (WMO 434500)' }
+    },
+  },
+  Maldives: {
+    fallback: { db: 32, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Malé: { db: 32.2, wb: 27.1, src: 'ASHRAE 2021', station: 'MALE (WMO 435550)' }
+    },
+  },
   Pakistan: {
-    fallback: { db: 40, wb: 26 }, regions: {},
-    cities: { Karachi: { db: 36, wb: 28 }, Lahore: { db: 41, wb: 26 }, Islamabad: { db: 40, wb: 26 } },
+    fallback: { db: 40, wb: 26, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Karachi: { db: 39, wb: 22.7, src: 'ASHRAE 2021', station: 'JINNAH INTL (WMO 417800)' },
+      Lahore: { db: 43.2, wb: 23.3, src: 'ASHRAE 2021', station: 'LAHORE ALLAMA IQBAL INTL (WMO 416410)' },
+      Islamabad: { db: 41.1, wb: 22.8, src: 'ASHRAE 2021', station: 'ISLAMABAD INTL (WMO 415710)' }
+    },
   },
   Bangladesh: {
-    fallback: { db: 34, wb: 27 }, regions: {},
-    cities: { Dhaka: { db: 34, wb: 27 }, Chittagong: { db: 33, wb: 27 } },
-  },
-  Nepal: { fallback: { db: 30, wb: 22 }, regions: {}, cities: { Kathmandu: { db: 30, wb: 22 } } },
-
-  'United Kingdom': {
-    fallback: { db: 28, wb: 20 },
-    regions: { England: { db: 28, wb: 20 }, Scotland: { db: 24, wb: 18 }, Wales: { db: 26, wb: 19 }, 'Northern Ireland': { db: 24, wb: 18 } },
+    fallback: { db: 34, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
     cities: {
-      London: { db: 28, wb: 20 }, Birmingham: { db: 27, wb: 19 },
-      Manchester: { db: 26, wb: 19 }, Edinburgh: { db: 24, wb: 18 },
-      Glasgow: { db: 24, wb: 18 }, Bristol: { db: 27, wb: 19 },
+      Dhaka: { db: 34, wb: 27, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Chittagong: { db: 33, wb: 27, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' }
+    },
+  },
+  Nepal: {
+    fallback: { db: 30, wb: 22, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Kathmandu: { db: 30, wb: 22, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' }
+    },
+  },
+  'United Kingdom': {
+    fallback: { db: 28, wb: 20, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {
+      England: { db: 28, wb: 20, indicative: true, why: 'state/province estimate; not a station value' },
+      Scotland: { db: 24, wb: 18, indicative: true, why: 'state/province estimate; not a station value' },
+      Wales: { db: 26, wb: 19, indicative: true, why: 'state/province estimate; not a station value' },
+      'Northern Ireland': { db: 24, wb: 18, indicative: true, why: 'state/province estimate; not a station value' },
+    },
+    cities: {
+      London: { db: 28.4, wb: 18.5, src: 'ASHRAE 2021', station: 'LONDON WC CLERKENWELL (WMO 037790)' },
+      Birmingham: { db: 26.8, wb: 18.1, src: 'ASHRAE 2021', station: 'BIRMINGHAM (WMO 035340)' },
+      Manchester: { db: 25.8, wb: 18.1, src: 'ASHRAE 2021', station: 'MANCHESTER AP (WMO 033340)' },
+      Edinburgh: { db: 22.2, wb: 16.8, src: 'ASHRAE 2021', station: 'EDINBURGH AP (WMO 031600)' },
+      Glasgow: { db: 23.2, wb: 17.2, src: 'ASHRAE 2021', station: 'GLASGOW AP (WMO 031400)' },
+      Bristol: { db: 26.7, wb: 18.3, src: 'ASHRAE 2021', station: 'BRISTOL WEATHER CENTRE (WMO 037260)' }
     },
   },
   'United States': {
-    fallback: { db: 35, wb: 24 },
+    fallback: { db: 35, wb: 24, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
     regions: {
-      Texas: { db: 38, wb: 24 }, California: { db: 32, wb: 21 }, Florida: { db: 34, wb: 26 },
-      'New York': { db: 33, wb: 24 }, Arizona: { db: 43, wb: 22 }, Illinois: { db: 32, wb: 24 },
+      Texas: { db: 38, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
+      California: { db: 32, wb: 21, indicative: true, why: 'state/province estimate; not a station value' },
+      Florida: { db: 34, wb: 26, indicative: true, why: 'state/province estimate; not a station value' },
+      'New York': { db: 33, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
+      Arizona: { db: 43, wb: 22, indicative: true, why: 'state/province estimate; not a station value' },
+      Illinois: { db: 32, wb: 24, indicative: true, why: 'state/province estimate; not a station value' },
     },
     cities: {
-      'New York': { db: 33, wb: 24 }, 'Los Angeles': { db: 32, wb: 21 },
-      Chicago: { db: 32, wb: 24 }, Houston: { db: 36, wb: 26 },
-      Phoenix: { db: 43, wb: 22 }, Miami: { db: 33, wb: 26 },
-      Atlanta: { db: 34, wb: 24 }, Dallas: { db: 38, wb: 24 },
-      'San Francisco': { db: 26, wb: 18 }, Seattle: { db: 28, wb: 19 },
-      Boston: { db: 31, wb: 23 }, Washington: { db: 34, wb: 25 },
-      Denver: { db: 33, wb: 18 }, 'Las Vegas': { db: 42, wb: 20 },
-      Orlando: { db: 34, wb: 26 },
+      'New York': { db: 33.7, wb: 23.3, src: 'ASHRAE 2021', station: 'NEW YORK LA GUARDIA (WMO 725030)' },
+      'Los Angeles': { db: 29.3, wb: 17.4, src: 'ASHRAE 2021', station: 'LOS ANGELES INTL (WMO 722950)' },
+      Chicago: { db: 32.9, wb: 23.4, src: 'ASHRAE 2021', station: "CHICAGO O'HARE (WMO 725300)" },
+      Houston: { db: 36.4, wb: 24.8, src: 'ASHRAE 2021', station: 'HOUSTON BUSH (WMO 722430)' },
+      Phoenix: { db: 43.6, wb: 20.7, src: 'ASHRAE 2021', station: 'PHOENIX SKY HARBOR (WMO 722780)' },
+      Miami: { db: 33.3, wb: 25.4, src: 'ASHRAE 2021', station: 'MIAMI NHC (WMO 722020)' },
+      Atlanta: { db: 34.3, wb: 23.2, src: 'ASHRAE 2021', station: 'ATLANTA HARTSFIELD-JACKSON (WMO 722190)' },
+      Dallas: { db: 38.6, wb: 23.4, src: 'ASHRAE 2021', station: 'DALLAS FORT WORTH (WMO 722590)' },
+      'San Francisco': { db: 28.3, wb: 17.1, src: 'ASHRAE 2021', station: 'SAN FRANCISCO INTL (WMO 724940)' },
+      Seattle: { db: 30, wb: 18.4, src: 'ASHRAE 2021', station: 'SEATTLE TACOMA (WMO 727930)' },
+      Boston: { db: 32.7, wb: 22.8, src: 'ASHRAE 2021', station: 'BOSTON LOGAN (WMO 725090)' },
+      Washington: { db: 34.7, wb: 24.2, src: 'ASHRAE 2021', station: 'WASHINGTON RONALD REAGAN (WMO 724050)' },
+      Denver: { db: 34.9, wb: 15.5, src: 'ASHRAE 2021', station: 'DENVER INTL (WMO 725650)' },
+      'Las Vegas': { db: 42.8, wb: 19.4, src: 'ASHRAE 2021', station: 'LAS VEGAS MCCARRAN (WMO 723860)' },
+      Orlando: { db: 34.3, wb: 24.8, src: 'ASHRAE 2021', station: 'ORLANDO INTL (WMO 722050)' }
     },
   },
   Canada: {
-    fallback: { db: 30, wb: 22 },
-    regions: { Ontario: { db: 30, wb: 22 }, Quebec: { db: 30, wb: 22 }, 'British Columbia': { db: 26, wb: 19 }, Alberta: { db: 28, wb: 18 } },
+    fallback: { db: 30, wb: 22, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {
+      Ontario: { db: 30, wb: 22, indicative: true, why: 'state/province estimate; not a station value' },
+      Quebec: { db: 30, wb: 22, indicative: true, why: 'state/province estimate; not a station value' },
+      'British Columbia': { db: 26, wb: 19, indicative: true, why: 'state/province estimate; not a station value' },
+      Alberta: { db: 28, wb: 18, indicative: true, why: 'state/province estimate; not a station value' },
+    },
     cities: {
-      Toronto: { db: 31, wb: 23 }, Vancouver: { db: 26, wb: 19 },
-      Montreal: { db: 30, wb: 22 }, Calgary: { db: 29, wb: 18 }, Ottawa: { db: 30, wb: 22 },
+      Toronto: { db: 31.5, wb: 22.4, src: 'ASHRAE 2021', station: 'TORONTO PEARSON (WMO 716240)' },
+      Vancouver: { db: 25.1, wb: 18.5, src: 'ASHRAE 2021', station: 'VANCOUVER INTL (WMO 718920)' },
+      Montreal: { db: 30.3, wb: 22.1, src: 'ASHRAE 2021', station: 'MONTREAL TRUDEAU (WMO 716270)' },
+      Calgary: { db: 28.8, wb: 16, src: 'ASHRAE 2021', station: 'CALGARY INTL (WMO 718770)' },
+      Ottawa: { db: 30.9, wb: 22, src: 'ASHRAE 2021', station: 'OTTAWA INTL (WMO 716280)' }
     },
   },
   Australia: {
-    fallback: { db: 38, wb: 24 },
+    fallback: { db: 38, wb: 24, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
     regions: {
-      'New South Wales': { db: 34, wb: 23 }, Victoria: { db: 36, wb: 21 },
-      Queensland: { db: 33, wb: 25 }, 'Western Australia': { db: 38, wb: 23 },
-      'South Australia': { db: 38, wb: 22 }, 'Northern Territory': { db: 35, wb: 27 },
+      'New South Wales': { db: 34, wb: 23, indicative: true, why: 'state/province estimate; not a station value' },
+      Victoria: { db: 36, wb: 21, indicative: true, why: 'state/province estimate; not a station value' },
+      Queensland: { db: 33, wb: 25, indicative: true, why: 'state/province estimate; not a station value' },
+      'Western Australia': { db: 38, wb: 23, indicative: true, why: 'state/province estimate; not a station value' },
+      'South Australia': { db: 38, wb: 22, indicative: true, why: 'state/province estimate; not a station value' },
+      'Northern Territory': { db: 35, wb: 27, indicative: true, why: 'state/province estimate; not a station value' },
     },
     cities: {
-      Sydney: { db: 34, wb: 23 }, Melbourne: { db: 36, wb: 21 },
-      Brisbane: { db: 33, wb: 25 }, Perth: { db: 38, wb: 23 },
-      Adelaide: { db: 38, wb: 22 }, Darwin: { db: 35, wb: 27 },
+      Sydney: { db: 33.3, wb: 19.5, src: 'ASHRAE 2021', station: 'SYDNEY AP (WMO 947670)' },
+      Melbourne: { db: 35.4, wb: 18.1, src: 'ASHRAE 2021', station: 'MELBOURNE AP (WMO 948660)' },
+      Brisbane: { db: 30.8, wb: 23.1, src: 'ASHRAE 2021', station: 'BRISBANE AP (WMO 945780)' },
+      Perth: { db: 37.5, wb: 19.4, src: 'ASHRAE 2021', station: 'PERTH AP (WMO 946100)' },
+      Adelaide: { db: 36.8, wb: 18.5, src: 'ASHRAE 2021', station: 'ADELAIDE AP (WMO 946720)' },
+      Darwin: { db: 34.2, wb: 23.5, src: 'ASHRAE 2021', station: 'DARWIN (WMO 941200)' }
     },
   },
-  'New Zealand': { fallback: { db: 26, wb: 18 }, regions: {}, cities: { Auckland: { db: 26, wb: 18 } } },
-
+  'New Zealand': {
+    fallback: { db: 26, wb: 18, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Auckland: { db: 25.8, wb: 20.1, src: 'ASHRAE 2021', station: 'AUCKLAND (WMO 931100)' }
+    },
+  },
   Germany: {
-    fallback: { db: 30, wb: 20 }, regions: {},
-    cities: { Berlin: { db: 31, wb: 20 }, Munich: { db: 30, wb: 19 }, Frankfurt: { db: 32, wb: 20 }, Hamburg: { db: 28, wb: 19 } },
+    fallback: { db: 30, wb: 20, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Berlin: { db: 29.3, wb: 19, src: 'ASHRAE 2021', station: 'BERLIN DAHLEM (WMO 103810)' },
+      Munich: { db: 29.5, wb: 19, src: 'ASHRAE 2021', station: 'MUNICH STADT (WMO 108650)' },
+      Frankfurt: { db: 32.1, wb: 20, src: 'ASHRAE 2021', station: 'FRANKFURT AM MAIN (WMO 106370)' },
+      Hamburg: { db: 29.1, wb: 19.2, src: 'ASHRAE 2021', station: 'HAMBURG FUHLSBUTTEL (WMO 101470)' }
+    },
   },
   France: {
-    fallback: { db: 32, wb: 21 }, regions: {},
-    cities: { Paris: { db: 32, wb: 21 }, Marseille: { db: 34, wb: 23 }, Lyon: { db: 33, wb: 21 } },
-  },
-  Spain: {
-    fallback: { db: 35, wb: 23 }, regions: {},
-    cities: { Madrid: { db: 36, wb: 22 }, Barcelona: { db: 32, wb: 24 }, Seville: { db: 39, wb: 23 } },
-  },
-  Netherlands: { fallback: { db: 28, wb: 19 }, regions: {}, cities: { Amsterdam: { db: 28, wb: 19 } } },
-
-  Turkey: {
-    fallback: { db: 34, wb: 23 }, regions: {},
-    cities: { Istanbul: { db: 32, wb: 23 }, Ankara: { db: 34, wb: 21 } },
-  },
-  Egypt: { fallback: { db: 38, wb: 24 }, regions: {}, cities: { Cairo: { db: 38, wb: 24 } } },
-  Israel: { fallback: { db: 33, wb: 25 }, regions: {}, cities: { 'Tel Aviv': { db: 33, wb: 25 } } },
-
-  Japan: {
-    fallback: { db: 34, wb: 26 }, regions: {},
-    cities: { Tokyo: { db: 34, wb: 26 }, Osaka: { db: 34, wb: 26 } },
-  },
-  China: {
-    fallback: { db: 35, wb: 27 }, regions: {},
+    fallback: { db: 32, wb: 21, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
     cities: {
-      Beijing: { db: 34, wb: 26 }, Shanghai: { db: 34, wb: 27 },
-      Guangzhou: { db: 35, wb: 27 }, Shenzhen: { db: 34, wb: 27 },
+      Paris: { db: 31.6, wb: 20.4, src: 'ASHRAE 2021', station: 'PARIS MONTSOURIS (WMO 071560)' },
+      Marseille: { db: 33.1, wb: 21, src: 'ASHRAE 2021', station: 'MARSEILLE PROVENCE AP (WMO 076500)' },
+      Lyon: { db: 33.8, wb: 20.2, src: 'ASHRAE 2021', station: 'LYON-BRON AP (WMO 074800)' }
     },
   },
-  'Hong Kong': { fallback: { db: 33, wb: 27 }, regions: {}, cities: { 'Hong Kong': { db: 33, wb: 27 } } },
+  Spain: {
+    fallback: { db: 35, wb: 23, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Madrid: { db: 36.8, wb: 18.4, src: 'ASHRAE 2021', station: 'MADRID-BARAJAS AP (WMO 082210)' },
+      Barcelona: { db: 30.9, wb: 23.5, src: 'ASHRAE 2021', station: 'BARCELONA AP (WMO 081810)' },
+      Seville: { db: 39.2, wb: 21.4, src: 'ASHRAE 2021', station: 'SEVILLA AP (WMO 083910)' }
+    },
+  },
+  Netherlands: {
+    fallback: { db: 28, wb: 19, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Amsterdam: { db: 28.1, wb: 20, src: 'ASHRAE 2021', station: 'AMSTERDAM AP SCHIPHOL (WMO 062400)' }
+    },
+  },
+  Turkey: {
+    fallback: { db: 34, wb: 23, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Istanbul: { db: 32.1, wb: 21.5, src: 'ASHRAE 2021', station: 'ISTANBUL ATATURK (WMO 170600)' },
+      Ankara: { db: 33.9, wb: 17, src: 'ASHRAE 2021', station: 'ANKARA ESENBOGA (WMO 171280)' }
+    },
+  },
+  Egypt: {
+    fallback: { db: 38, wb: 24, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Cairo: { db: 38.8, wb: 21, src: 'ASHRAE 2021', station: 'CAIRO INTL (WMO 623660)' }
+    },
+  },
+  Israel: {
+    fallback: { db: 33, wb: 25, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      'Tel Aviv': { db: 35.2, wb: 20.5, src: 'ASHRAE 2021', station: 'TEL AVIV BEN GURION (WMO 401800)' }
+    },
+  },
+  Japan: {
+    fallback: { db: 34, wb: 26, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Tokyo: { db: 33.7, wb: 25.6, src: 'ASHRAE 2021', station: 'TOKYO (WMO 476620)' },
+      Osaka: { db: 34.5, wb: 25, src: 'ASHRAE 2021', station: 'OSAKA (WMO 477720)' }
+    },
+  },
+  China: {
+    fallback: { db: 35, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Beijing: { db: 35.2, wb: 22, src: 'ASHRAE 2021', station: 'BEIJING (WMO 545110)' },
+      Shanghai: { db: 35.5, wb: 26.7, src: 'ASHRAE 2021', station: 'SHANGHAI BAOSHAN (WMO 583620)' },
+      Guangzhou: { db: 36, wb: 26.2, src: 'ASHRAE 2021', station: 'GUANGZHOU (WMO 592870)' },
+      Shenzhen: { db: 34, wb: 26.4, src: 'ASHRAE 2021', station: 'SHENZHEN (WMO 594930)' }
+    },
+  },
+  'Hong Kong': {
+    fallback: { db: 33, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      'Hong Kong': { db: 32.2, wb: 26.5, src: 'ASHRAE 2021', station: 'HONG KONG OBSERVATORY (WMO 450050)' }
+    },
+  },
   Thailand: {
-    fallback: { db: 36, wb: 27 }, regions: {},
-    cities: { Bangkok: { db: 36, wb: 27 }, Phuket: { db: 33, wb: 27 }, 'Chiang Mai': { db: 36, wb: 25 } },
+    fallback: { db: 36, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Bangkok: { db: 36.2, wb: 26.9, src: 'ASHRAE 2021', station: 'BANGKOK METROPOLIS (WMO 484550)' },
+      Phuket: { db: 34.9, wb: 26.2, src: 'ASHRAE 2021', station: 'PHUKET (WMO 485640)' },
+      'Chiang Mai': { db: 38.1, wb: 22.8, src: 'ASHRAE 2021', station: 'CHIANG MAI INTL (WMO 483270)' }
+    },
   },
   Indonesia: {
-    fallback: { db: 33, wb: 26 }, regions: {},
-    cities: { Jakarta: { db: 33, wb: 26 }, Denpasar: { db: 32, wb: 26 }, Surabaya: { db: 34, wb: 26 } },
+    fallback: { db: 33, wb: 26, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Jakarta: { db: 34, wb: 25.4, src: 'ASHRAE 2021', station: 'JAKARTA SOEKARNO-HATTA (WMO 967490)' },
+      Denpasar: { db: 32.5, wb: 26.6, src: 'ASHRAE 2021', station: 'DENPASAR NGURAH RAI (WMO 972300)' },
+      Surabaya: { db: 34.1, wb: 24.7, src: 'ASHRAE 2021', station: 'JUANDA SURABAYA (WMO 969350)' }
+    },
   },
-  Philippines: { fallback: { db: 34, wb: 27 }, regions: {}, cities: { Manila: { db: 34, wb: 27 } } },
+  Philippines: {
+    fallback: { db: 34, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Manila: { db: 34.5, wb: 26.4, src: 'ASHRAE 2021', station: 'MANILA (WMO 984250)' }
+    },
+  },
   Vietnam: {
-    fallback: { db: 36, wb: 27 }, regions: {},
-    cities: { Hanoi: { db: 36, wb: 27 }, 'Ho Chi Minh City': { db: 35, wb: 27 } },
+    fallback: { db: 36, wb: 27, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Hanoi: { db: 36.2, wb: 27.4, src: 'ASHRAE 2021', station: 'HA NOI (WMO 488200)' },
+      'Ho Chi Minh City': { db: 35.8, wb: 25.7, src: 'ASHRAE 2021', station: 'HO CHI MINH TAN SON NHAT INTL (WMO 489000)' }
+    },
   },
-
   'South Africa': {
-    fallback: { db: 32, wb: 20 }, regions: {},
-    cities: { Johannesburg: { db: 28, wb: 17 }, 'Cape Town': { db: 28, wb: 18 }, Durban: { db: 31, wb: 23 } },
+    fallback: { db: 32, wb: 20, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Johannesburg: { db: 29.1, wb: 14.8, src: 'ASHRAE 2021', station: 'JOHANNESBURG INTL (WMO 683680)' },
+      'Cape Town': { db: 31.9, wb: 19.8, src: 'ASHRAE 2021', station: 'CAPE TOWN INTL (WMO 688160)' },
+      Durban: { db: 30.2, wb: 23.9, src: 'ASHRAE 2021', station: 'DURBAN (WMO 685880)' }
+    },
   },
   Nigeria: {
-    fallback: { db: 33, wb: 25 }, regions: {},
-    cities: { Lagos: { db: 33, wb: 25 }, Abuja: { db: 36, wb: 23 } },
+    fallback: { db: 33, wb: 25, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Lagos: { db: 33, wb: 25, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' },
+      Abuja: { db: 36, wb: 23, indicative: true, why: 'no ASHRAE station within 75 km; indicative value kept' }
+    },
   },
   Kenya: {
-    fallback: { db: 27, wb: 19 }, regions: {},
-    cities: { Nairobi: { db: 27, wb: 19 }, Mombasa: { db: 32, wb: 25 } },
+    fallback: { db: 27, wb: 19, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Nairobi: { db: 29.2, wb: 16, src: 'ASHRAE 2021', station: 'NAIROBI JOMO KENYATTA INTL (WMO 637400)' },
+      Mombasa: { db: 33.2, wb: 25.3, src: 'ASHRAE 2021', station: 'MOMBASA INTL (WMO 638200)' }
+    },
   },
   Brazil: {
-    fallback: { db: 33, wb: 24 }, regions: {},
-    cities: { 'São Paulo': { db: 30, wb: 21 }, 'Rio de Janeiro': { db: 34, wb: 25 } },
+    fallback: { db: 33, wb: 24, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      'São Paulo': { db: 32.2, wb: 20.1, src: 'ASHRAE 2021', station: 'SAO PAULO CONGONHAS (WMO 837800)' },
+      'Rio de Janeiro': { db: 34.8, wb: 25.7, src: 'ASHRAE 2021', station: 'RIO DE JANEIRO SANTOS DUMONT (WMO 837550)' }
+    },
   },
   Russia: {
-    fallback: { db: 28, wb: 19 }, regions: {},
-    cities: { Moscow: { db: 28, wb: 19 }, 'Saint Petersburg': { db: 25, wb: 18 } },
+    fallback: { db: 28, wb: 19, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      Moscow: { db: 29.9, wb: 21.1, src: 'ASHRAE 2021', station: 'MOSKVA VDNH (WMO 276120)' },
+      'Saint Petersburg': { db: 28.4, wb: 19.6, src: 'ASHRAE 2021', station: 'ST PETERSBURG PULKOVO (WMO 260630)' }
+    },
   },
   Mexico: {
-    fallback: { db: 34, wb: 22 }, regions: {},
-    cities: { 'Mexico City': { db: 26, wb: 17 }, Cancun: { db: 33, wb: 26 }, Guadalajara: { db: 32, wb: 20 } },
+    fallback: { db: 34, wb: 22, indicative: true, why: 'country-level fallback; no single station defines a whole country' },
+    regions: {},
+    cities: {
+      'Mexico City': { db: 29.1, wb: 12.3, src: 'ASHRAE 2021', station: 'MEXICO CITY INTL (WMO 766793)' },
+      Cancun: { db: 33, wb: 26, indicative: true, why: 'nearest ASHRAE station (Cancún Intl, WMO 765906) has no 2021 design-condition data' },
+      Guadalajara: { db: 33.1, wb: 15.2, src: 'ASHRAE 2021', station: 'GUADALAJARA INTL (WMO 766133)' }
+    },
   },
 };
 

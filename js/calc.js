@@ -195,7 +195,12 @@ function safeConditions(p) {
   const rh = clamp(num(p.inRh, DEFAULT_PROJECT.inRh), 0, 100);   // humidity above saturation is impossible
   const wb = Math.min(num(p.outWb, DEFAULT_PROJECT.outWb), db);  // wet bulb can never exceed dry bulb
   const dT = Math.max(0, db - inDb);                             // no cooling load is negative
-  return { db, inDb, rh, wb, dT, wo: wFromDbWb(db, wb), wi: wFromDbRh(inDb, rh) };
+  // The supply-air temperature difference divides the room sensible heat to give the supply flow, so a
+  // zero (or negative) figure would divide by zero and print Infinity. Physics is not the point here:
+  // the honest answer is "cannot be calculated", not a made-up number.
+  const supplyDt = num(p.supplyDt, DEFAULT_PROJECT.supplyDt);
+  const supplyOk = Number.isFinite(supplyDt) && supplyDt > 0;
+  return { db, inDb, rh, wb, dT, supplyDt, supplyOk, wo: wFromDbWb(db, wb), wi: wFromDbRh(inDb, rh) };
 }
 
 // Plain-language notes for design conditions that are physically impossible. The app shows these
@@ -203,13 +208,23 @@ function safeConditions(p) {
 export function projectWarnings(proj = DEFAULT_PROJECT) {
   const p = withDefaults(proj);
   const n = (v) => (Number.isInteger(v) ? String(v) : String(+v.toFixed(2)));
+  // Report the SAME numbers the arithmetic uses (safeConditions fills a blank field with its default),
+  // so a warning can never contradict the maths: a blank outDb is 35 °C here exactly as it is there.
+  const db = num(p.outDb, DEFAULT_PROJECT.outDb);
+  const wb = num(p.outWb, DEFAULT_PROJECT.outWb);
+  const inDb = num(p.inDb, DEFAULT_PROJECT.inDb);
+  const rh = num(p.inRh, DEFAULT_PROJECT.inRh);
+  const supplyDt = num(p.supplyDt, DEFAULT_PROJECT.supplyDt);
   const out = [];
-  if (num(p.outWb) > num(p.outDb))
-    out.push(`Outdoor wet bulb ${n(num(p.outWb))} \u00b0C is above dry bulb ${n(num(p.outDb))} \u00b0C \u2014 using saturated air (100% RH).`);
-  if (num(p.outDb) <= num(p.inDb))
-    out.push(`Outdoor dry bulb ${n(num(p.outDb))} \u00b0C is not above indoor ${n(num(p.inDb))} \u00b0C \u2014 conduction gain taken as zero.`);
-  if (num(p.inRh) > 100)
-    out.push(`Indoor RH ${n(num(p.inRh))}% is above 100% \u2014 using 100%.`);
+  if (wb > db)
+    out.push(`Outdoor wet bulb ${n(wb)} \u00b0C is above dry bulb ${n(db)} \u00b0C \u2014 using saturated air (100% RH).`);
+  if (db <= inDb)
+    out.push(`Outdoor dry bulb ${n(db)} \u00b0C is not above indoor ${n(inDb)} \u00b0C \u2014 conduction gain taken as zero.`);
+  if (rh > 100)
+    out.push(`Indoor RH ${n(rh)}% is above 100% \u2014 using 100%.`);
+  if (!(Number.isFinite(supplyDt) && supplyDt > 0))
+    out.push(`Supply air \u0394T ${n(supplyDt)} K is not above 0 K \u2014 the supply air flow cannot be calculated, ` +
+      `so it is shown as "-".`);
   return out;
 }
 
@@ -306,7 +321,9 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
   const sf = 1 + p.safety / 100;
   const rsh = roomSensible * sf, rlh = roomLatent * sf;
   const total = rsh + rlh + oaSens + oaLat;
-  const supplyLs = rsh / (1.23 * p.supplyDt);
+  // supply flow needs a positive supply-air ΔT to divide by; when it is zero or negative the honest
+  // value is "not calculable" (screen / report / CSV show "-"), never Infinity from a division by zero.
+  const supplyLs = c.supplyOk ? rsh / (1.23 * c.supplyDt) : 0;
   return {
     room,
     warnings,
@@ -318,7 +335,8 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
     totalW: total,
     tr: total / 3517,
     shf: rsh / (rsh + rlh || 1),
-    supplyLs, cfm: supplyLs * 2.11888, oaCfm: oaLs * 2.11888,
+    supplyLs, supplyOk: c.supplyOk, supplyDt: c.supplyDt,
+    cfm: supplyLs * 2.11888, oaCfm: oaLs * 2.11888,
     sqftPerTr: total > 0 ? (A * 10.7639) / (total / 3517) : 0,
   };
 }
@@ -346,6 +364,8 @@ export function calcProject(rooms, proj = DEFAULT_PROJECT) {
       sqftPerTr: tr ? (area * 10.7639) / tr : 0,
       wOut: c.wo, wIn: c.wi,
       outRh: rhFromDbW(c.db, c.wo),
+      // false when the supply-air ΔT made the supply flow incalculable; the UI prints "-" rather than 0
+      supplyOk: c.supplyOk, supplyDt: c.supplyDt,
     },
   };
 }

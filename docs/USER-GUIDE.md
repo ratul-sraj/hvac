@@ -63,9 +63,12 @@ Everything recalculates as you type. You do not need to press any "calculate" bu
 It makes one free IP-location lookup (country / region / city only — no key, no account, nothing
 about your drawing), maps it through a small editable table in `js/climates.js`, and fills the
 outdoor DB/WB **if they are still empty**. A small chip then appears under the fields: *"Detected
-&lt;place&gt; — design conditions filled. Verify before engineering use."* Those numbers are a
-starting point only — check them against ISHRAE / ASHRAE / your local code before you use the
-result. **Your own values always win:** if you already have a saved project, the app never
+&lt;place&gt; — design conditions filled. Verify before engineering use."* A sourced city carries the
+source it came from (ASHRAE 2021 *Fundamentals* Ch.14, 0.4% annual cooling DB / mean coincident WB);
+the full list is in [`docs/CLIMATE-SOURCES.md`](CLIMATE-SOURCES.md). Rows there are either **sourced**
+or marked **indicative** — a state/country-level estimate or a place with no nearby station — and for
+those the old advice still stands: check them against ISHRAE / ASHRAE / your local code before you use
+the result. **Your own values always win:** if you already have a saved project, the app never
 overwrites them; the chip instead offers a **Use detected values** button. Dismiss the chip and it
 will not come back for that place. With the network off (or the lookup blocked) the app falls back
 to your timezone/locale and offers at most a **country-level** suggestion; if it cannot name even a
@@ -83,7 +86,7 @@ Drag a file onto the dashed box (or click it and choose the file). The drop zone
 You can select several files at once — up to 10 files per upload, max 25 MB each. Two buttons help
 you test:
 
-- **Try sample drawing** loads `tests/samples/sample-plan.pdf`, a synthetic 3-page sample building.
+- **Try sample drawing** loads `samples/sample-plan.pdf` (the copy the site serves), falling back to `tests/samples/sample-plan.pdf`, a synthetic 3-page sample building.
 - **Add room manually** adds one empty room you can type into.
 
 **Reading a scanned drawing.** A scan or a photo has no text layer, so the normal reader finds
@@ -519,7 +522,12 @@ Two honesty rules are baked in:
   falls back to your timezone or browser locale and offers at most a country-level value; if even
   that names nothing, the fields are left exactly as they were.
 
-The numbers are indicative ISHRAE/ASHRAE-style summer design values and **must be verified against
+The city rows of the table are now **sourced**: each carries the station it came from, and
+[`docs/CLIMATE-SOURCES.md`](CLIMATE-SOURCES.md) lists every one (city | DB | WB | source | edition |
+URL). The sourced figures are ASHRAE 2021 *Fundamentals* Ch.14 **0.4% annual cooling dry bulb and its
+mean coincident wet bulb**. Rows that are **not** sourced are marked `indicative: true` (a
+state/country-level estimate, or a place with no station within a sensible radius) and carry their
+reason; those — and, as always, the actual project conditions — **must still be verified against
 ISHRAE / ASHRAE / the local code before any engineering use.** The engine's own warnings for
 impossible conditions (wet bulb above dry bulb, outdoor not above indoor, RH over 100 %) still fire
 normally on whatever ends up in the fields.

@@ -37,19 +37,30 @@ function roomWalls(x, y, sidePt, gapPt = 0) {
 const sideFor = (areaM2) => (areaM2 / (MPP * MPP)) ** 0.5;    // square side in points
 
 // ------------------------------------------------------------------ operator list -> segments
+// The op ids mirror the vendored pdf.js 4.10.38: the `re` rectangle op is OPS.rectangle (=19). There is
+// deliberately NO OPS.rect here (it is undefined in that build), so a regression that matches only
+// `OPS.rect` fails these checks instead of silently dropping every `re` wall.
 const OPS = {
   setLineWidth: 1, setStrokeRGBColor: 2, setStrokeGray: 3, constructPath: 4,
-  moveTo: 10, lineTo: 11, curveTo: 12, curveTo2: 13, curveTo3: 14, rect: 15, closePath: 16,
+  moveTo: 10, lineTo: 11, curveTo: 12, curveTo2: 13, curveTo3: 14, rectangle: 19, closePath: 16,
   save: 20, restore: 21, transform: 22, paintFormXObjectBegin: 23, paintFormXObjectEnd: 24,
 };
 {
   const fnArray = [OPS.setLineWidth, OPS.setStrokeRGBColor, OPS.constructPath, OPS.constructPath];
   const argsArray = [[1], [136, 136, 136],
     [[OPS.moveTo, OPS.lineTo], [0, 0, 10, 0]],
-    [[OPS.rect], [0, 0, 4, 4]]];
+    [[OPS.rectangle], [0, 0, 4, 4]]];
   const { segments, styled } = segmentsFromOperatorList(fnArray, argsArray, OPS, [1, 0, 0, 1, 0, 0]);
   ok('a line path becomes one segment', segments.length === 5, `${segments.length} segments (1 line + 4 rect sides)`);
   ok('a rect path becomes its four sides', segments.filter((s) => s.x1 === 0 || s.x2 === 0 || s.y1 === 0 || s.y2 === 0).length >= 1);
+  // The rect is emitted as FOUR numbers (x, y, w, h); a naive rename that read eight would push NaN.
+  const rectSides = segments.slice(1);
+  ok('the four sides of a 4x4 rect are read from its 4 numbers, with no NaN',
+    rectSides.length === 4
+      && rectSides.every((s) => [s.x1, s.y1, s.x2, s.y2].every(Number.isFinite))
+      && rectSides.some((s) => s.x1 === 0 && s.y1 === 0 && s.x2 === 4 && s.y2 === 0)
+      && rectSides.some((s) => s.x1 === 4 && s.y1 === 4 && s.x2 === 0 && s.y2 === 4),
+    rectSides.map((s) => `${s.x1},${s.y1}->${s.x2},${s.y2}`).join(' '));
   ok('each segment remembers the line class it was drawn with',
     segments.every((s) => s.width === 1 && s.color && s.color[0] === 136), `${styled} styled`);
   const moved = segmentsFromOperatorList([OPS.constructPath], [[[OPS.moveTo, OPS.lineTo], [1, 2, 3, 4]]], OPS, [1, 0, 0, 1, 10, 20]);
@@ -76,6 +87,27 @@ const OPS = {
   const key = dominantStyle(segs);
   ok('the plan\u2019s own line class is found as the most common one', key === '1|136,136,136', key);
   ok('filtering keeps only that class', filterByStyle(segs, key).length === 2);
+}
+
+// ------------------------------------------------------------------ a rect-only wall set
+{
+  // A wall drawing whose ONLY linework is one PDF `re` rectangle for the room boundary: before the fix
+  // every `re` op was dropped in the vendored pdf.js (OPS.rect is undefined), so this page produced 0
+  // segments and no outline. It must now produce the four edges and trace the room.
+  const side = sideFor(25);
+  const fnArray = [OPS.setLineWidth, OPS.setStrokeGray, OPS.constructPath];
+  const argsArray = [[1], [0.5], [[OPS.rectangle], [10, 20, side, side]]];
+  const { segments } = segmentsFromOperatorList(fnArray, argsArray, OPS, [1, 0, 0, 1, 0, 0]);
+  ok('a rect-only wall set produces segments (not 0)', segments.length === 4,
+    `${segments.length} segment(s) from one re op`);
+  ok('no segment from the rect carries a NaN', segments.every((s) => [s.x1, s.y1, s.x2, s.y2].every(Number.isFinite)));
+  const out = traceRooms({
+    segments, box: box(200, 200), denom: DENOM, pxPerPt: 2, thickness: 2,
+    rooms: [{ id: 'r', name: 'OFFICE', area: 25, at: { x: 10 + side / 2, y: 20 + side / 2 } }],
+  });
+  ok('the rect-only room traces to a sane, accepted outline',
+    out.stats.accepted === 1 && out.results[0].ok && out.results[0].tracedM2 > 0 && Number.isFinite(out.results[0].tracedM2),
+    `accepted ${out.stats.accepted}, traced ${out.results[0].tracedM2 && out.results[0].tracedM2.toFixed(2)} m²`);
 }
 
 // ------------------------------------------------------------------ raster + regions
