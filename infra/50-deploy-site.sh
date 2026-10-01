@@ -58,8 +58,13 @@ CACHE_SHORT="public, max-age=86400"
 CACHE_LONG="public, max-age=31536000, immutable"
 # Code that CHANGES between deploys must not be immutable: these filenames are not content-hashed,
 # so a 1-year immutable cache means a fixed js/app.js never reaches a browser that already has the
-# old copy (it did exactly that to the sample-drawing fix). Revalidate quickly instead.
-CACHE_CODE="public, max-age=300, must-revalidate"
+# old copy (it did exactly that to the sample-drawing fix).
+# max-age=0, not 300: with a 5-minute freshness window a browser that loaded the page just before a
+# deploy keeps serving the OLD css/js from its own cache without revalidating, so it runs a MIXED
+# build — old css/style.css with new js/overlay.js still showed the "cannot draw when zoomed" bug
+# after the fix was live. Revalidating every load costs one conditional request (304) and removes the
+# whole class of "reload and it still looks broken".
+CACHE_CODE="public, max-age=0, must-revalidate"
 CT_HTML="text/html; charset=utf-8"
 CT_CSS="text/css; charset=utf-8"
 CT_JS="text/javascript; charset=utf-8"

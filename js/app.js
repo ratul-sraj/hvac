@@ -617,13 +617,18 @@ function renderDetail(calc) {
     </p>`;
 }
 
-function openDetail(id) {
+/** Open a room's load breakdown.
+ *  keepView: leave the page where it is. Set by the plan panel — the user is looking at the DRAWING,
+ *  and scrolling down to the breakdown there would yank the sheet out of view after every room they
+ *  draw (it looked like the drawing only worked near the top of the page). Clicking a table row still
+ *  scrolls to the breakdown, because there the breakdown IS what was asked for. */
+function openDetail(id, opts) {
   state.ui.openId = id;
   el.detailPanel.classList.remove('hidden');
   el.roomsBody.querySelectorAll('tr').forEach((tr) =>
     tr.classList.toggle('selected', tr.dataset.id === id));
   renderDetail(currentCalc());
-  el.detailPanel.scrollIntoView({ block: 'nearest' });
+  if (!(opts && opts.keepView)) el.detailPanel.scrollIntoView({ block: 'nearest' });
 }
 
 function closeDetail() {
@@ -1263,7 +1268,7 @@ function planSync() {
 }
 
 function planSelectRoom(room) {
-  if (room) openDetail(room.id); else closeDetail();
+  if (room) openDetail(room.id, { keepView: true }); else closeDetail();
   if (plan.overlay) plan.overlay.render();
 }
 

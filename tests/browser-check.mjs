@@ -402,6 +402,32 @@ if (!sampleMissing) {
       !!newest && Math.abs(newest.area - zoomExpected) <= Math.max(1, zoomExpected * 0.05),
       newest ? `table ${newest.area} m² vs geometry ${zoomExpected.toFixed(2)} m²` : "not found");
 
+
+  // A drawn box must land UNDER THE CURSOR. Area and size checks pass even when the box is placed
+  // somewhere else entirely, which is exactly what a coordinate/scroll bug looks like.
+  const landed = await page.evaluate(([sx, sy]) => {
+    const svg = document.querySelector(".plan-overlay");
+    const sr = svg.getBoundingClientRect();
+    const boxes = [...document.querySelectorAll(".plan-room-box")];
+    const last = boxes[boxes.length - 1];
+    if (!last) return null;
+    return { x: sr.x + (+last.getAttribute("x")), y: sr.y + (+last.getAttribute("y")) };
+  }, [qx, qy]);
+  const miss = landed ? { x: Math.round(landed.x - qx), y: Math.round(landed.y - qy) } : null;
+  ok("the room lands under the cursor, not somewhere else on the sheet",
+      !!miss && Math.abs(miss.x) <= 12 && Math.abs(miss.y) <= 12,
+      miss ? `off by ${miss.x},${miss.y} px from the drag start` : "no box found");
+
+  // Drawing on the plan must not throw the user off the drawing: the breakdown appearing below is
+  // fine, but the page must not scroll the sheet out of view (it did, after every single room).
+  const panelNow = await page.evaluate(() => {
+    const r = document.getElementById("planView").getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight };
+  });
+  ok("the drawing is still on screen after a room is drawn there",
+      panelNow.bottom > 0 && panelNow.top < panelNow.vh,
+      `panel top ${panelNow.top}, bottom ${panelNow.bottom}, viewport ${panelNow.vh}`);
+
   // put the view back so the screenshot shows the whole sheet
   await page.click("#planFit");
   await new Promise((r) => setTimeout(r, 800));
