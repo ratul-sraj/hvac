@@ -64,7 +64,7 @@
  * CSS the app must provide (css/style.css — planner-owned; this file adds no stylesheet).
  * These are the only class names this module uses:
  *
- *   .plan-overlay            { position:absolute; inset:0; touch-action:none; }
+ *   .plan-overlay            { position:absolute; inset:0; touch-action:none; overflow-anchor:none; }
  *   .plan-overlay.is-draw    { cursor:crosshair; }
  *   .plan-overlay.is-select  { cursor:default; }
  *   .plan-room               { cursor:pointer; }
@@ -104,6 +104,13 @@ const CLICK_SLOP_PX = 4;
 /** Corner grips: grab radius in view pixels (converted to PDF points through the viewport), and the
  *  drawn size of the grip square in view pixels. */
 const HANDLE_PX = 9;
+
+/** <input> types you actually type text into. Everything else (checkbox, radio, button, range, color)
+ *  can receive focus without being a text field, and Delete must still reach the drawing from there. */
+const TEXT_INPUT_TYPES = new Set([
+  'text', 'search', 'email', 'url', 'tel', 'password', 'number',
+  'date', 'time', 'datetime-local', 'month', 'week',
+]);
 const HANDLE_DRAW_PX = 9;
 /** Labels are hidden rather than drawn illegibly. */
 const MIN_LABEL_PX = 6;
@@ -239,12 +246,19 @@ export function createOverlay(rootEl, {
     }
     return rootEl;
   }
-  /** Is this element a text-entry field? Delete/Backspace must never be stolen from one. */
+  /** Is this element a text-entry field? Delete/Backspace must never be stolen from one.
+   *  Only real text entry counts. A checkbox, radio or button is an <input> but not a place you type,
+   *  and the mode radio keeps focus after it is clicked — clicking a room no longer blurs it (the drag
+   *  cancels the default so the browser never moves focus), so treating every <input> as a text field
+   *  meant Delete did nothing at all after switching to Select mode. */
   function isTextEntry(el) {
     if (!el || el === document) return false;
     const tag = String(el.tagName || '').toUpperCase();
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-    return el.isContentEditable === true;
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (el.isContentEditable === true) return true;
+    if (tag !== 'INPUT') return false;
+    const type = String(el.getAttribute('type') || 'text').toLowerCase();
+    return TEXT_INPUT_TYPES.has(type);
   }
   function isSpaceKey(e) {
     return e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
@@ -523,6 +537,7 @@ export function createOverlay(rootEl, {
 
   /** Begin a move (handle=null) or a resize (handle='nw'|'ne'|'se'|'sw') of one room. */
   function startDrag(e, kind, room, handle, p, pdf) {
+    e.preventDefault?.();   // dragging a box must not start a text selection / browser drag
     drag = {
       kind,
       id: idOf(room),
@@ -698,12 +713,24 @@ export function createOverlay(rootEl, {
     if (isSpaceKey(e)) spaceHeld = false;
   }
   function onWindowBlur() { spaceHeld = false; }
+  /** Chrome's middle-click AUTOSCROLL is started by mousedown, and cancelling only the pointerdown
+   *  does not stop it: the compass appears and the view keeps scrolling long after the pan ended.
+   *  A pan gesture's mousedown must be cancelled too. */
+  function onMouseDown(e) {
+    if (e.button === 1 || (spaceHeld && e.button === 0)) e.preventDefault();
+  }
 
   svg.addEventListener('pointerdown', onPointerDown);
   svg.addEventListener('pointermove', onPointerMove);
   svg.addEventListener('pointerup', onPointerUp);
   svg.addEventListener('pointercancel', onPointerCancel);
   svg.addEventListener('pointerleave', () => { if (mode !== 'draw' && !drag && !pan) setHover(null); });
+  svg.addEventListener('mousedown', onMouseDown);
+  svg.addEventListener('mouseup', onMouseDown);
+  svg.addEventListener('auxclick', onMouseDown);
+  // Chrome's middle-click AUTOSCROLL is started by mousedown, and cancelling only the pointerdown
+  // does not stop it: the compass appears and the page keeps scrolling, long after the pan ended.
+  // A pan gesture's mousedown must therefore be cancelled too.
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onWindowBlur);
@@ -731,6 +758,7 @@ export function createOverlay(rootEl, {
     svg.removeEventListener('pointermove', onPointerMove);
     svg.removeEventListener('pointerup', onPointerUp);
     svg.removeEventListener('pointercancel', onPointerCancel);
+    svg.removeEventListener('mousedown', onMouseDown);
     releaseCapture();
     draft = null;
     drag = null;

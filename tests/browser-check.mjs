@@ -685,6 +685,165 @@ if (!sampleMissing) {
     await cdp.detach().catch(() => {});
   }
   await new Promise((r) => setTimeout(r, 300));
+
+  // ---- Stage 2: move, resize, delete and pan a room on the drawing ---------------------------------
+  // These run last in this block and put the row count back where they found it (one drawn, one
+  // deleted), so nothing after them depends on their state.
+  // Every check targets the room it drew BY ID: the overlay draws rooms biggest-first, so the order of
+  // boxes in the DOM is not the order they were drawn in, and "the last box" is the smallest room.
+  {
+    const p0 = await page.$eval("#planView", (e) => { const r = e.getBoundingClientRect();
+      return { x: r.x, y: r.y }; });
+    const rows2 = () => page.$$eval("#roomsBody tr", (t) => t.length);
+    const roomIdOfLastRow = () => page.$eval("#roomsBody tr:last-child", (tr) => tr.getAttribute("data-id"));
+    const areaOfRoom = (id) => page.$eval(`#roomsBody tr[data-id="${id}"] input[data-field="area"]`, (i) => i.value).catch(() => null);
+    const boxOfRoom = (id) => page.evaluate((rid) => {
+      const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+      if (!g) return null;
+      const r = g.querySelector(".plan-room-box");
+      return { x: +r.getAttribute("x"), y: +r.getAttribute("y"),
+               w: +r.getAttribute("width"), h: +r.getAttribute("height") };
+    }, id);
+    const layerState = () => page.evaluate(() => {
+      const svg = document.querySelector(".plan-overlay");
+      const canvas = document.getElementById("planCanvas");
+      const view = document.getElementById("planView");
+      const sr = svg.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+      return { handles: document.querySelectorAll(".plan-room-handle").length,
+               selected: document.querySelectorAll(".plan-room.is-selected").length,
+               aligned: Math.abs(sr.left - cr.left) < 2 && Math.abs(sr.width - canvas.clientWidth) < 2,
+               scroll: [view.scrollLeft, view.scrollTop] };
+    });
+
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 400));
+    const rowsStart = await rows2();
+
+    // draw one room to work on
+    await page.click("#planModeDraw");
+    await new Promise((r) => setTimeout(r, 200));
+    await page.mouse.move(p0.x + 140, p0.y + 120);
+    await page.mouse.down();
+    await page.mouse.move(p0.x + 300, p0.y + 280, { steps: 6 });
+    await page.mouse.move(p0.x + 420, p0.y + 360, { steps: 6 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 800));
+    const id2 = await roomIdOfLastRow();
+    const areaDrawn2 = await areaOfRoom(id2);
+    const r0 = await boxOfRoom(id2);
+    ok("the room just drawn can be found on the drawing by its id",
+      !!r0 && (await rows2()) === rowsStart + 1, `id ${id2}, box ${JSON.stringify(r0)}`);
+
+    // select it, then drag the body
+    await page.click("#planModeSelect");
+    await new Promise((r) => setTimeout(r, 250));
+    let layer = await layerState();
+    const cx2 = p0.x + (r0.x + r0.w / 2 - layer.scroll[0]);
+    const cy2 = p0.y + (r0.y + r0.h / 2 - layer.scroll[1]);
+    await page.mouse.click(cx2, cy2);
+    await new Promise((r) => setTimeout(r, 400));
+    layer = await layerState();
+    ok("selecting a drawn room shows its four corner handles",
+      layer.handles === 4 && layer.selected === 1, `handles ${layer.handles}, selected ${layer.selected}`);
+
+    await page.mouse.move(cx2, cy2);
+    await page.mouse.down();
+    await page.mouse.move(cx2 + 90, cy2 + 70, { steps: 8 });
+    await page.mouse.move(cx2 + 150, cy2 + 120, { steps: 8 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 700));
+    const moved2 = await boxOfRoom(id2);
+    ok("dragging a room's body moves it on the drawing",
+      Math.abs(moved2.x - r0.x) > 20 && Math.abs(moved2.y - r0.y) > 15,
+      `(${r0.x.toFixed(0)},${r0.y.toFixed(0)}) -> (${moved2.x.toFixed(0)},${moved2.y.toFixed(0)})`);
+    ok("moving a room does not change its size or its area",
+      Math.abs(moved2.w - r0.w) < 2 && Math.abs(moved2.h - r0.h) < 2 && (await areaOfRoom(id2)) === areaDrawn2,
+      `${r0.w.toFixed(0)}x${r0.h.toFixed(0)} -> ${moved2.w.toFixed(0)}x${moved2.h.toFixed(0)}, area ${areaDrawn2} -> ${await areaOfRoom(id2)}`);
+
+    // drag its se corner: bigger area, opposite corner pinned
+    const seX2 = p0.x + (moved2.x + moved2.w - layer.scroll[0]);
+    const seY2 = p0.y + (moved2.y + moved2.h - layer.scroll[1]);
+    await page.mouse.move(seX2, seY2);
+    await page.mouse.down();
+    await page.mouse.move(seX2 + 120, seY2 + 90, { steps: 8 });
+    await page.mouse.move(seX2 + 200, seY2 + 150, { steps: 8 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 800));
+    const big2 = await boxOfRoom(id2);
+    const areaResized2 = await areaOfRoom(id2);
+    ok("dragging a corner resizes the room",
+      big2.w > moved2.w + 20 && big2.h > moved2.h + 15,
+      `${moved2.w.toFixed(0)}x${moved2.h.toFixed(0)} -> ${big2.w.toFixed(0)}x${big2.h.toFixed(0)}`);
+    ok("the opposite corner stays pinned while resizing",
+      Math.abs(big2.x - moved2.x) < 3 && Math.abs(big2.y - moved2.y) < 3,
+      `${moved2.x.toFixed(0)},${moved2.y.toFixed(0)} -> ${big2.x.toFixed(0)},${big2.y.toFixed(0)}`);
+    ok("resizing recomputes the room's area in the table",
+      Number(areaResized2) > Number(areaDrawn2), `${areaDrawn2} m2 -> ${areaResized2} m2`);
+
+    // panning moves the sheet without moving the room
+    await page.click("#planZoomIn");
+    await new Promise((r) => setTimeout(r, 900));
+    const panBefore2 = await layerState();
+    // the zoom above moved and grew the box in view space, so the reference for "panning did not move
+    // the room" has to be taken AFTER it, not before
+    const panRefBox = await boxOfRoom(id2);
+    await page.mouse.move(p0.x + 600, p0.y + 300);
+    await page.mouse.down({ button: "middle" });
+    await page.mouse.move(p0.x + 300, p0.y + 150, { steps: 10 });
+    await page.mouse.move(p0.x + 200, p0.y + 100, { steps: 10 });
+    await page.mouse.up({ button: "middle" });
+    await new Promise((r) => setTimeout(r, 400));
+    const panAfter2 = await layerState();
+    const panRoom = await boxOfRoom(id2);
+    ok("middle-drag pans the drawing",
+      panAfter2.scroll[0] !== panBefore2.scroll[0] || panAfter2.scroll[1] !== panBefore2.scroll[1],
+      `scroll ${panBefore2.scroll.join(",")} -> ${panAfter2.scroll.join(",")}`);
+    ok("panning moves the view and not the room",
+      Math.abs(panRoom.w - panRefBox.w) < 2 && Math.abs(panRoom.x - panRefBox.x) < 2 &&
+      Math.abs(panRoom.y - panRefBox.y) < 2 && panAfter2.aligned,
+      `box ${panRefBox.x.toFixed(0)},${panRefBox.y.toFixed(0)} ${panRefBox.w.toFixed(0)}x${panRefBox.h.toFixed(0)} -> ${panRoom.x.toFixed(0)},${panRoom.y.toFixed(0)} ${panRoom.w.toFixed(0)}x${panRoom.h.toFixed(0)}, layer on drawing: ${panAfter2.aligned}`);
+    await page.click("#planFit");
+    await new Promise((r) => setTimeout(r, 900));
+
+    // a keystroke inside a table cell must not delete a room
+    await page.focus("#roomsBody tr:last-child input[data-field=\"name\"]");
+    const rowsBeforeKey = await rows2();
+    await page.keyboard.press("Delete");
+    await new Promise((r) => setTimeout(r, 300));
+    ok("Delete while typing in a table cell does not delete a room",
+      (await rows2()) === rowsBeforeKey, `${rowsBeforeKey} -> ${await rows2()}`);
+
+    // ...but Delete must reach the drawing while a non-text control holds the focus. Clicking a room
+    // does not blur the mode radio (the drag cancels the default that would move focus), so treating
+    // every <input> as a text field made Delete silently do nothing right after switching mode.
+    await page.click("#planModeSelect");
+    await new Promise((r) => setTimeout(r, 300));
+    // click the box where it actually IS on screen: scroll it into view first, then use its client
+    // rectangle, so no scroll arithmetic can send the click somewhere else (it hit the page-nav
+    // button once, which selected nothing and made this check look like a product failure)
+    await page.evaluate((rid) => {
+      const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+      if (g && g.scrollIntoView) g.scrollIntoView({ block: "center" });
+    }, id2);
+    await new Promise((r) => setTimeout(r, 400));
+    const boxClient = await page.evaluate((rid) => {
+      const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+      if (!g) return null;
+      const r = g.querySelector(".plan-room-box").getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    }, id2);
+    if (boxClient) await page.mouse.click(boxClient.x + boxClient.w / 2, boxClient.y + boxClient.h / 2);
+    await new Promise((r) => setTimeout(r, 400));
+    const radioState = await page.evaluate(() => ({
+      active: document.activeElement ? document.activeElement.id : "none",
+      selected: document.querySelectorAll(".plan-room.is-selected").length }));
+    await page.keyboard.press("Delete");
+    await new Promise((r) => setTimeout(r, 700));
+    ok("Delete reaches the drawing while the mode radio holds the focus",
+      radioState.active === "planModeSelect" && radioState.selected === 1 && (await rows2()) === rowsStart,
+      `focused ${radioState.active}, selected ${radioState.selected}, rows ${rowsStart} at the start -> ${await rows2()} after deleting the drawn room`);
+  }
+
 } // end of the checks that need the sample drawing
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample

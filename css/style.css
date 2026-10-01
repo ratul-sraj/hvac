@@ -560,8 +560,14 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
    Anchored to the CONTENT origin and sized by the width/height attributes the overlay sets from the
    canvas box. It must NOT be stretched to the container (inset: 0): .plan-view is the scroll box, so
    that would size the layer to the visible window, and everything further down the sheet would have
-   no overlay covering it — no pointer events, no drawing (the "above 70% I cannot draw" bug). */
-.plan-overlay { position: absolute; left: 0; top: 0; touch-action: none; overflow: visible; }
+   no overlay covering it — no pointer events, no drawing (the "above 70% I cannot draw" bug).
+   overflow-anchor:none is deliberate: the overlay REPLACES its room groups on every render, and while
+   the sheet is scrolled Chrome's scroll anchoring then re-anchors and silently shifts scrollTop —
+   dragging a room made the whole plan jump by tens of pixels at zoom. Excluding this subtree from
+   anchoring keeps the scroll box still. */
+.plan-overlay {
+  position: absolute; left: 0; top: 0; touch-action: none; overflow: visible; overflow-anchor: none;
+}
 .plan-overlay.is-draw { cursor: crosshair; }
 .plan-overlay.is-select { cursor: default; }
 .plan-room { cursor: pointer; }
