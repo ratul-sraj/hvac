@@ -1380,11 +1380,25 @@ function planDeleteRoom(id) {
  * Rooms are placed on THEIR OWN page (room.page), not the page being viewed. */
 
 /** Give every table room that the drawing names a clickable locator box on its own page. */
-function planPlaceAllRooms() {
+async function planPlaceAllRooms() {
   if (!state.rooms.length) {
     setStatus('warn', 'There are no rooms in the table to place yet. Load a drawing or add rooms first.');
     return;
   }
+
+  // A project saved before the parser recorded WHERE the sheet names each room has no `at`, so
+  // nothing can be placed and the user is told the sheet does not name the rooms — even though it
+  // does, and re-uploading the same drawing works. The drawing is still kept in this browser
+  // (drawstore/IndexedDB), so when not one room has a position, read it again and recover them.
+  let rehydrated = 0;
+  if (!state.rooms.some((r) => r.at)) {
+    rehydrated = await rehydratePositions();
+    if (rehydrated) saveSoon();
+  }
+  const rehydrateNote = rehydrated
+    ? 'Re-read the drawing to find where the rooms are named (this table was saved by an older version). '
+    : '';
+
   const denom = planScaleDenom();
   let placed = 0, noAt = 0, noArea = 0, already = 0, handDrawn = 0;
   for (const room of state.rooms) {
@@ -1414,10 +1428,10 @@ function planPlaceAllRooms() {
     // nothing new, but say WHY rather than a flat "done": rooms already placed, and rooms that have
     // nowhere to sit (the sheet does not name them) or nothing to size a box from.
     if (already && notes.length === 1) {
-      setStatus('ok', `All ${already} room(s) the drawing names are already on the plan.`);
+      setStatus('ok', rehydrateNote + `All ${already} room(s) the drawing names are already on the plan.`);
       return;
     }
-    setStatus('warn', `No room to place: ${notes.join('; ')}.`);
+    setStatus('warn', rehydrateNote + `No room to place: ${notes.join('; ')}.`);
     return;
   }
 
@@ -1425,7 +1439,7 @@ function planPlaceAllRooms() {
   renderAll();    // rebuild the table + summary and redraw the boxes (the table rows do not change)
   saveSoon();
 
-  let msg = `Placed ${placed} room(s) on the plan. `;
+  let msg = rehydrateNote + `Placed ${placed} room(s) on the plan. `;
   msg += notes.length ? `${notes.join('; ')}.` : 'Each box is a locator centred on the point that names the room, sized back from its own area — the load has not changed.';
   setStatus('ok', msg);
 }
@@ -1557,6 +1571,63 @@ async function restoreDrawing() {
   } catch (err) {
     console.warn('[plan] could not restore the drawing:', (err && err.message) || err);
   }
+}
+
+/** A normalised room name for matching: trimmed, inner whitespace collapsed, case-insensitive. */
+function normalizeRoomName(name) {
+  return String(name == null ? '' : name).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Recover the positions of rooms in a project saved before the parser recorded where the sheet names
+ * them. The drawing is still in this browser (drawstore/IndexedDB), so parse it again with the same
+ * browser-side call an upload uses, and hand each existing room that is missing `at` the point the
+ * fresh parse found for it. ONLY `at` is copied: the user's name, area, size, type, include flag,
+ * editing and any rectangle are left exactly as they were.
+ * @returns {Promise<number>} how many rooms gained a position (0 when there is no stored drawing or
+ *                            nothing matched).
+ */
+async function rehydratePositions() {
+  const missing = state.rooms.filter((r) => r && typeof r === 'object' && !r.at);
+  if (!missing.length) return 0;
+
+  let rec = null;
+  try {
+    const mod = await import('./drawstore.js');
+    rec = await mod.getDrawing();
+  } catch (err) {
+    rec = null;
+  }
+  if (!rec || !rec.bytes) return 0;
+
+  let out = null;
+  try {
+    // pdf.js DETACHES the buffer it is handed, so parse a private copy and leave the record usable.
+    const buf = rec.bytes.slice(0);
+    out = await parseOne(buf, rec.name || 'drawing.pdf', 0, 1);
+  } catch (err) {
+    console.warn('[plan] could not re-read the drawing to find room positions:', (err && err.message) || err);
+    return 0;
+  }
+
+  // Match a fresh room to an existing one by page + area + normalised name — the three things a
+  // saved room and the drawing must agree on. Keep the first match per key.
+  const atKey = (room) => `${Number(room.page) || 1}|${Number(room.area)}|${normalizeRoomName(room.name)}`;
+  const byKey = new Map();
+  for (const r of (out && out.rooms) || []) {
+    if (!r || !r.at || !Number.isFinite(r.at.x) || !Number.isFinite(r.at.y)) continue;
+    const k = atKey(r);
+    if (!byKey.has(k)) byKey.set(k, r.at);
+  }
+
+  let found = 0;
+  for (const room of missing) {
+    const at = byKey.get(atKey(room));
+    if (!at) continue;
+    room.at = { x: at.x, y: at.y };   // ONLY the position — every other field is the user's
+    found += 1;
+  }
+  return found;
 }
 
 async function planGoTo(n) {

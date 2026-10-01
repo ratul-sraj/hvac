@@ -230,6 +230,12 @@ drawing scale. That means:
   the rooms, their areas, names, and the load are untouched.
 - Placed boxes are saved with the project (the browser's local storage and the **Save project
   (.json)** file), so they are still on the sheet after a reload.
+- **A project saved by an older version of LoadLens** may hold rooms that were recorded without the
+  point at which the sheet names them. Clicking **Place all rooms on the plan** now re-reads the
+  drawing this browser still keeps (the uploaded PDF is remembered in the browser, not re-uploaded)
+  and recovers those positions, so the boxes appear as usual — the status line says the drawing was
+  re-read. Nothing else about the rooms changes: their names, areas and any edits you made stay as
+  they were, and the load is unchanged.
 
 ### Select and edit a drawn room
 
