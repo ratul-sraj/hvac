@@ -165,6 +165,16 @@ export function dominantStyle(segments) {
   return best;
 }
 
+/** Line classes in a segment list, most common first: `[[key, count], ...]`. */
+export function styleCounts(segments) {
+  const counts = new Map();
+  for (const s of segments) {
+    const key = `${s.width}|${s.color ? s.color.join(',') : 'none'}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
 /** Keep only the segments of one (width, colour) class. */
 export function filterByStyle(segments, key) {
   return segments.filter((s) => `${s.width}|${s.color ? s.color.join(',') : 'none'}` === key);
@@ -234,7 +244,9 @@ export function regionAt(grid, w, h, cx, cy, opts = {}) {
   if (cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
   const start = cy * w + cx;
   if (grid[start]) return null;                       // the label sits ON a wall line
-  const seen = new Uint8Array(w * h);
+  // A caller tracing many labels MUST pass one shared `seen` array: a fresh 16-million-cell buffer per
+  // label is what makes this slow on a real sheet (149 of them dwarf the actual flood filling).
+  const seen = opts.seen || new Uint8Array(w * h);
   const stack = [start];
   seen[start] = 1;
   const cells = [];
@@ -403,6 +415,13 @@ export function traceRooms(p) {
   const box = p.box;
   const rast = rasterizeWalls(p.segments, box, pxPerPt, p.thickness || 2);
   const { w, h, grid } = rast;
+  // A region far larger than any room in the table is an open area or a leak, not a room. Capping the
+  // flood fill at a few times the largest stated area also keeps a hopeless line class (symbols instead
+  // of walls) from spending ten seconds wallowing across the whole sheet.
+  const mPerCell = metresPerPt(denom) / pxPerPt;
+  const biggest = p.rooms.reduce((m, r) => Math.max(m, Number(r.area) || 0), 0);
+  const maxCells = p.maxCells
+    || Math.max(MIN_REGION_CELLS * 4, Math.ceil((biggest * (p.overFactors || 3)) / (mPerCell * mPerCell)));
   // Seed every label once; a label on a wall line has no region.
   const seeds = p.rooms.map((r) => {
     const c = pointToCell(r.at.x, r.at.y, box, pxPerPt);
@@ -410,35 +429,103 @@ export function traceRooms(p) {
   });
   const regionByRoom = new Map();
   const labelsPerRegion = new Map();
+  // Flood each enclosed area ONCE (sharing one `seen` buffer) instead of once per label, and record
+  // which region each cell belongs to, so the label-to-region assignment is exact.
+  const seen = new Uint8Array(w * h);
+  const regionOf = new Int32Array(w * h).fill(-1);
+  const counts = [];
+  const regions = [];
   for (const s of seeds) {
-    if (s.cell < 0 || grid[s.cell]) continue;                     // off-page or sitting on a wall
-    const region = regionAt(grid, w, h, s.cx, s.cy);
+    if (s.cell < 0 || grid[s.cell] || seen[s.cell]) continue;     // off-page, on a wall, or already flooded
+    const region = regionAt(grid, w, h, s.cx, s.cy, { seen, maxCells });
+    if (region && region.over) {
+      // Too big to be a room: mark its cells so its labels get a clear reason, and keep nothing.
+      for (const c of region.cells) regionOf[c] = -2;
+      continue;
+    }
     if (!region || region.areaPx < MIN_REGION_CELLS) continue;
-    regionByRoom.set(s.room, region);
-    // Count the labels sharing this region. The key must be CANONICAL for the region — the smallest
-    // cell index in it — because the flood fill's first cell is just the seed, which differs per label.
-    let canon = region.cells[0];
-    for (let i = 1; i < region.cells.length; i += 1) if (region.cells[i] < canon) canon = region.cells[i];
-    region.key = canon;
-    labelsPerRegion.set(canon, (labelsPerRegion.get(canon) || 0) + 1);
+    const index = counts.length;
+    counts.push(0);
+    for (const c of region.cells) regionOf[c] = index;
+    region.index = index;
+    region.key = index;                                           // canonical per area, not per label
+    regions.push(region);
+  }
+  for (const s of seeds) {
+    if (s.cell < 0) continue;
+    const index = regionOf[s.cell];
+    if (index < 0) continue;
+    regionByRoom.set(s.room, regions[index]);
+    counts[index] += 1;
+    labelsPerRegion.set(index, counts[index]);
   }
   const results = [];
   for (const s of seeds) {
     const region = regionByRoom.get(s.room);
-    if (!region) { results.push({ id: s.room.id, ok: false, reason: 'no enclosed area around its name', rings: [] }); continue; }
+    if (!region) {
+      const index = s.cell < 0 ? -1 : regionOf[s.cell];
+      results.push({
+        id: s.room.id, ok: false, rings: [], statedM2: s.room.area,
+        reason: index === -2
+          ? 'the space around its name is far larger than any single room (open plan or a leak)'
+          : 'no enclosed area around its name',
+      });
+      continue;
+    }
     const labels = labelsPerRegion.get(region.key) || 0;
     const rings = outlineFromRegion(region, w, box, pxPerPt);
     const tracedM2 = pt2ToM2(outlineAreaPt2(rings), denom);
     const verdict = judgeTrace(tracedM2, s.room.area, labels, p.band);
     results.push({
       id: s.room.id, ok: verdict.ok, reason: verdict.reason, ratio: verdict.ratio,
-      tracedM2, rings: verdict.ok ? rings : [], cells: region.areaPx,
+      tracedM2, statedM2: s.room.area, rings: verdict.ok ? rings : [], cells: region.areaPx,
     });
   }
   const accepted = results.filter((r) => r.ok).length;
+  const scale = impliedDenom(results, denom);
   return { results, stats: {
     labels: p.rooms.length, reached: regionByRoom.size, accepted,
-    refused: results.length - accepted,
+    refused: results.length - accepted, impliedDenom: scale.denom, impliedFrom: scale.n,
     raster: `${w}x${h}`, pxPerPt, denom,
   } };
+}
+
+/**
+ * What drawing scale do the outlines imply? For every area that was reached, dividing the area the plan
+ * states by the area traced gives (scale factor)^2, so each room implies a denominator. A consistent
+ * trace gives a tight cluster — and if that cluster is far from the scale the app is using, the honest
+ * answer is to tell the user their scale is wrong rather than to accept shapes against a bad one.
+ */
+export function impliedDenom(results, denom) {
+  const implied = (results || [])
+    .filter((r) => r.tracedM2 > 0 && r.statedM2 > 0)
+    .map((r) => denom * Math.sqrt(r.statedM2 / r.tracedM2))
+    .sort((a, b) => a - b);
+  if (!implied.length) return { denom: null, n: 0 };
+  const mid = implied[Math.floor(implied.length / 2)];
+  return {
+    denom: Math.round(mid), n: implied.length,
+    p25: Math.round(implied[Math.floor(implied.length * 0.25)]),
+    p75: Math.round(implied[Math.floor(implied.length * 0.75)]),
+  };
+}
+
+/**
+ * Choose which lines to treat as the plan, BY RESULT rather than by how common a class is. On a real
+ * MEP sheet the symbol hatch outnumbered the walls on two of three pages, so "most common class" traced
+ * symbols and merged rooms. Trying the few most common classes (and every line as a last resort) and
+ * keeping whichever accepts the most rooms is sheet-agnostic.
+ * @returns {{key:string, stats:object, results:Array, tried:Array<{key,n}>}}
+ */
+export function pickWallLines(segments, opts) {
+  const candidates = styleCounts(segments).slice(0, opts.topN || 3).map(([key]) => ({ key, segs: filterByStyle(segments, key) }));
+  candidates.push({ key: 'all lines', segs: segments });
+  let best = null;
+  const tried = [];
+  for (const c of candidates) {
+    const out = traceRooms({ ...opts, segments: c.segs });
+    tried.push({ key: c.key, accepted: out.stats.accepted, labels: out.stats.labels });
+    if (!best || out.stats.accepted > best.stats.accepted) best = { key: c.key, ...out };
+  }
+  return { ...best, tried };
 }

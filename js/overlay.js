@@ -25,7 +25,9 @@
  *     onSelect,        // (room|null) => void      click in select mode
  *     onHover,         // (room|null) => void      optional; cursor/label feedback
  *     onRoomMoved,     // (id, rectPt) => void     LIVE: every pointermove of a move/resize drag
+ *                      //   ...or (id, { id, poly, page }) when the dragged room is a traced outline
  *     onRoomMoveEnd,   // (id, rectPt) => void     on release: the app persists here
+ *                      //   ...or (id, { id, poly, page }) for a traced outline (its NEW ring)
  *     onDelete,        // (id) => void             Delete/Backspace with a selection
  *   }) -> Overlay
  *
@@ -54,6 +56,19 @@
  *   class names added by Stage 2: plan-room-handle (+ is-nw/is-ne/is-se/is-sw) on the four corner
  *   grips of the selected room, is-dragging on a room during a move/resize, is-pan on the overlay
  *   while panning. Extra DOM: <g class="plan-handles"> inside the selected room's <g class="plan-room">.
+ *
+ * TRACED OUTLINES (room.poly) — see the helper block further down:
+ *   • A room with a usable `room.poly` ring (PDF space, y up) whose `room.polyPage` (falling back to
+ *     `room.rect.page`) is the current page draws as an SVG <polygon class="plan-room-box"> instead of
+ *     a <rect>, inside the SAME <g class="plan-room"> with the SAME data-room-id, data-include, state
+ *     classes and click/hover/include behaviour. Every point goes through pdfPointToView — the same
+ *     adapter rectToViewBox uses — so zoom/pan//Rotate are unchanged.
+ *   • The <g> carries data-shape="poly" (rectangles carry data-shape="rect") so tests and CSS can
+ *     tell the two apart; the polygon path is `.plan-room[data-shape="poly"] .plan-room-box` in CSS.
+ *   • Dragging an outline MOVES it: every ring point is translated by the same PDF delta and the shape
+ *     is preserved exactly. onRoomMoved/onRoomMoveEnd report `{ id, poly, page }`.
+ *   • Resize handles are ONLY for rect rooms. An outline has no box to drag; it is never converted to
+ *     a rectangle.
  *
  * DOM created inside rootEl:
  *   <svg class="plan-overlay">
@@ -99,7 +114,7 @@ import {
 // Pure, planner-owned tracing maths. polygonAreaPt2 is the shoelace area in square points — the very
 // definition js/trace.js uses to accept a traced outline, so the overlay measures an outline the same
 // way the tracer did. Importing it keeps a single definition of "area of a ring".
-import { polygonAreaPt2, pt2ToM2 } from './trace.js';
+import { polygonAreaPt2 } from './trace.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 

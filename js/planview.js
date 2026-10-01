@@ -33,6 +33,7 @@ export const DRAWING_SCALES = [
   { denom: 50, label: '1:50' },
   { denom: 100, label: '1:100' },
   { denom: 200, label: '1:200' },
+  { denom: 250, label: '1:250' },
   { denom: 500, label: '1:500' },
 ];
 export const DEFAULT_SCALE_DENOM = 100;

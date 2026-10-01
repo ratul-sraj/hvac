@@ -7,6 +7,17 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <meta name="description" content="Upload HVAC floor plan PDF drawings, get room wise cooling load in TR, supply air in L/s and a printable report. Runs fully in your browser.">
 <link rel="stylesheet" href="css/style.css">
+<style>
+  /* The room-table row badge: says whether the row's shape on the plan is a real traced outline or a
+     box. Kept in this page (not css/style.css) so it stays with the markup that uses it. */
+  .row-badge {
+    display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 10px;
+    font-size: 11px; line-height: 16px; vertical-align: middle; white-space: nowrap;
+    border: 1px solid var(--line); color: var(--ink-soft); background: #fff;
+  }
+  .row-badge.is-outline { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
+  .row-badge.is-box { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+</style>
 </head>
 <body>
 
@@ -202,7 +213,11 @@
       measured from the rectangle and that scale. The boxes below are the rooms you have placed;
       rooms found by reading the PDF stay in the table, but <em>Place all rooms on the plan</em> gives
       every one the drawing names a locator box where the sheet names it, sized back from that room's
-      own area (it is a locator, not the traced room boundary). <em>Remove placed rooms</em> takes those
+      own area (it is a locator, not the traced room boundary). <em>Trace real outlines</em> reads the
+      plan's own wall lines and gives the rooms it can trust a real outline shape — a room whose shape
+      the plan does not enclose, or whose traced area does not agree with the stated one, keeps its
+      box. <em>Remove outlines</em> takes those shapes away again and leaves the boxes alone.
+      <em>Remove placed rooms</em> takes those
       boxes away again and never touches the rooms you drew yourself. Click a box in
       <em>Select / edit</em> to open that room's breakdown. In
       <em>Select / edit</em> you can also drag a room to move it, drag a corner to resize it,
@@ -234,6 +249,8 @@
       <div class="plan-group plan-place-actions">
         <button type="button" class="btn btn-small" id="planPlaceAll">Place all rooms on the plan</button>
         <button type="button" class="btn btn-small btn-ghost" id="planPlaceClear">Remove placed rooms</button>
+        <button type="button" class="btn btn-small" id="planTraceOutlines">Trace real outlines</button>
+        <button type="button" class="btn btn-small btn-ghost" id="planTraceClear">Remove outlines</button>
       </div>
     </div>
 

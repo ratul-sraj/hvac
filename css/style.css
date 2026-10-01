@@ -288,6 +288,30 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .rooms-table td.c-num { text-align: right; }
 .rooms-table td.l input { min-width: 110px; }
 .rooms-table td.c-type select { min-width: 135px; }
+/* The space type is the one table control whose text can be longer than its column ("Conference/
+   Meeting", "Reception/Lobby"). A native select with appearance:auto paints its selected text OUTSIDE
+   its own box when it is squeezed, and the cell's overflow is visible, so the label spilled into the
+   neighbouring column. Drawing the control ourselves lets it ellipsize instead of spilling, at any
+   column width, window size or browser zoom. */
+.rooms-table td.c-type,
+.rooms-table td select[data-field="orient"] { overflow: hidden; }
+.rooms-table td.c-type select,
+.rooms-table td select[data-field="orient"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 3px 22px 3px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23808b99' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+}
+.rooms-table th.c-type, .rooms-table td.c-type { min-width: 150px; }
 .rooms-table th.th-include, .rooms-table td.c-include { width: 34px; text-align: center; }
 .rooms-table th.th-del, .rooms-table td.c-del { width: 34px; text-align: center; border-right: none; }
 .rooms-table th.th-src, .rooms-table td.c-src {
@@ -586,6 +610,18 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
    geometric (handleAtPoint on PDF points), so the grip under the pointer is never a DOM hit. */
 .plan-room.is-dragging { cursor: grabbing; }
 .plan-room.is-dragging .plan-room-box { stroke-width: 3; }
+/* TRACED OUTLINE (room.poly, from js/trace.js): drawn as a polygon path instead of a rectangle. A
+   thinner stroke and a lighter fill than a rectangle so the plan's own linework stays readable
+   underneath — this is a real traced boundary, not a box. Selected / excluded / dragging states stay
+   obvious. Only outlines carry data-shape="poly"; rectangles carry data-shape="rect". */
+.plan-room[data-shape="poly"] .plan-room-box {
+  fill: var(--accent); fill-opacity: .14; stroke: var(--accent); stroke-width: 1.5;
+}
+.plan-room.is-excluded[data-shape="poly"] .plan-room-box {
+  fill: #8b95a1; fill-opacity: .12; stroke: #6b7480;
+}
+.plan-room.is-selected[data-shape="poly"] .plan-room-box { stroke: var(--danger); stroke-width: 2.5; }
+.plan-room.is-dragging[data-shape="poly"] .plan-room-box { stroke-width: 3; }
 .plan-room-handle {
   fill: #fff; stroke: var(--danger); stroke-width: 1.5; pointer-events: none;
 }

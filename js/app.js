@@ -30,12 +30,14 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', im
 
 const MISSING_SCHEDULE = 'the room-schedule reader (js/schedule.js) is not in this build';
 const MISSING_OCR = 'the OCR reader (js/ocr.js) is not in this build';
+const MISSING_TRACE = 'the outline tracer (js/trace.js) is not in this build';
 
 // vendored tesseract files, served from the site (no CDN at runtime)
 const OCR_VENDOR = new URL('../vendor/tesseract/', import.meta.url).href;
 
 let scheduleMod = null, scheduleTried = false;
 let ocrMod = null, ocrTried = false;
+let traceMod = null, traceTried = false;
 
 async function loadScheduleModule() {
   if (!scheduleMod && !scheduleTried) {
@@ -53,6 +55,18 @@ async function loadOcrModule() {
   }
   if (!ocrMod || typeof ocrMod.ocrPdf !== 'function') throw new Error(MISSING_OCR);
   return ocrMod;
+}
+
+/** js/trace.js — pure geometry: the plan's vector paths -> real room outlines. Loaded on demand like
+ *  the widgets above, so a build without it still runs the calculator (the plan panel is an
+ *  enhancement, and the outline tracer is an enhancement INSIDE it). */
+async function loadTraceModule() {
+  if (!traceMod && !traceTried) {
+    traceTried = true;
+    try { traceMod = await import('./trace.js'); } catch (e) { traceMod = null; }
+  }
+  if (!traceMod || typeof traceMod.traceRooms !== 'function') throw new Error(MISSING_TRACE);
+  return traceMod;
 }
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +136,8 @@ const el = {
   planModeSelect: $('#planModeSelect'),
   planPlaceAll: $('#planPlaceAll'),
   planPlaceClear: $('#planPlaceClear'),
+  planTraceOutlines: $('#planTraceOutlines'),
+  planTraceClear: $('#planTraceClear'),
   planHint: $('#planHint'),
   reportView: $('#reportView'),
   reportFrame: $('#reportFrame'),
@@ -390,6 +406,28 @@ function sourceLabel(src) {
   return SOURCE_LABEL[String(src || '').toLowerCase()] || '';
 }
 
+/** The little badge that says what shape this room has on the plan: a real outline traced from the
+ *  drawing's own linework, or a box (placed locator or hand-drawn). Nothing when it has neither.
+ *  The title spells out traced-vs-stated, because that difference is the whole point of the trace. */
+function shapeBadge(raw) {
+  const hasPoly = !!(raw && Array.isArray(raw.poly) && raw.poly.length > 2);
+  const hasRect = !!(raw && raw.rect);
+  if (hasPoly) {
+    const traced = Number(raw.polyArea), stated = Number(raw.area);
+    const title = Number.isFinite(traced) && traced > 0 && Number.isFinite(stated) && stated > 0
+      ? `outline traced from the drawing: ${fmt(traced, 1)} m² traced against ${fmt(stated, 1)} m² stated`
+      : 'outline traced from the drawing';
+    return ` <span class="row-badge is-outline" title="${esc(title)}">outline</span>`;
+  }
+  if (hasRect) {
+    const title = isPlacedRoom(raw)
+      ? 'box placed where the plan names the room, sized back from the stated area'
+      : 'box drawn on the plan';
+    return ` <span class="row-badge is-box" title="${esc(title)}">box</span>`;
+  }
+  return '';
+}
+
 function defaultText(key, rn) {
   switch (key) {
     case 'area': return rn.area ? fmt(rn.area, 2) : '';
@@ -425,7 +463,7 @@ function rowHtml(idx, calc) {
     <td class="c-num"><input type="text" data-field="number" value="${esc(raw.number || '')}"
       placeholder="-" aria-label="Room number of ${esc(nm)}"></td>
     <td class="l c-name"><input type="text" data-field="name" value="${esc(raw.name || '')}"
-      placeholder="Room name" aria-label="Room name"></td>
+      placeholder="Room name" aria-label="Room name">${shapeBadge(raw)}</td>
     <td class="c-type"><select data-field="type" aria-label="Space type of ${esc(nm)}">
       ${Object.keys(SPACE_TYPES).map((k) =>
         `<option value="${k}"${room.type === k ? ' selected' : ''}>${esc(SPACE_TYPES[k].label)}</option>`).join('')}
@@ -1238,7 +1276,7 @@ async function loadSample() {
  * points plus the drawing scale it was measured at, never screen pixels, so zoom and page rotation
  * cannot corrupt it. */
 const plan = {
-  mods: null, viewer: null, overlay: null, bytes: null,
+  mods: null, viewer: null, overlay: null, bytes: null, traceBytes: null,
   page: 1, pages: 1, wired: false, unavailable: false,
 };
 
@@ -1462,6 +1500,344 @@ function planClearPlaced() {
   saveSoon();
   setStatus('ok', `Removed ${removed} placed room(s) from the plan. Hand-drawn boxes were left alone; ` +
     `the rooms and the load are unchanged.`);
+}
+
+/* ---- "Trace real outlines": the plan's OWN wall linework -> a real shape per room -----------------
+ * A placed box is a LOCATOR: it is centred on where the sheet NAMES a room and sized back from the
+ * area the table already carries. The walls are the PDF's vector paths, and js/trace.js (pure, frozen
+ * — see AGENTS.md "trace.js contract") turns those paths into enclosed regions and hands back an
+ * outline ONLY for the rooms it can verify: exactly one room label inside the region AND a traced area
+ * within TRACE_BAND of the stated one. Everything else keeps its box.
+ *
+ * This file does the part that needs a browser: read each page's operator list, transform every point
+ * into the page MediaBox — the SAME PDF user space room.at uses — and assert it did. If the assertion
+ * fails we skip that page and say so rather than store a shape in the wrong space.
+ *
+ * The load is untouched by construction: only room.poly / polyPage / polyArea / polyRatio are written,
+ * and calc.js reads none of them. */
+
+const TRACE_PX_PER_PT = 2;      // raster resolution the module was measured at (see trace.js)
+const TRACE_THICKNESS = 2;      // wall stroke, in raster pixels
+
+/** Every line segment of one page, in PDF user space, tagged with its line width and stroke colour.
+ *  trace.js tracks the page's own save/restore/transform (and form XObjects) from a base matrix, so
+ *  the base is the identity: the page content stream starts in the page's user space, which is the
+ *  space room.at lives in. */
+function lineSegmentsForPage(fnArray, argsArray, OPS, trace) {
+  const out = trace.segmentsFromOperatorList(fnArray, argsArray, OPS, [1, 0, 0, 1, 0, 0]);
+  return out.segments;
+}
+
+/** Do ALL of these segment endpoints lie inside the page box (with a small tolerance)? If not, the
+ *  transform we used is not the one that lands points in the MediaBox and the page must be skipped. */
+function segmentsInBox(segments, box, tol) {
+  const t = Number.isFinite(tol) ? tol : 2;
+  for (const s of segments) {
+    if (!(s.x1 >= box.x0 - t && s.x1 <= box.x1 + t && s.y1 >= box.y0 - t && s.y1 <= box.y1 + t)) return false;
+    if (!(s.x2 >= box.x0 - t && s.x2 <= box.x1 + t && s.y2 >= box.y0 - t && s.y2 <= box.y1 + t)) return false;
+  }
+  return true;
+}
+
+/** The ring the room's own name sits inside (falling back to the biggest ring). A region can return
+ *  more than one ring — the outer boundary plus any holes — and the label is inside the outer one. */
+function ringFor(rings, at, trace) {
+  if (at && Number.isFinite(at.x) && Number.isFinite(at.y)) {
+    for (const r of rings) {
+      let inside = false;
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const xi = r[i].x, yi = r[i].y, xj = r[j].x, yj = r[j].y;
+        if (((yi > at.y) !== (yj > at.y)) && (at.x < ((xj - xi) * (at.y - yi)) / (yj - yi) + xi)) inside = !inside;
+      }
+      if (inside) return r;
+    }
+  }
+  return largestRing(rings, trace);
+}
+
+/** The biggest ring of an outline (the module can return more than one; holes are never used). */
+function largestRing(rings, trace) {
+  let best = rings[0], bestA = -1;
+  for (const r of rings) {
+    const a = trace.polygonAreaPt2(r);
+    if (a > bestA) { bestA = a; best = r; }
+  }
+  return best;
+}
+
+/** A plain-language bucket for a refusal, so the status line can count categories not rooms. */
+function traceReasonBucket(reason) {
+  const r = String(reason || '');
+  if (/far larger than any single room/i.test(r)) return 'had no enclosed space around the name (open plan or a gap in the walls)';
+  if (/no enclosed area/i.test(r)) return 'had their name on a wall line';
+  if (/shared with/i.test(r)) return 'share their area with another room';
+  if (/stated area/i.test(r)) return 'did not match their stated area';
+  return r || 'the tracer could not verify them';
+}
+
+function bump(map, key) {
+  map.set(key, (map.get(key) || 0) + 1);
+}
+
+/** Rooms that can be traced at all: a position on the sheet and an area to check the outline against. */
+function positionedRooms() {
+  return state.rooms.filter((r) => r && r.at && Number.isFinite(r.at.x) && Number.isFinite(r.at.y) && Number(r.area) > 0);
+}
+
+/** The drawing's bytes: the copy held in memory, or the one this browser keeps (drawstore/IndexedDB). */
+async function drawingBytesForTrace() {
+  const mem = plan.traceBytes;
+  if (mem && mem.byteLength) return { bytes: mem };
+  try {
+    const mod = await import('./drawstore.js');
+    const rec = await mod.getDrawing();
+    if (rec && rec.bytes && rec.bytes.byteLength) return rec;
+  } catch (err) { /* no store: fall through to null */ }
+  return null;
+}
+
+/** Let the browser paint the "tracing…" status before the (synchronous, heavy) trace begins. */
+function nextFrame() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(resolve, 0));
+    else setTimeout(resolve, 30);
+  });
+}
+
+/** Disable the plan buttons while a trace runs (it blocks the main thread for a second or two). */
+function planTraceBusy(on) {
+  state.ui.traceBusy = !!on;
+  for (const b of [el.planPlaceAll, el.planPlaceClear, el.planTraceOutlines, el.planTraceClear]) {
+    if (b) b.disabled = !!on;
+  }
+}
+
+/** Read the plan's own linework and give every room it can verify a real outline. */
+async function planTraceOutlines() {
+  if (state.ui.traceBusy) return;
+  if (!state.rooms.length) {
+    setStatus('warn', 'There are no rooms to trace yet. Load a drawing or add rooms first.');
+    return;
+  }
+  if (!plan.viewer || plan.unavailable) {
+    setStatus('warn', 'Open a drawing in the plan view first, then trace its outlines.');
+    return;
+  }
+
+  // A project saved before the parser recorded WHERE the sheet names each room has no `at`; recover
+  // the positions exactly like Place all rooms does, so tracing works on such a project too.
+  let withPos = positionedRooms();
+  if (!withPos.length) {
+    const n = await rehydratePositions();
+    if (n) saveSoon();
+    withPos = positionedRooms();
+  }
+  if (!withPos.length) {
+    setStatus('warn', 'No room carries both a position on the sheet and an area, so there is nothing to trace. ' +
+      'Upload the drawing again if the rooms have no position.');
+    return;
+  }
+  const noAt = state.rooms.filter((r) => !r.at || !Number.isFinite(r.at.x) || !Number.isFinite(r.at.y)).length;
+
+  const denom = planScaleDenom();
+  let trace;
+  try { trace = await loadTraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err)); return; }
+
+  planTraceBusy(true);
+  setStatus(null, "Tracing the plan's linework… this can take a second or two on a big sheet.");
+  await nextFrame();
+
+  try {
+    const rec = await drawingBytesForTrace();
+    if (!rec) {
+      setStatus('warn', 'The drawing is not kept in this browser any more, so its linework cannot be read. ' +
+        'Upload it again and try.');
+      return;
+    }
+
+    const doc = await pdfjs.getDocument({ data: rec.bytes.slice(0), verbosity: 0 }).promise;
+    try {
+      // Every room we are about to re-check loses any outline from an EARLIER trace: a shape that this
+      // run refuses must not survive as a stale outline from the last one. Boxes are never touched.
+      for (const r of withPos) { delete r.poly; delete r.polyPage; delete r.polyArea; delete r.polyRatio; }
+
+      const byPage = new Map();
+      for (const r of withPos) {
+        const p = Number(r.page) || 1;
+        if (!byPage.has(p)) byPage.set(p, []);
+        byPage.get(p).push(r);
+      }
+
+      const winKeys = new Set();
+      const allResults = [];
+      const reasonCount = new Map();
+      const ratios = [];
+      let accepted = 0, refused = 0, emptyPages = 0, badPages = 0;
+
+      for (const p of [...byPage.keys()].sort((a, b) => a - b)) {
+        const list = byPage.get(p);
+        if (p < 1 || p > doc.numPages) {
+          refused += list.length;
+          list.forEach(() => bump(reasonCount, 'are on a page the drawing does not have'));
+          continue;
+        }
+        const pg = await doc.getPage(p);
+        const v = pg.view;
+        const box = { x0: v[0], y0: v[1], x1: v[2], y1: v[3] };
+        const opList = await pg.getOperatorList();
+        const segs = lineSegmentsForPage(opList.fnArray, opList.argsArray, pdfjs.OPS, trace);
+        if (!segs.length) {
+          emptyPages += 1;
+          refused += list.length;
+          list.forEach(() => bump(reasonCount, 'are on a page with no wall lines'));
+          continue;
+        }
+        if (!segmentsInBox(segs, box, 2)) {
+          badPages += 1;
+          refused += list.length;
+          list.forEach(() => bump(reasonCount, 'could not be placed in the sheet’s own space'));
+          console.warn(`[trace] skipped page ${p}: the linework falls outside the page MediaBox — ` +
+            `the app and the tracer disagree on the page space, so no shape is stored for it.`);
+          continue;
+        }
+
+        const roomsIn = list.map((r) => ({ id: r.id, at: { x: r.at.x, y: r.at.y }, area: Number(r.area) }));
+        // Which lines are the plan's WALLS is decided by result, not by how common a class is: on a real
+        // MEP sheet the symbol hatch outnumbered the walls, so "most common class" traced symbols and
+        // merged rooms. pickWallLines tries the few most common classes plus every line and keeps
+        // whichever verifies the most rooms; the winner's class is named in the status line.
+        const out = trace.pickWallLines(segs, {
+          box, rooms: roomsIn, denom, pxPerPt: TRACE_PX_PER_PT, thickness: TRACE_THICKNESS, topN: 3,
+        });
+        winKeys.add(out.key);
+
+        for (const res of out.results) {
+          const room = roomById(res.id);
+          if (!room) continue;
+          allResults.push(res);
+          if (res.ok && Array.isArray(res.rings) && res.rings.length) {
+            const ring = ringFor(res.rings, room.at, trace);
+            room.poly = ring.map((pt) => ({ x: round2(pt.x), y: round2(pt.y) }));
+            room.polyPage = p;
+            // the module's own verdict numbers: the traced area the accept rule was judged on
+            room.polyArea = round2(Number(res.tracedM2) || 0);
+            room.polyRatio = Number((Number(res.ratio) || 0).toFixed(3));
+            ratios.push(room.polyRatio);
+            accepted += 1;
+          } else {
+            refused += 1;
+            bump(reasonCount, traceReasonBucket(res.reason));
+          }
+        }
+      }
+
+      planTraceBusy(false);
+      renderAll();
+      saveSoon();
+
+      // The implied scale only means something for a region that held exactly ONE label: a region that
+      // merged several rooms, or one far larger than any single room, says nothing about the scale.
+      // Filtering those out first is what makes the hint point at the real scale instead of at the junk.
+      const scaleSet = allResults.filter((r) => r
+        && !/shared with|no enclosed area|far larger than any single room/i.test(String(r.reason || '')));
+      const implied = trace.impliedDenom(scaleSet.length >= 5 ? scaleSet : allResults, denom);
+      // a small debug handle (same spirit as the viewer's exposed canvas): what the last trace found
+      plan.lastTrace = {
+        accepted, attempted: withPos.length, denom, implied, keys: [...winKeys],
+        reasons: [...reasonCount.entries()],
+      };
+      const parts = [...reasonCount.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k}`);
+      const few = accepted < Math.max(1, Math.ceil(withPos.length * 0.5));
+      const scaleOff = !!(implied && implied.denom && implied.n >= 5
+        && Math.abs(implied.denom - denom) / denom > 0.15);
+      // Offer the implied scale in the list, so fixing it is one click. Nothing is stored until chosen.
+      const offered = scaleOff ? planOfferScale(implied.denom) : false;
+
+      let msg;
+      if (scaleOff && few) {
+        // The honest answer when almost nothing agrees: say what scale the outlines imply and let the
+        // user set it. Never quietly retry at another scale — a wrong scale silently changes every area.
+        msg = `Only ${accepted} of ${withPos.length} room(s) traced: this drawing's outlines point to about ` +
+          `1:${implied.denom} (the middle of ${implied.n} room${implied.n === 1 ? '' : 's'}), but the drawing ` +
+          `scale is set to 1:${denom}. Set the drawing scale to 1:${implied.denom} and trace again. ` +
+          (offered ? `(1:${implied.denom} is now in the drawing-scale list.) ` : '');
+      } else {
+        msg = `Real outlines for ${accepted} of ${withPos.length} room(s) (traced from the plan's own linework, ` +
+          `using ${passLabel(winKeys)}). `;
+      }
+      if (!scaleOff && few && implied && implied.n >= 5) {
+        // Almost nothing was accepted and the rooms that did trace do not agree on one scale either.
+        // Say so plainly and point at the scale first — never quietly retry at another one.
+        msg += `Almost nothing was accepted, so check the drawing scale first: the rooms that did trace ` +
+          `imply a scale between about 1:${implied.p25} and 1:${implied.p75}, against the 1:${denom} in use. `;
+      }
+      if (refused) {
+        msg += `${refused} kept ${refused === 1 ? 'its box' : 'their box'}${parts.length ? ': ' + parts.join(', ') : ''}. `;
+      }
+      if (noAt) msg += `${noAt} room(s) the sheet does not name ${noAt === 1 ? 'was' : 'were'} left alone. `;
+      if (emptyPages) msg += `The drawing has no wall lines on ${emptyPages} page(s). `;
+      if (badPages) msg += `${badPages} page(s) were skipped: their lines did not sit inside the sheet. `;
+      if (accepted) {
+        const r = ratios.slice().sort((a, b) => a - b);
+        msg += `Traced area against stated: ${fmt(r[0], 2)}× to ${fmt(r[r.length - 1], 2)}× ` +
+          `(middle ${fmt(r[Math.floor(r.length / 2)], 2)}×). The load is unchanged.`;
+      } else {
+        msg += 'No outline was stored, so nothing on the plan changed and the load is unchanged.';
+      }
+      setStatus(accepted ? 'ok' : 'warn', msg.replace(/\s+$/, ''));
+    } finally {
+      try { await doc.destroy(); } catch (e) { /* ignore */ }
+    }
+  } catch (err) {
+    console.warn('[trace] tracing failed:', (err && err.message) || err);
+    setStatus('err', `Tracing the plan's linework failed (${(err && err.message) || err}). ` +
+      `The rooms and the load are unchanged.`);
+  } finally {
+    planTraceBusy(false);
+  }
+}
+
+/** Offer the scale the outlines imply, as "1:225 (from the drawing)", at the end of the drawing-scale
+ *  list — so the fix is one click. It is only OFFERED: nothing is stored until the user picks it, and
+ *  picking it re-runs the trace (see planWire). Returns true when the option is in the list. */
+function planOfferScale(implied) {
+  const sel = el.planScale;
+  if (!sel || !(implied > 0)) return false;
+  const v = String(Math.round(implied));
+  let opt = [...sel.options].find((o) => o.value === v);
+  if (!opt) { opt = document.createElement('option'); opt.value = v; sel.appendChild(opt); }
+  opt.textContent = `1:${v} (from the drawing)`;
+  opt.dataset.fromDrawing = '1';
+  return true;
+}
+
+/** Which line class(es) the trace used, in words (one class, or a different winner per page). */
+function passLabel(keys) {
+  const list = [...(keys || [])];
+  const name = (k) => (k === 'all lines' ? 'all the linework' : `the wall-line class "${k}"`);
+  if (!list.length) return 'all the linework';
+  if (list.length === 1) return name(list[0]);
+  return list.map(name).join(' and ');
+}
+
+/** Remove ONLY the traced outlines. The rooms, their boxes, areas and the load are all untouched. */
+function planTraceClear() {
+  let removed = 0;
+  for (const room of state.rooms) {
+    if (!room.poly) continue;
+    delete room.poly;
+    delete room.polyPage;
+    delete room.polyArea;
+    delete room.polyRatio;
+    removed += 1;
+  }
+  if (!removed) {
+    setStatus('warn', 'There are no traced outlines to remove.');
+    return;
+  }
+  renderAll();
+  saveSoon();
+  setStatus('ok', `Removed ${removed} traced outline(s). Their boxes, if any, and the load are unchanged.`);
 }
 
 /** A level for a room drawn on page N: the levels the parser found, in the order it found them,
@@ -1703,7 +2079,14 @@ function planWire() {
     el.planScale.innerHTML = DRAWING_SCALES
       .map((s) => `<option value="${s.denom}">${s.label}</option>`).join('');
     el.planScale.value = String(planScaleDenom());
-    el.planScale.addEventListener('change', () => planApplyScale(el.planScale.value));
+    el.planScale.addEventListener('change', () => {
+      const opt = el.planScale.options[el.planScale.selectedIndex];
+      const fromDrawing = !!(opt && opt.dataset && opt.dataset.fromDrawing);
+      planApplyScale(el.planScale.value);
+      // Choosing the scale the outlines imply re-runs the trace straight away — that is the whole point
+      // of offering it. Any other scale change keeps its old behaviour exactly.
+      if (fromDrawing) planTraceOutlines();
+    });
   }
   if (el.planPrev) el.planPrev.addEventListener('click', () => planGoTo(plan.page - 1));
   if (el.planNext) el.planNext.addEventListener('click', () => planGoTo(plan.page + 1));
@@ -1714,6 +2097,8 @@ function planWire() {
   if (el.planModeSelect) el.planModeSelect.addEventListener('change', () => planSetMode('select'));
   if (el.planPlaceAll) el.planPlaceAll.addEventListener('click', planPlaceAllRooms);
   if (el.planPlaceClear) el.planPlaceClear.addEventListener('click', planClearPlaced);
+  if (el.planTraceOutlines) el.planTraceOutlines.addEventListener('click', planTraceOutlines);
+  if (el.planTraceClear) el.planTraceClear.addEventListener('click', planTraceClear);
 }
 
 /** Open a drawing in the plan panel. Safe to call for every upload: the panel is an enhancement. */
@@ -1728,6 +2113,11 @@ async function openPlan(bytes, opts) {
   // a second copy for the browser store: pdf.js will detach `own` during load, and the saved drawing
   // has to outlive that (this is what makes the drawing still be here after a refresh)
   const keep = o.skipStore ? null : own.slice(0);
+  // The outline tracer needs the bytes too. Keep this copy in memory so tracing does not depend on the
+  // IndexedDB write having finished (a user can click Trace the moment the rooms appear); putDrawing
+  // stores it with `owned: true` and a plain structured clone, which copies rather than detaches, so
+  // this same buffer stays alive. On a restore there is no `keep` and the tracer reads the stored copy.
+  plan.traceBytes = keep;            // null on a restore: the store certainly has the drawing there
   const mods = await ensurePlanModules();
   if (!mods) return;
   plan.bytes = own;
@@ -2114,4 +2504,4 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced };
+window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, plan };

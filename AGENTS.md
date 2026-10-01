@@ -143,20 +143,40 @@ pdf.js) and works entirely in **PDF user space (y up, points)** — the same spa
 segmentsFromOperatorList(fnArray, argsArray, OPS, ctm) -> { segments, styled }
    // segments: {x1,y1,x2,y2,width,color} — width/color are the graphics state at constructPath time,
    // which is how the plan's own line class is told from hatching, symbols and the title block.
-dominantStyle(segments) -> "width|r,g,b"      // the most common line class in a sheet
+   // The running matrix is tracked internally (save/restore/transform/paintFormXObject*): a CAD sheet
+   // places its geometry with transforms, so one fixed matrix would put most walls in the wrong place.
+dominantStyle(segments) -> "width|r,g,b"      // the most common line class (NOT how to pick the plan)
+styleCounts(segments) -> [[key, count], ...]  // line classes, most common first
 filterByStyle(segments, key) -> segments
 rasterizeWalls(segments, box, pxPerPt, thickness) -> { w, h, grid }   // grid 1 = wall
 pointToCell(x, y, box, pxPerPt) -> { cx, cy }        // box = {x0,y0,x1,y1} = the page MediaBox
-regionAt(grid, w, h, cx, cy) -> { cells, areaPx, bbox, key }         // null if on a wall / outside
+regionAt(grid, w, h, cx, cy, { seen, maxCells }) -> { cells, areaPx, bbox, over }
 outlineFromRegion(region, w, box, pxPerPt) -> [ring]                 // rings of {x,y} in PDF space
 polygonAreaPt2 / outlineAreaPt2 / pt2ToM2(areaPt2, denom) / metresPerPt(denom)
 judgeTrace(tracedM2, statedArea, labelsInRegion, band) -> { ok, ratio, reason }
-traceRooms({segments, box, rooms:{id,at,area}, denom, pxPerPt, thickness, band}) -> { results, stats }
+traceRooms({segments, box, rooms:{id,at,area}, denom, pxPerPt, thickness, band, maxCells}) -> { results, stats }
+impliedDenom(results, denom) -> { denom, n, p25, p75 }
+pickWallLines(segments, {box, rooms, denom, pxPerPt, thickness, topN}) -> { key, stats, results, tried }
 ```
 
+**Which lines are the plan must be decided BY RESULT, never by how common a class is.** On the real
+sheet the MEP symbol hatch outnumbered the walls on two of three pages, so the most common class traced
+symbols and merged 44–52 rooms into shared blobs. `pickWallLines` tries the few most common classes and
+all lines as a last resort, and keeps whichever accepts the most rooms; the caller reports the winner.
+
+**A region far larger than any room in the table is not a room** (open plan or a leak through a door).
+The flood fill is capped at a few times the largest stated area — which also stops a hopeless line class
+from wallowing across a whole sheet for ten seconds. Such a region is refused with a clear reason.
+
+**The drawing scale must be reported honestly.** `impliedDenom` divides the area the plan states by the
+area traced for every reached room: a correct trace makes them agree, so each room implies a
+denominator. If that cluster is far from the scale in use, the app must say the scale looks wrong and
+what it looks like it should be — never silently retry with a guessed scale.
+
 **A traced outline is ACCEPTED only when both hold** (this is the whole point of the module):
-1. the enclosed region contains exactly ONE room label — the region's `key` is canonical (its smallest
-   cell index), never `cells[0]`, which is only the seed and differs per label; and
+1. the enclosed region contains exactly ONE room label — areas are flooded once each, sharing a single
+   `seen` buffer, and every cell remembers which area it belongs to (`regionOf`), so a label's area is
+   decided exactly and never by which seed happened to flood first; and
 2. its area at the drawing scale is within `TRACE_BAND` (`lo 0.8`, `hi 1.35`) of the area the plan
    states. The band is asymmetric because a region bounded by wall CENTRELINES is systematically
    larger (measured ≈ +9% with 220 mm walls).

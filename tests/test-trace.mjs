@@ -4,7 +4,7 @@ import {
   segmentsFromOperatorList, dominantStyle, filterByStyle,
   rasterizeWalls, pointToCell, cellToPoint, regionAt, regionHasCell,
   outlineFromRegion, polygonAreaPt2, outlineAreaPt2, pt2ToM2, metresPerPt,
-  judgeTrace, traceRooms, TRACE_BAND,
+  judgeTrace, traceRooms, impliedDenom, pickWallLines, styleCounts, TRACE_BAND,
 } from '../js/trace.js';
 
 let pass = 0;
@@ -183,6 +183,47 @@ const OPS = {
   const accepted = out.results.filter((r) => r.ok);
   ok('two names inside one enclosed area are both refused', accepted.length === 0,
     out.results.map((r) => `${r.id}: ${r.reason}`).join(' | '));
+}
+
+// ------------------------------------------------------------------ choosing the plan's lines, and the scale
+{
+  const side = sideFor(25);
+  const rooms = [{ id: 'a', area: 25, at: { x: 10 + side / 2, y: 20 + side / 2 } }];
+  // a NOISY sheet: the wall class is outnumbered by symbol-like short segments scattered about
+  const walls = roomWalls(10, 20, side);
+  const noise = [];
+  for (let i = 0; i < 400; i += 1) {
+    noise.push({ x1: 300 + (i % 20) * 3, y1: 300 + Math.floor(i / 20) * 3, x2: 302.5 + (i % 20) * 3, y2: 300 + Math.floor(i / 20) * 3, width: 2.5, color: [0, 0, 0] });
+  }
+  const picked = traceRooms({ segments: walls.concat(noise), box: box(600, 600), rooms, denom: DENOM, pxPerPt: 2, thickness: 2 });
+  ok('all lines together still trace the one enclosed room', picked.stats.accepted === 1, JSON.stringify(picked.stats));
+  const choose = pickWallLines(walls.concat(noise), { box: box(600, 600), rooms, denom: DENOM, pxPerPt: 2, thickness: 2 });
+  ok('the wall lines are chosen by RESULT, not by how many segments they have',
+    choose.key === '1|136,136,136' && choose.stats.accepted === 1,
+    `chose "${choose.key}" (${choose.tried.map((t) => `${t.key}=${t.accepted}`).join(', ')})`);
+  ok('it reports what it tried', choose.tried.length >= 2 && choose.tried.some((t) => t.key === 'all lines'));
+}
+{
+  const scale = impliedDenom([
+    { tracedM2: 39.0625, statedM2: 25 },     // a room measured 1.25x too big at the scale in use
+    { tracedM2: 39.0625, statedM2: 25 },
+    { tracedM2: 0, statedM2: 25 },           // never reached: ignored
+  ], 250);
+  ok('the outlines tell you what scale they imply', scale.denom === 200 && scale.n === 2,
+    `implied 1:${scale.denom} from ${scale.n} room(s)`);
+  ok('no reached rooms means no scale claim', impliedDenom([{ tracedM2: 0, statedM2: 10 }], 100).denom === null);
+}
+{
+  // an open area far bigger than any room must be refused, and fast
+  const huge = sideFor(10000);                 // 100 m x 100 m of enclosed space
+  const rooms = [{ id: 'a', area: 25, at: { x: 10 + huge / 2, y: 10 + huge / 2 } }];
+  const t0 = Date.now();
+  const out = traceRooms({ segments: roomWalls(10, 10, huge), box: box(huge + 40, huge + 40), rooms, denom: DENOM, pxPerPt: 2, thickness: 2 });
+  const ms = Date.now() - t0;
+  ok('space far larger than any room is refused with a clear reason',
+    out.stats.accepted === 0 && /far larger/.test(out.results[0].reason),
+    `${out.results[0].reason} (${ms} ms)`);
+  ok('and the flood fill does not run away across it', ms < 4000, `${ms} ms`);
 }
 
 console.log(`\n${pass}/${pass + fail} trace checks passed`);
