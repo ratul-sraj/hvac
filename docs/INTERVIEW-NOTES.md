@@ -228,3 +228,30 @@ Use `docs/DEMO-SCRIPT.md`. The short version: open `http://localhost:3000/` → 
 drawing** → sort by **TR** → open the **ATRIUM** breakdown → **Download CSV** → **Print / Save PDF
 report**. Say the numbers as facts: 159 rooms, 120 conditioned, 7,006.8 m², 363.86 TR, 207 ft²/TR,
 three floors. Then say the limits before they ask.
+## 8. The outline tracer (a strong "hard problem" story)
+
+Interviewers rarely care that a tool draws boxes. They care that you **refused to be wrong**.
+
+The problem: a PDF's text says where a room is *named* and how big it is, but the walls are a separate
+vector layer. So every room was drawn as a rectangle, which is a lie about an L-shaped or stepped room.
+
+What was done: `js/trace.js` reads the page's own path operators, tracks the **PDF transform stack**
+(save/restore/transform — CAD sheets place geometry through transforms, so a single matrix puts most
+walls in the wrong place), rasterises the wall class onto a grid, floods each enclosed area **once**
+(not once per label), and stitches a polygon back out of the region.
+
+The two engineering decisions worth telling them:
+
+1. **The wall layer is chosen by result, never by how common it is.** On one real A1 MEP sheet the
+   machinery hatch had *more* line segments than the architectural walls on two of three pages — the
+   naive "most common class" traced symbols and merged 50 rooms into blobs.
+2. **A shape is kept only where it can be checked.** An outline is refused unless the room name has an
+   enclosed area of its own *and* the traced area agrees with the area the plan itself states. On the
+   real sheet: 2 of 149 rooms traced at the wrong drawing scale, **78 of 149** once the scale was right
+   (the outlines themselves revealed it — 1:225), with the median traced area within **1%** of the
+   stated area. The other 71 kept their boxes, and every row is marked which is which.
+3. **The load never moves.** Tracing is display and verification only — verified by test that the total
+   is byte-identical before, after, and after a reload.
+
+The line to say out loud: *"a wrong area is the one thing an HVAC load must never show, so the tracer
+is allowed to fail — it just isn't allowed to guess."*
