@@ -260,6 +260,11 @@ if (!sampleMissing) {
   const planZoom = Number(await page.$eval("#planZoomPct", (e) => e.textContent)) / 100;
   ok("the drawing is fitted to the panel width", planZoom > 0.1 && planZoom < 3, `scale ${planZoom}`);
 
+  const readTotalTr = () => page.$eval("#summaryCards", (e) => {
+    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+    return m ? parseFloat(m[1]) : NaN;
+  });
+  const trBeforeDraw = await readTotalTr();
   const rowsBeforePlan = await page.$$eval("#roomsBody tr", (r) => r.length);
   const planBox = await page.$eval("#planView", (e) => {
     const r = e.getBoundingClientRect();
@@ -321,12 +326,9 @@ if (!sampleMissing) {
   await page.click("#planModeDraw");
 
   // the drawn room is part of the load, not just the table
-  const trWithPlan = await page.$eval("#summaryCards", (e) => {
-    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
-    return m ? parseFloat(m[1]) : NaN;
-  });
-  ok("the drawn room is included in the total cooling load", trWithPlan > tr,
-      `${tr} TR -> ${trWithPlan} TR`);
+  const trWithPlan = await readTotalTr();
+  ok("the drawn room is included in the total cooling load", trWithPlan > trBeforeDraw,
+      `${trBeforeDraw} TR just before the drag -> ${trWithPlan} TR after it`);
   await page.screenshot({ path: `${OUT}/live-plan.png` });
 
   // 14. drawing must keep working when the sheet is zoomed past fit-width and has to be scrolled.
@@ -428,10 +430,116 @@ if (!sampleMissing) {
       panelNow.bottom > 0 && panelNow.top < panelNow.vh,
       `panel top ${panelNow.top}, bottom ${panelNow.bottom}, viewport ${panelNow.vh}`);
 
+
+  // the summary must agree with the rows it is derived from: conditioned area == the areas of the
+  // rooms that are ticked as included. A silent disagreement here is how a load sheet stops being
+  // trustworthy without anyone noticing.
+  const agree = await page.evaluate(() => {
+    let sum = 0;
+    for (const tr of document.querySelectorAll("#roomsBody tr")) {
+      const cb = tr.querySelector('input[type="checkbox"]');
+      const a = tr.querySelector('input[data-field="area"]');
+      if (cb && cb.checked && a) sum += parseFloat(a.value) || 0;
+    }
+    const m = document.getElementById("summaryCards").innerText.replace(/\s+/g, " ")
+      .match(/Conditioned area ([0-9,\.]+) m/);
+    const shown = m ? parseFloat(m[1].replace(/,/g, "")) : NaN;
+    return { sum: +sum.toFixed(1), shown };
+  });
+  ok("the conditioned area on the summary equals the sum of the included rooms",
+      Math.abs(agree.sum - agree.shown) <= 0.2, `${agree.sum} m² vs ${agree.shown} m²`);
+
   // put the view back so the screenshot shows the whole sheet
   await page.click("#planFit");
   await new Promise((r) => setTimeout(r, 800));
   await page.screenshot({ path: `${OUT}/live-plan-zoomed.png` });
+
+
+  // 15. a refresh must not lose the drawing. The rooms were always saved; the PDF was not, so the
+  //     user was left with a table and no sheet. The sheet is now kept in this browser's IndexedDB.
+  const preReload = await page.evaluate(() => ({
+    rows: document.querySelectorAll("#roomsBody tr").length,
+    drawn: [...document.querySelectorAll('#roomsBody tr input[data-field="name"]')]
+      .filter((i) => /Drawn room/.test(i.value)).length,
+  }));
+  await page.click("#planNext");                       // give the reload a page to remember
+  await new Promise((r) => setTimeout(r, 1000));
+  const pageBefore = await page.$eval("#planPage", (e) => e.textContent);
+  await page.reload({ waitUntil: "load", timeout: 90000 });
+  const backAgain = await page.waitForFunction(() => {
+    const c = document.getElementById("planCanvas");
+    return c && c.width > 400;
+  }, { timeout: 60000, polling: 400 }).then(() => true).catch(() => false);
+  await new Promise((r) => setTimeout(r, 800));
+  const postReload = await page.evaluate(() => ({
+    rows: document.querySelectorAll("#roomsBody tr").length,
+    drawn: [...document.querySelectorAll('#roomsBody tr input[data-field="name"]')]
+      .filter((i) => /Drawn room/.test(i.value)).length,
+    page: document.getElementById("planPage").textContent,
+    canvas: !!document.getElementById("planCanvas"),
+  }));
+  ok("the drawing is still shown after a refresh", backAgain && postReload.canvas, JSON.stringify(postReload));
+  ok("the room table survives the refresh unchanged",
+      postReload.rows === preReload.rows && postReload.drawn === preReload.drawn,
+      `${preReload.rows}/${preReload.drawn} before -> ${postReload.rows}/${postReload.drawn} after`);
+  ok("the sheet comes back on the page the user was on", postReload.page === pageBefore,
+      `page ${pageBefore} before -> ${postReload.page} after`);
+  await page.click("#planPrev");
+  await new Promise((r) => setTimeout(r, 900));
+  const boxesBack = await page.$$eval(".plan-room", (n) => n.length);
+  ok("the drawn rooms are still drawn on their page after a refresh", boxesBack >= 1, `${boxesBack} box(es)`);
+
+  // 16. renaming a room must follow through to every place the room is shown: the table row, its box
+  //     label on the drawing, and its description under the table. The drawing was the one that stayed
+  //     stale: the in-table edit path deliberately does not rebuild the table (that would take the
+  //     caret out of the cell being typed in) and forgot to redraw the plan overlay.
+  const drawnInput = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('#roomsBody tr input[data-field="name"]')].find((i) => /Drawn room/.test(i.value)) || null);
+  const drawnEl = drawnInput.asElement();
+  const renamedTo = "Conference A";
+  const renameResult = { before: null, labelsBefore: 0, after: null };
+  if (drawnEl) {
+    // open that room's breakdown FIRST: clicking a computed cell, not an input (row clicks on inputs
+    // are ignored on purpose, so the caret can be placed while editing)
+    await page.evaluate(() => {
+      const input = [...document.querySelectorAll('#roomsBody tr input[data-field="name"]')]
+        .find((i) => /Drawn room/.test(i.value));
+      const cell = input && input.closest('tr').querySelector('.v-total');
+      if (cell) cell.click();
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    renameResult.detailOpen = await page.evaluate(() =>
+      !document.getElementById("detailPanel").classList.contains("hidden"));
+    renameResult.before = await page.evaluate((e) => e.value, drawnEl);
+    renameResult.labelsBefore = await page.$$eval(".plan-room-label", (n) => n.length);
+    await drawnEl.focus();
+    await page.keyboard.down("Control");
+    await page.keyboard.press("KeyA");
+    await page.keyboard.up("Control");
+    await page.keyboard.type(renamedTo);
+    await new Promise((r) => setTimeout(r, 700));
+    renameResult.after = await page.evaluate(() => ({
+      labels: [...document.querySelectorAll(".plan-room-label")].map((e) => e.textContent),
+      drawnLabels: [...document.querySelectorAll(".plan-room-label")].filter((e) => /Drawn room/.test(e.textContent)).length,
+      detail: document.getElementById("detailPanel").classList.contains("hidden") ? null
+        : document.getElementById("detailPanel").innerText.replace(/\s+/g, " ").slice(0, 120),
+    }));
+    // put the original name back: later steps and the screenshots expect it
+    await drawnEl.focus();
+    await page.keyboard.down("Control");
+    await page.keyboard.press("KeyA");
+    await page.keyboard.up("Control");
+    await page.keyboard.type(renameResult.before || "Drawn room 1");
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  ok("renaming a room in the table updates its box label on the drawing",
+      !!renameResult.after && renameResult.after.labels.includes(renamedTo) &&
+        renameResult.after.drawnLabels === renameResult.labelsBefore - 1,
+      `labels now ${JSON.stringify(renameResult.after && renameResult.after.labels)} (was ${renameResult.labelsBefore} boxes)`);
+  ok("the description under the table follows the rename as it is typed",
+      !!renameResult.detailOpen && !!renameResult.after && !!renameResult.after.detail &&
+        renameResult.after.detail.includes(renamedTo),
+      JSON.stringify(renameResult.after && renameResult.after.detail));
 
 } // end of the checks that need the sample drawing
 

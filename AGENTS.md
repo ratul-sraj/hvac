@@ -23,6 +23,15 @@ js/planview.js        PLANNER — plan geometry (pure: rects, drawing scale, are
                       overlay converts per render through the pdf.js viewport (see planview.js).
 js/viewer.js          VIEWER agent — renders a PDF page to a canvas, page nav, zoom/fit
 js/overlay.js         OVERLAY agent — SVG layer over the canvas: draws rooms, drag to create
+                      Room-box class names are part of its contract (see the comment at the top of
+                      the file); it ships no stylesheet, so css/style.css must define them.
+                      Size the layer from the CANVAS box, never from the container: the panel is a
+                      scroll box, and a window-sized layer cannot reach the rest of the sheet.
+js/drawstore.js       PLANNER — the uploaded drawing, kept in this browser's IndexedDB so a refresh
+                      does not lose it. putDrawing/getDrawing/clearDrawing never throw: a browser
+                      without IndexedDB, or a full quota, must cost the user only the drawing.
+                      The buffer handed to pdf.js is DETACHED by it — pass putDrawing a private
+                      copy (owned: true), never the buffer the viewer is loading.
 js/pdfparse.js        PDF agent — PDF -> rooms[] (also runs server-side in Node)
 js/app.js             UI agent  — calculator behaviour; uses the Express API when present
 js/report.js          UI agent  — printable report + CSV builders

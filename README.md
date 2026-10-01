@@ -7,7 +7,8 @@ the cooling load (TR, W, L/s).
 Once a drawing is loaded, a **plan view** also renders the PDF page and lets you drag rooms straight
 onto it — each rectangle becomes a room whose area is measured at the drawing scale you set (1:20 to
 1:500), added to the load immediately. It reads nothing extra and uploads nothing: the drawing is
-rendered in the browser, like everything else.
+rendered in the browser, like everything else, and kept in the browser so the sheet is still there
+after a refresh.
 
 The app works **two ways**, and both keep working:
 

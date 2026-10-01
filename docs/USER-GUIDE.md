@@ -229,6 +229,12 @@ A drawn room keeps its **rectangle and its scale**, and both are stored in the p
 browser's local storage and in the **Save project (.json)** file — so your drawn rooms come back after
 a reload or on another computer. The drawing scale you picked is saved with the project too.
 
+The drawing itself comes back too. It is kept in this browser (never uploaded), so a reload
+hands you the sheet again — on the page you were last looking at — with the rooms you drew still
+on it. One exception, and the app tells you when it applies: a drawing larger than 40 MB, or a
+browser with no storage room left, cannot be kept, and then only the sheet is gone; the rooms,
+the table, the load and your project settings are all still saved.
+
 ---
 
 ## 4. Every editable column

@@ -476,6 +476,11 @@ function renderSortHeaders() {
 }
 
 /* update only the computed cells + placeholders (keeps focus while typing) */
+/** Refresh everything an in-table edit can change EXCEPT the table itself — rebuilding that would
+ *  take the caret out of the cell the user is typing in, which is why this exists next to renderAll().
+ *  That includes the parts of the screen that show the same room: the summary cards, the open room's
+ *  description under the table, and the room's box label on the drawing. The drawing one was missing,
+ *  so renaming a room left its box on the plan still labelled with the old name. */
 function updateLive() {
   const calc = currentCalc();
   el.roomsBody.querySelectorAll('tr').forEach((tr) => {
@@ -506,6 +511,9 @@ function updateLive() {
   });
   renderSummary(calc);
   if (state.ui.openId) renderDetail(calc);
+  // the box label on the plan is drawn from room.name, so it has to be redrawn too — otherwise the
+  // drawing keeps showing the name the room had before the edit
+  if (plan.overlay) plan.overlay.render();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1120,7 +1128,7 @@ async function handleFiles(fileList) {
     setProgress(`File ${i + 1} of ${pdfs.length}: ${f.name} — ${useOcr ? 'preparing OCR' : 'opening'}`, 3);
     try {
       const buf = await f.arrayBuffer();
-      if (i === 0) openPlan(buf);   // show the drawing while it is being read
+      if (i === 0) openPlan(buf, { name: f.name });   // show the drawing while it is being read
       const out = useOcr
         ? await parseOneWithOcr(buf, f.name, i, pdfs.length)
         : await parseOne(buf, f.name, i, pdfs.length);
@@ -1189,7 +1197,7 @@ async function loadSample() {
     return;
   }
   try {
-    openPlan(buf);   // show the sample drawing straight away
+    openPlan(buf, { name: used });   // show the sample drawing straight away
     setProgress(`Reading ${used} ...`, 15);
     const out = await parseOne(buf, used, 0, 1);
     const r = addRooms(out.rooms);
@@ -1327,12 +1335,66 @@ function planApplyScale(denom) {
     : `Drawing scale set to 1:${n}. Rooms you draw are measured at this scale.`);
 }
 
+/* ------------------------------------------------------------------ */
+/* the drawing, remembered in this browser                             */
+/* ------------------------------------------------------------------ */
+
+/** Keep the drawing in this browser so a refresh does not lose it. Never fatal: a browser without
+ *  IndexedDB, or a full quota, costs the user nothing beyond the drawing not coming back — the rooms,
+ *  the table and the load are all saved separately and are unaffected. */
+async function storeDrawing(bytes, name) {
+  try {
+    const mod = await import('./drawstore.js');
+    // owned: true — this buffer is our own private copy, so it need not be copied again
+    const res = await mod.putDrawing({ name: name || 'drawing.pdf', bytes, page: plan.page, owned: true });
+    if (res.ok) {
+      plan.stored = true;
+    } else if (res.reason === 'too-big') {
+      setStatus('warn', `This drawing is ${Math.round((res.size || 0) / 1048576)} MB — too large to keep in this ` +
+        `browser, so it will be gone after a refresh. Your rooms, the table and the load are still saved.`);
+    } else if (res.reason === 'quota') {
+      setStatus('warn', 'This browser has no room to keep the drawing, so it will be gone after a refresh. ' +
+        'Your rooms, the table and the load are still saved.');
+    }
+  } catch (err) {
+    console.warn('[plan] could not keep the drawing for next time:', (err && err.message) || err);
+  }
+}
+
+/** Put the drawing back on screen after a reload: the rooms come from the saved project, the sheet
+ *  itself from this browser's storage. */
+async function restoreDrawing() {
+  if (!el.planCard) return;
+  try {
+    const mod = await import('./drawstore.js');
+    const rec = await mod.getDrawing();
+    if (!rec) return;
+    // magic bytes: never hand pdf.js something that is not a PDF, and never keep a bad one (a stored
+    // HTML error page once reached this path and surfaced as "Invalid PDF structure")
+    const head = new Uint8Array(rec.bytes.slice(0, 5));
+    const isPdf = head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46 && head[4] === 0x2d;
+    if (!isPdf) { await mod.clearDrawing(); return; }
+    await openPlan(rec.bytes, {
+      name: rec.name,
+      page: rec.page || state.project.planPage,
+      restoring: true,
+      skipStore: true,
+    });
+    plan.stored = true;
+  } catch (err) {
+    console.warn('[plan] could not restore the drawing:', (err && err.message) || err);
+  }
+}
+
 async function planGoTo(n) {
   if (!plan.viewer || plan.unavailable) return;
   const target = Math.max(1, Math.min(plan.pages, n));
   if (target === plan.page) return;
   plan.page = target;
   planSync();
+  // remember which page the user is on: a refresh should hand the sheet back where they left it
+  state.project.planPage = target;
+  saveSoon();
   try {
     await plan.viewer.showPage(target);
     if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
@@ -1390,13 +1452,17 @@ function planWire() {
 }
 
 /** Open a drawing in the plan panel. Safe to call for every upload: the panel is an enhancement. */
-async function openPlan(bytes) {
+async function openPlan(bytes, opts) {
   if (!bytes || !el.planCard) return;
+  const o = opts || {};
   // pdf.js DETACHES the ArrayBuffer it is handed — it transfers it to its worker — so a buffer shared
   // with the parser is already dead for whoever asks second ("ArrayBuffer at index 0 is already
   // detached"). The plan view therefore gets its own copy, taken synchronously here, before any await,
   // because the parse is running concurrently and may detach the original at any moment.
   const own = (bytes instanceof Uint8Array) ? bytes.slice().buffer : bytes.slice(0);
+  // a second copy for the browser store: pdf.js will detach `own` during load, and the saved drawing
+  // has to outlive that (this is what makes the drawing still be here after a refresh)
+  const keep = o.skipStore ? null : own.slice(0);
   const mods = await ensurePlanModules();
   if (!mods) return;
   plan.bytes = own;
@@ -1430,15 +1496,24 @@ async function openPlan(bytes) {
     }
     const info = await plan.viewer.load(own);
     plan.pages = (info && info.pages) || 1;
-    plan.page = 1;
     if (typeof plan.viewer.fitWidth === 'function') await plan.viewer.fitWidth();
     else await plan.viewer.showPage(1);
+    // land on the page the user was last looking at (a reload should hand the sheet back as it was).
+    // state.project.planPage WINS: it is updated on every page change, while the stored record's page
+    // is only whatever it was when the drawing was saved — preferring that sent the reader back to
+    // page 1 after a reload.
+    const want = Number(state.project.planPage || o.page) || 1;
+    if (want > 1 && want <= plan.pages && typeof plan.viewer.showPage === 'function') {
+      await plan.viewer.showPage(want);
+    }
     plan.page = (typeof plan.viewer.getCurrentPage === 'function') ? plan.viewer.getCurrentPage() : 1;
     if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
     planSync();
+    if (keep) storeDrawing(keep, o.name);
     // bring the drawing into view the first time one loads: the panel is below the upload box, and
     // 'nearest' only scrolls when it is actually off-screen, so it never yanks a visible page around.
-    if (!plan.revealed) {
+    // Never on a restore: reloading a page should leave the reader where they are.
+    if (!plan.revealed && !o.restoring) {
       plan.revealed = true;
       try { el.planCard.scrollIntoView({ block: 'nearest' }); } catch (err) { /* older browsers */ }
     }
@@ -1716,6 +1791,7 @@ function start() {
   renderAll();
   updateParseWhere(); // the browser text until the one-time check answers
   probeServer();      // asks the server if it is there; never blocks the page
+  restoreDrawing();   // put back the drawing this browser kept for us; never blocks either
   if (restored && state.rooms.length) {
     setStatus('ok', `Restored your last work from this browser: ${state.rooms.length} room(s).`);
   } else {
