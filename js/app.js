@@ -184,15 +184,23 @@ function setStatus(kind, msg, scope) {
   if (scope === 'plan') showPlanStatus(kind, msg);
 }
 
-/** Mirror a status message into the plan panel's own line (see setStatus). */
+/** Mirror a status message into the plan panel's own line (see setStatus).
+ *  Good news fades itself away after 10 s (the room count after outlining has
+ *  been read by then); problems stay on screen until the next action. */
+let planStatusTimer = 0;
 function showPlanStatus(kind, msg) {
   if (!el.planStatus) return;
   el.planStatus.className = 'plan-status ' + (kind || '');
   el.planStatus.textContent = msg;
   el.planStatus.classList.remove('hidden');
+  clearTimeout(planStatusTimer);
+  if (kind !== 'warn' && kind !== 'err') {
+    planStatusTimer = setTimeout(hidePlanStatus, 10000);
+  }
 }
 
 function hidePlanStatus() {
+  clearTimeout(planStatusTimer);
   if (!el.planStatus) return;
   el.planStatus.classList.add('hidden');
   el.planStatus.textContent = '';
