@@ -805,6 +805,7 @@ function renderAll() {
   renderTable();
   renderSortHeaders();
   renderSummary(currentCalc());
+  renderWarnings();
   if (state.ui.openId) renderDetail(currentCalc());
   if (plan.overlay) plan.overlay.render();
 }
@@ -816,6 +817,7 @@ function afterProjectChange() {
     renderSortHeaders();
   }
   renderSummary(currentCalc());
+  renderWarnings();
   if (state.ui.openId) renderDetail(currentCalc());
   saveSoon();
 }
@@ -852,9 +854,25 @@ async function parseOne(arrayBuffer, fileName, fileIdx, fileCount) {
 function pushWarnings(list) {
   if (!list || !list.length) return;
   state.warnings = state.warnings.concat(list);
+  renderWarnings();
+}
+
+// The warnings box shows two kinds of note together:
+// - file/parse notes, which are permanent until cleared (state.warnings);
+// - live engine warnings from js/calc.js (impossible conditions, clamped
+//   geometry), which are recomputed on every render, so they never pile up.
+function renderWarnings() {
+  const live = (currentCalc() && currentCalc().warnings) || [];
+  const list = state.warnings.concat(live);
+  if (!list.length) {
+    el.warnBox.classList.add('hidden');
+    el.warnCount.textContent = '0';
+    el.warnList.innerHTML = '';
+    return;
+  }
   el.warnBox.classList.remove('hidden');
-  el.warnCount.textContent = String(state.warnings.length);
-  el.warnList.innerHTML = state.warnings.map((w) => `<li>${esc(w)}</li>`).join('');
+  el.warnCount.textContent = String(list.length);
+  el.warnList.innerHTML = list.map((w) => `<li>${esc(w)}</li>`).join('');
 }
 
 /* ------------------------------------------------------------------ */
@@ -2490,8 +2508,8 @@ function wire() {
     if (!state.rooms.length) { setStatus('warn', 'The room list is already empty.'); return; }
     if (!window.confirm(`Delete all ${state.rooms.length} room(s)? This cannot be undone.`)) return;
     state.rooms = [];
-    state.warnings = [];
-    el.warnBox.classList.add('hidden');
+        state.warnings = [];
+        renderWarnings();
     closeDetail();
     renderAll();
     saveNow();

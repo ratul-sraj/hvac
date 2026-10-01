@@ -660,11 +660,18 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   paint-order: stroke; stroke: #fff; stroke-width: 3px;
 }
 .plan-hint { margin: 8px 0 0; }
-/* Answers to the plan-panel buttons, shown right here (js/app.js setStatus(…, 'plan')). The upload
-   status box is ~155 px up the page, so a plan result used to be invisible (UX review, item 1). */
+/* Answers to the plan-panel buttons (js/app.js setStatus(…, 'plan')). The upload status box is ~155 px
+   up the page, so a plan result used to be invisible (UX review, item 1). This is a TOAST: fixed at
+   the bottom of the viewport so it is seen wherever the user is looking AND adds no height to the plan
+   card — an in-flow line pushed the drawing down the moment a message appeared, which moved the sheet
+   under the pointer mid-drag (and under the sticky nav). pointer-events:none so it can never swallow a
+   click meant for the drawing. */
 .plan-status {
-  margin: 0 0 10px; border-radius: 6px; padding: 8px 11px; font-size: 13px;
-  border: 1px solid var(--line); background: #f7f9fc; color: var(--ink);
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 55;
+  max-width: min(720px, 92vw); margin: 0; padding: 10px 14px;
+  border-radius: 8px; font-size: 13px; pointer-events: none;
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  box-shadow: 0 8px 24px rgba(16, 24, 32, .22);
 }
 .plan-status.ok { background: var(--ok-soft); border-color: #b7ddc6; color: #135c39; }
 .plan-status.warn { background: var(--warn-soft); border-color: #e8d7a6; color: var(--warn); }

@@ -258,9 +258,11 @@
       </div>
     </div>
 
-    <!-- Answers to the plan buttons appear HERE, next to the buttons that produced them, not only in
-         the upload section ~155 px up the page (UX review, item 1). #planScaleFix carries the
-         one-click wrong-scale fix and stays hidden until a trace says the scale is wrong (item 2). -->
+    <!-- Answers to the plan buttons, so a plan result is seen wherever the user is looking: the
+         upload status box is ~155 px up the page (UX review, item 1). #planStatus is styled as a fixed
+         toast (see css/style.css) so it never adds height to this card and never moves the drawing.
+         #planScaleFix carries the one-click wrong-scale fix and stays hidden until a trace says the
+         scale is wrong (item 2); it sits with the buttons, in the flow. -->
     <div id="planScaleFix" class="plan-scalefix hidden" role="status" aria-live="polite"></div>
     <div id="planStatus" class="plan-status hidden" role="status" aria-live="polite"></div>
 

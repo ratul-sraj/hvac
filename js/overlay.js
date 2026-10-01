@@ -71,6 +71,17 @@
  *   • Resize handles are ONLY for rect rooms. An outline has no box to drag; it is never converted to
  *     a rectangle.
  *
+ * PLACED LOCATORS (a rect room with `rect.placed === true`, from planview.isPlacedRoom):
+ *   • A locator box is sized BACK from the room's stated area and is NOT a traced boundary. On a page
+ *     with many of them (the 3-floor sample names 50+ rooms per page) full-area rectangles pile up and
+ *     hide the drawing's own walls and labels, so past PLACED_MARKER_LIMIT placed shapes on a page each
+ *     is drawn as a small fixed-size diamond at the room's `at` point instead — <polygon
+ *     class="plan-room-box"> inside the SAME <g class="plan-room">, carrying data-shape="marker" and
+ *     data-placed="true". A marker keeps every class/data attribute and the click/move/include
+ *     behaviour of the rectangle (hit-testing is still geometric, on the PDF rect). A placed box drawn
+ *     as a full rectangle carries data-placed="true" and data-shape="rect"; CSS draws it lighter and
+ *     dashed so it reads as a locator, not a wall.
+ *
  * DOM created inside rootEl:
  *   <svg class="plan-overlay">
  *     <g class="rooms"/>   one <g class="plan-room"> per drawn room
