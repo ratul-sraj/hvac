@@ -20,7 +20,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: npm ci && npm test
+      - run: npm ci
+      - name: Unit + PDF tests (pure node — no Edge, no server)
+        run: npm test
+      - name: API contract test (starts its own server on a free port)
+        run: node tests/api-test.mjs
       - name: Build site folder
         run: |
           mkdir _site

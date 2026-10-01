@@ -13,11 +13,16 @@
 # with tests/samples/.)
 #
 # Caching rules:
-#     *.html      no-cache                        (so a deploy is visible at once)
+#     *.html      no-cache                            (so a deploy is visible at once)
 #     favicon.svg public, max-age=86400
-#     css/ js/    public, max-age=31536000, immutable
-#     vendor/     public, max-age=31536000, immutable
-# Then: CloudFront invalidation of / , /index.html and /*.html
+#     css/ js/    public, max-age=0, must-revalidate  (not content-hashed -> revalidate every load)
+#     vendor/     public, max-age=0, must-revalidate  (ALSO not content-hashed: vendor/pdf.min.mjs
+#                                                      is the same filename in every pdf.js release,
+#                                                      and vendor/ is NOT in the invalidation list, so
+#                                                      an immutable copy would never be replaced —
+#                                                      an upgraded pdf.js/tesseract would never reach
+#                                                      a warm browser. Treat it like code.)
+# Then: CloudFront invalidation of / , /index.html , /*.html , /js/* , /css/* , /samples/*
 #
 # Environment: SITE_BUCKET, DISTRIBUTION_ID, AWS_REGION, SKIP_INVALIDATION=1
 set -euo pipefail
@@ -55,7 +60,6 @@ print_context
 # ---------------------------------------------------------------------------
 CACHE_HTML="no-cache"
 CACHE_SHORT="public, max-age=86400"
-CACHE_LONG="public, max-age=31536000, immutable"
 # Code that CHANGES between deploys must not be immutable: these filenames are not content-hashed,
 # so a 1-year immutable cache means a fixed js/app.js never reaches a browser that already has the
 # old copy (it did exactly that to the sample-drawing fix).
@@ -64,6 +68,9 @@ CACHE_LONG="public, max-age=31536000, immutable"
 # build — old css/style.css with new js/overlay.js still showed the "cannot draw when zoomed" bug
 # after the fix was live. Revalidating every load costs one conditional request (304) and removes the
 # whole class of "reload and it still looks broken".
+# vendor/ uses this too: its filenames are fixed (vendor/pdf.min.mjs across pdf.js releases) and
+# vendor/ is deliberately not in the CloudFront invalidation list, so caching it immutably would
+# pin every warm browser to the old engine forever.
 CACHE_CODE="public, max-age=0, must-revalidate"
 CT_HTML="text/html; charset=utf-8"
 CT_CSS="text/css; charset=utf-8"
@@ -163,17 +170,20 @@ fi
 # vendor/ : pdf.js + tesseract. Three passes because the MIME type of a .mjs
 # ES module must be a JavaScript type or the import fails, and the CLI's guess
 # is not reliable for .mjs or .gz on every platform.
+# Cache-control is the code rule (max-age=0, must-revalidate), NOT immutable: these
+# filenames are fixed across library upgrades and vendor/ is not invalidated, so an
+# immutable copy would never be replaced in a warm browser.
 if [ -d "$SRC/vendor" ]; then
   aws s3 sync "$SRC_NATIVE/vendor" "s3://$BUCKET/vendor" \
     --exclude "*" --include "*.mjs" --include "*.js" \
-    --content-type "$CT_JS" --cache-control "$CACHE_LONG" --no-progress
+    --content-type "$CT_JS" --cache-control "$CACHE_CODE" --no-progress
   aws s3 sync "$SRC_NATIVE/vendor" "s3://$BUCKET/vendor" \
     --exclude "*" --include "*.gz" \
-    --content-type "$CT_GZIP" --cache-control "$CACHE_LONG" --no-progress
+    --content-type "$CT_GZIP" --cache-control "$CACHE_CODE" --no-progress
   aws s3 sync "$SRC_NATIVE/vendor" "s3://$BUCKET/vendor" \
     --exclude "*.mjs" --exclude "*.js" --exclude "*.gz" \
-    --cache-control "$CACHE_LONG" --no-progress
-  log_ok "vendor/ -> immutable (mjs/js forced to $CT_JS, no Content-Encoding set on .gz)"
+    --cache-control "$CACHE_CODE" --no-progress
+  log_ok "vendor/ -> $CACHE_CODE (mjs/js forced to $CT_JS, no Content-Encoding set on .gz)"
 fi
 
 if [ -d "$SRC/samples" ]; then
@@ -245,4 +255,8 @@ if [ -n "${DISTRIBUTION_DOMAIN:-}" ]; then
 else
   log_info "The site is private in S3 — it is only reachable through CloudFront."
 fi
-[ "$WITH_SAMPLES" = "1" ] && log_warn "samples/ is public on the site"
+if [ "$WITH_SAMPLES" = "1" ]; then
+  log_warn "samples/ is public on the site"
+fi
+# (not `[ ... ] && log_warn ...`: that form makes the whole script exit 1 whenever --with-samples
+#  is absent, so a successful deploy reported failure to the `set -e` caller / the GH Actions step)

@@ -81,8 +81,16 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Unit + PDF tests
+      - name: Unit + PDF tests (pure node — no Edge, no server)
         run: npm test
+
+      # The API test starts its own server on a free port and needs no browser, so it is CI-safe
+      # on ubuntu. It is the only check that guards the /api/parse room contract — including that
+      # every parsed room keeps its `at` position, which a stale/broken bundled parser would drop
+      # (the app's drawing stays empty for uploads while the sample button keeps working). It must
+      # gate the deploy: run it BEFORE the Lambda is built or any AWS credential is assumed.
+      - name: API contract test (stale-bundle guard)
+        run: node tests/api-test.mjs
 
       - name: Build the Lambda package
         run: |

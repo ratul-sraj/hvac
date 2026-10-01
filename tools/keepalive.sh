@@ -13,23 +13,48 @@ STAMP="$(date '+%Y-%m-%d %H:%M')"
 cd "$REPO" || { echo "cannot cd to $REPO"; exit 1; }
 mkdir -p tools
 
-# ---------------------------------------------------------------- 1. git backup
-if [ -n "$(git status --porcelain)" ]; then
-  git add -A
-  if git -c user.name="ratul-sraj" -c user.email="ratul-sraj@users.noreply.github.com" \
-       commit -q -m "backup: automatic snapshot ${STAMP}" \
-                -m "Co-authored-by: Hermes Agent <hermes-agent@nousresearch.com>"; then
-    if GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/hvac_deploy -o IdentitiesOnly=yes" \
-         git push -q git@github.com:ratul-sraj/hvac.git HEAD:main 2>>"$LOG"; then
-      echo "${STAMP}  backup: committed and pushed" >> "$LOG"
-      echo "LoadLens backup: committed and pushed to GitHub (${STAMP})"
+# ------------------------------------------------- 1. git snapshot  (SAFE — never main)
+# This used to run `git add -A` + a commit + `git push HEAD:main` on a 20-minute timer. Pushing to
+# main triggers BOTH deploy workflows, so a cron snapshot of whatever was lying around became an
+# unreviewed production deploy — and it once committed MID-WORK, capturing another process's
+# half-finished tree (e0579f2, 2b6de82).
+#
+# Rules now:
+#   * A dirty tree means edits are in flight (a worker, an editor, a review wave). The default is
+#     to SKIP the whole snapshot: no `git add`, no commit, no push. The server keepalive below
+#     still runs — that is this job's primary purpose.
+#   * If a snapshot is ever explicitly wanted, KEEPALIVE_BACKUP=1 takes it NON-destructively:
+#     `git stash create` never stages and never touches the working tree, and the resulting commit
+#     is pushed to a dedicated ref (refs/keepalive/snapshots/<stamp>) — never a branch, never main,
+#     so it cannot trigger a deploy or disturb anything mid-edit.
+#   * main is never pushed from here, under any flag.
+KEEPALIVE_REMOTE="git@github.com:ratul-sraj/hvac.git"
+KEEPALIVE_REF="refs/keepalive/snapshots"
+DIRTY="$(git status --porcelain)"
+if [ -n "$DIRTY" ]; then
+  DIRTY_N="$(printf '%s\n' "$DIRTY" | wc -l | tr -d ' ')"
+  if [ "${KEEPALIVE_BACKUP:-0}" = "1" ]; then
+    SNAP="$(git stash create "keepalive snapshot ${STAMP}" 2>/dev/null)"
+    if [ -n "$SNAP" ]; then
+      REF="${KEEPALIVE_REF}/$(date '+%Y%m%d-%H%M%S')"
+      if GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/hvac_deploy -o IdentitiesOnly=yes" \
+           git push -q "$KEEPALIVE_REMOTE" "+${SNAP}:${REF}" 2>>"$LOG"; then
+        echo "${STAMP}  backup: snapshot ${SNAP:0:10} pushed to ${REF} (not main)" >> "$LOG"
+        echo "LoadLens backup: snapshot pushed to ${REF} (never main) (${STAMP})"
+      else
+        echo "${STAMP}  backup: snapshot ${SNAP:0:10} kept locally, push to ${REF} FAILED" >> "$LOG"
+        echo "PROBLEM: LoadLens backup snapshot was created but its push FAILED (${STAMP})"
+      fi
     else
-      echo "${STAMP}  backup: committed locally, PUSH FAILED" >> "$LOG"
-      echo "PROBLEM: LoadLens backup committed locally but the git push FAILED (${STAMP})"
+      echo "${STAMP}  backup: git stash create produced nothing" >> "$LOG"
     fi
   else
-    echo "${STAMP}  backup: commit failed" >> "$LOG"
+    # Expected during active work: silent on stdout (no_agent delivers stdout verbatim), recorded
+    # once in the log so the reason a snapshot was skipped is always recoverable.
+    echo "${STAMP}  backup: SKIPPED — working tree dirty (${DIRTY_N} path(s) with edits in flight); no commit, no push to main" >> "$LOG"
   fi
+else
+  echo "${STAMP}  backup: working tree clean — nothing to snapshot" >> "$LOG"
 fi
 
 # ------------------------------------------------------------ 2. server keepalive
