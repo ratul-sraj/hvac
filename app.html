@@ -214,7 +214,10 @@
     <h2 id="planHead">3. Draw rooms on the plan</h2>
     <p class="muted small plan-intro">
       Set the drawing scale, then drag a rectangle over a room to add it as a room — the area is
-      measured from the rectangle and that scale. The boxes below are the rooms you have placed;
+      measured from the rectangle and that scale. <em>Draw shape</em> traces a room with any number of
+      sides: click each corner, then click the first corner again (or double-click) to close it, and
+      choose which room the shape belongs to — a new room, or an existing row whose area the shape then
+      sets. The boxes below are the rooms you have placed;
       rooms found by reading the PDF stay in the table, but <em>Place all rooms on the plan</em> gives
       every one the drawing names a locator box where the sheet names it, sized back from that room's
       own area (it is a locator, not the traced room boundary). <em>Trace real outlines</em> reads the
@@ -244,6 +247,7 @@
       </div>
       <div class="plan-group">
         <label class="plan-mode"><input type="radio" name="planMode" id="planModeDraw" value="draw" checked> Draw room</label>
+        <label class="plan-mode"><input type="radio" name="planMode" id="planModeShape" value="shape"> Draw shape</label>
         <label class="plan-mode"><input type="radio" name="planMode" id="planModeSelect" value="select"> Select / edit</label>
       </div>
       <div class="plan-group">
@@ -265,6 +269,22 @@
          scale is wrong (item 2); it sits with the buttons, in the flow. -->
     <div id="planScaleFix" class="plan-scalefix hidden" role="status" aria-live="polite"></div>
     <div id="planStatus" class="plan-status hidden" role="status" aria-live="polite"></div>
+
+    <!-- The chooser shown when a hand-drawn shape closes: it can become its own new room or be given
+         to an existing table row. "(new room)" is preselected, so a dismiss keeps the behaviour of
+         the plain tool. Assigning a shape changes that room's AREA, and so its load — said out loud,
+         because that is the point of drawing a real boundary by hand. -->
+    <div id="planShapeAssign" class="plan-shape-assign hidden" role="group" aria-labelledby="planShapeAssignHead">
+      <span id="planShapeAssignHead">This shape is room:</span>
+      <select id="planShapeAssignRoom" aria-label="Which room is this drawn shape"></select>
+      <button type="button" class="btn btn-small" id="planShapeAssignGo">Set the shape</button>
+      <button type="button" class="plan-shape-assign-x" id="planShapeAssignClose"
+        title="Close and add the shape as a new room" aria-label="Close and add the shape as a new room">&times;</button>
+      <span class="muted small plan-shape-assign-hint">
+        A bigger or smaller shape changes that room's area, and the total load with it. Leave it on
+        <em>(new room)</em> to make a new room instead.
+      </span>
+    </div>
 
     <div id="planView" class="plan-view"></div>
     <p id="planHint" class="muted small plan-hint" aria-live="polite"></p>

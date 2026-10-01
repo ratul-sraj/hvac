@@ -22,16 +22,20 @@
  *     getScaleDenom,   // () => number   drawing scale N in 1:N (for the live area readout)
  *     getMode,         // () => 'draw' | 'select'
  *     onDraw,          // (rect, {page}) => void   rect = {x,y,w,h} PDF points; only when usable
+ *     onDrawShape,     // (ring, {page}) => void   a hand-drawn polygon (PDF space); see DRAWN SHAPES
  *     onSelect,        // (room|null) => void      click in select mode
  *     onHover,         // (room|null) => void      optional; cursor/label feedback
  *     onRoomMoved,     // (id, rectPt) => void     LIVE: every pointermove of a move/resize drag
- *                      //   ...or (id, { id, poly, page }) when the dragged room is a traced outline
+ *                      //   ...or (id, { id, poly, page, kind:'move'|'vertex' }) for a polygon room
  *     onRoomMoveEnd,   // (id, rectPt) => void     on release: the app persists here
- *                      //   ...or (id, { id, poly, page }) for a traced outline (its NEW ring)
+ *                      //   ...or (id, { id, poly, page, kind:'move'|'vertex' }) for a polygon room
+ *                      //      kind:'vertex' means a hand-edited ring (the AREA may have changed)
  *     onDelete,        // (id) => void             Delete/Backspace with a selection
  *   }) -> Overlay
  *
- *   Overlay: render() | setMode('draw'|'select') | resize() | destroy() | el (the <svg>)
+ *   Overlay: render() | setMode('draw'|'shape'|'select') | resize() | destroy() | el (the <svg>)
+ *            hasDraft() -> boolean   true while a shape is being drawn (the app uses it to keep its
+ *                                    own Escape handling away from an in-progress shape)
  *
  * STAGE 2 (move / resize / delete / pan) — frozen 2026-10-01:
  *   • This module NEVER writes room state. A drag only calls onRoomMoved(id, rectPt) live and
@@ -71,6 +75,28 @@
  *   • Resize handles are ONLY for rect rooms. An outline has no box to drag; it is never converted to
  *     a rectangle.
  *
+ * DRAWN SHAPES (mode 'shape' — a hand-drawn polygon with any number of edges):
+ *   • In 'shape' mode a click ADDS a vertex to the in-progress ring; the last segment follows the
+ *     cursor as a dashed preview and the live shoelace area is shown next to it. Clicking the first
+ *     vertex (within SHAPE_CLOSE_PX), DOUBLE-CLICKING, or pressing Enter CLOSES the shape and fires
+ *     onDrawShape(ring, {page}) — a ring in PDF space, the very space room.poly uses, so the app
+ *     stores it exactly like a traced outline. Backspace removes the last vertex; Escape cancels the
+ *     whole in-progress shape (and nothing else). Fewer than 3 vertices is not a shape.
+ *   • A closed shape and a traced outline are the SAME kind of thing to the overlay (room.poly);
+ *     the app marks a hand-drawn one with source:'drawn', which shows as data-source="drawn" on the
+ *     <g class="plan-room"> so CSS can give it a distinct look (see css/style.css).
+ *   • VERTEX EDITING (select mode) — a SELECTED polygon room shows a small square handle on every
+ *     vertex and a small diamond on every edge midpoint. Drag a vertex handle to move that vertex;
+ *     drag an edge midpoint to insert a vertex there and drag it. Holding Alt while releasing a
+ *     dragged vertex ON ANOTHER EDGE removes that vertex (a vertex cannot be dropped on the two
+ *     edges that already touch it). Alt is the documented gesture; it is not reserved by the system
+ *     on Windows, where this app is used. Holding Alt is read from the releasing pointerup event, so
+ *     no extra key state has to be tracked.
+ *   • Vertex edits are reported through the SAME callbacks as a move: onRoomMoved(id, {id, poly,
+ *     page, kind:'vertex'}) live and onRoomMoveEnd(...) on release, so the app owns the state exactly
+ *     as it does for a translated ring. The overlay never re-derives an AREA — that is the app's job
+ *     (js/trace.js's shoelace is imported here only to MEASURE a ring for the readout).
+ *
  * PLACED LOCATORS (a rect room with `rect.placed === true`, from planview.isPlacedRoom):
  *   • A locator box is sized BACK from the room's stated area and is NOT a traced boundary. On a page
  *     with many of them (the 3-floor sample names 50+ rooms per page) full-area rectangles pile up and
@@ -93,6 +119,7 @@
  *
  *   .plan-overlay            { position:absolute; inset:0; touch-action:none; overflow-anchor:none; }
  *   .plan-overlay.is-draw    { cursor:crosshair; }
+ *   .plan-overlay.is-shape   { cursor:crosshair; }
  *   .plan-overlay.is-select  { cursor:default; }
  *   .plan-room               { cursor:pointer; }
  *   .plan-room-box           { fill:rgba(56,132,255,.18); stroke:#2f6fed; stroke-width:1; }
@@ -100,6 +127,15 @@
  *   .plan-room.is-selected .plan-room-box { stroke:#ff8a00; stroke-width:2.5; }
  *   .plan-room.is-dragging { cursor:grabbing; }
  *   .plan-room-handle        { fill:#fff; stroke:#ff8a00; stroke-width:1.5; pointer-events:none; }
+ *   .plan-vertex-handle      { fill:#fff; stroke:#ff8a00; stroke-width:1.5; pointer-events:none; }
+ *   .plan-edge-handle        { fill:#ffd9a8; stroke:#ff8a00; stroke-width:1; pointer-events:none; }
+ *   .plan-room[data-shape="poly"][data-source="drawn"] .plan-room-box { solid stroke + stronger fill }
+ *   .plan-draft-ring         { fill:rgba(47,111,237,.12); stroke:#2f6fed; stroke-width:1.5;
+ *                              stroke-dasharray:5 3; }
+ *   .plan-draft-close        { stroke:#2f6fed; stroke-width:1; stroke-dasharray:3 3; fill:none; }
+ *   .plan-vertex             { fill:#fff; stroke:#2f6fed; stroke-width:1.5; }
+ *   .plan-vertex.is-first    { fill:#2f6fed; }
+ *   .plan-vertex.is-close    { fill:#ff8a00; stroke:#ff8a00; }
  *   .plan-overlay.is-pan     { cursor:grabbing; }
  *   .plan-room-label         { font:11px system-ui; fill:#12243d; pointer-events:none; }
  *   .plan-draft-box          { fill:rgba(47,111,237,.15); stroke:#2f6fed; stroke-width:1.5;
@@ -128,6 +164,19 @@ import {
 // definition js/trace.js uses to accept a traced outline, so the overlay measures an outline the same
 // way the tracer did. Importing it keeps a single definition of "area of a ring".
 import { polygonAreaPt2 } from './trace.js';
+// Pure ring maths for a hand-drawn SHAPE (area, simplicity, vertex/edge edits) — the same helpers
+// js/app.js uses to give a drawn room its area and to refuse a nonsense shape. No DOM in that module,
+// so it is unit-testable in plain Node (tests/test-polyshape.mjs).
+import {
+  polyAreaM2,
+  ringMidpoint,
+  ringVertexAt,
+  ringMidpointAt,
+  ringEdgeNotTouching,
+  ringMoveVertex,
+  ringInsertVertex,
+  ringRemoveVertex,
+} from './polyshape.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -158,11 +207,31 @@ const PLACED_MARKER_MIN_PX = 14;
 /** Diamond radius in view pixels — fixed, so a marker stays the same clickable size at every zoom. */
 const MARKER_PX = 9;
 
+/* --- 'Draw shape' (a hand-drawn polygon) --------------------------------------------------------- */
+/** Click within this many view pixels of the FIRST vertex closes the shape. */
+const SHAPE_CLOSE_PX = 8;
+/** A new vertex closer than this to the last one is ignored (this is also what makes a double-click
+ *  add a single vertex, not two). */
+const MIN_VERTEX_PX = 3;
+/** Grab radius of a vertex / edge-midpoint handle, in view pixels (converted to PDF through the
+ *  viewport, exactly like the rect corner grips). */
+const VERTEX_PX = 9;
+/** Drawn size of a vertex handle square and an edge-midpoint diamond, in view pixels. */
+const VERTEX_DRAW_PX = 8;
+const EDGE_DRAW_PX = 7;
+/** A ring whose area is below this (square PDF points, ~2×2 pt) cannot be a room: refuse it. */
+export const MIN_POLY_AREA_PT2 = 4;
+
 /** Trim float dust and render a small, stable SVG number. */
 function num(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return '0';
   return String(Math.round(v * 100) / 100);
+}
+
+/** The three interaction modes. Anything unrecognised is Select/edit (the safe default). */
+function normalizeMode(m) {
+  return (m === 'draw' || m === 'shape') ? m : 'select';
 }
 
 /* ---------------------------------------------------- traced outlines (room.poly)
@@ -219,6 +288,9 @@ function pointInRing(ring, pt) {
 function ringToView(vp, ring) {
   return ring.map((p) => pdfPointToView(vp, p));
 }
+
+/* The polygon geometry (area, simplicity, vertex/edge edits) lives in js/polyshape.js — see the
+ * import at the top of this file. Nothing here re-derives it. */
 
 /** Bounding box of a list of view-pixel points, or null when empty. */
 function viewBoxOfPoints(pts) {
@@ -290,6 +362,7 @@ export function createOverlay(rootEl, {
   getScaleDenom = () => 100,
   getMode = () => 'select',
   onDraw = null,
+  onDrawShape = null,
   onSelect = null,
   onHover = null,
   onRoomMoved = null,
@@ -312,10 +385,12 @@ export function createOverlay(rootEl, {
   rootEl.appendChild(svg);
 
   /* -------------------------------------------------------------- state */
-  let mode = safeString(getMode) === 'draw' ? 'draw' : 'select';
+  let mode = normalizeMode(safeString(getMode));
   let size = { w: 0, h: 0 };
   // Active rubber band: PDF start/end points (y-up) + the last pointer position in view px.
   let draft = null;      // { page, startPdf, endPdf, cursorView }
+  // Active 'shape' draft: the vertices already placed (PDF points) + the cursor in view pixels.
+  let shapeDraft = null; // { page, pts:[{x,y}], cursorView:{x,y} }
   let downAt = null;     // view px of the pointerdown (click vs drag)
   let captureId = null;
   let hoverId = null;
@@ -374,14 +449,26 @@ export function createOverlay(rootEl, {
    *  offset and one scalar tolerance is exact.) Falls back to matrix probing for a viewport with no
    *  numeric scale. */
   function handleTolPt(vp) {
+    return tolPtFor(vp, HANDLE_PX);
+  }
+  /** A pixel grab radius (view px) as a distance in PDF points, through the viewport's own scale —
+   *  so a vertex or edge grip covers the same distance under the finger at every zoom. Falls back to
+   *  matrix probing for a viewport with no numeric scale. */
+  function tolPtFor(vp, px) {
     const scale = Number(vp && vp.scale);
-    if (Number.isFinite(scale) && scale > 0) return HANDLE_PX / scale;
+    if (Number.isFinite(scale) && scale > 0) return px / scale;
     const o = viewPointToPdf(vp, { x: 0, y: 0 });
-    const px = viewPointToPdf(vp, { x: HANDLE_PX, y: 0 });
-    const py = viewPointToPdf(vp, { x: 0, y: HANDLE_PX });
-    const tol = Math.max(Math.abs(px.x - o.x), Math.abs(px.y - o.y),
-      Math.abs(py.x - o.x), Math.abs(py.y - o.y));
-    return tol > 0 ? tol : HANDLE_PX;
+    const qx = viewPointToPdf(vp, { x: px, y: 0 });
+    const qy = viewPointToPdf(vp, { x: 0, y: px });
+    const tol = Math.max(Math.abs(qx.x - o.x), Math.abs(qx.y - o.y),
+      Math.abs(qy.x - o.x), Math.abs(qy.y - o.y));
+    return tol > 0 ? tol : px;
+  }
+  /** Is the cursor (view px) within `px` of a PDF point on the current viewport? */
+  function nearViewPoint(vp, pt, cursorView, px) {
+    const v = pdfPointToView(vp, pt);
+    const dx = v.x - cursorView.x, dy = v.y - cursorView.y;
+    return (dx * dx + dy * dy) <= px * px;
   }
   /** The page size in PDF points, from the viewport's viewBox (the unrotated PDF box, which is the
    *  space `rect` lives in). null when it cannot be known — the caller then skips clamping rather
@@ -456,6 +543,8 @@ export function createOverlay(rootEl, {
     g.setAttribute('data-include', excluded ? 'false' : 'true');
     // data-shape tells a traced outline from an ordinary rectangle (tests + CSS).
     g.setAttribute('data-shape', isPoly ? 'poly' : 'rect');
+    // A HAND-DRAWN polygon is marked so CSS can give it a distinct look from a traced outline.
+    if (isPoly && room.source === 'drawn') g.setAttribute('data-source', 'drawn');
     if (isPlacedRoom(room)) g.setAttribute('data-placed', 'true');
     if (selected) g.setAttribute('data-selected', 'true');
 
@@ -476,10 +565,43 @@ export function createOverlay(rootEl, {
     if (label) g.appendChild(label);
     // The four corner grips, only on the selected RECTANGLE — the room the resize gesture can act on.
     // They are drawn from the SAME view box as the outline, and are presentational only: the grab
-    // test is geometric (handleAtPoint on PDF points), never a hit on this DOM. An OUTLINE gets NONE:
-    // it has no box to drag, and silently turning it into a rectangle would be a lie about its shape.
+    // test is geometric (handleAtPoint on PDF points), never a hit on this DOM. An OUTLINE gets its
+    // own VERTEX + EDGE-MIDPOINT grips instead (see polyHandleShape): it has no box to drag, and
+    // silently turning it into a rectangle would be a lie about its shape.
     if (selected && !isPoly) g.appendChild(handleShape(box));
+    else if (selected && isPoly) g.appendChild(polyHandleShape(ring));
     return g;
+  }
+
+  /** The vertex squares (+ edge-midpoint diamonds) of a SELECTED polygon room, as a
+   *  <g class="plan-handles">. Presentational only: pointer-events:none, because the grab test is
+   *  geometric (ringVertexAt / ringMidpointAt on PDF points), exactly like the rect corner grips. */
+  function polyHandleShape(ringView) {
+    const wrap = document.createElementNS(SVG_NS, 'g');
+    wrap.setAttribute('class', 'plan-handles');
+    const halfV = VERTEX_DRAW_PX / 2;
+    const halfE = EDGE_DRAW_PX / 2;
+    // edge midpoints first, so a vertex square always draws on top of a midpoint diamond
+    for (let i = 0; i < ringView.length; i += 1) {
+      const a = ringView[i], b = ringView[(i + 1) % ringView.length];
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const d = document.createElementNS(SVG_NS, 'path');
+      d.setAttribute('class', 'plan-edge-handle');
+      d.setAttribute('d',
+        `M ${num(mx)},${num(my - halfE)} L ${num(mx + halfE)},${num(my)} ` +
+        `L ${num(mx)},${num(my + halfE)} L ${num(mx - halfE)},${num(my)} Z`);
+      wrap.appendChild(d);
+    }
+    for (const p of ringView) {
+      const h = document.createElementNS(SVG_NS, 'rect');
+      h.setAttribute('class', 'plan-vertex-handle');
+      h.setAttribute('x', num(p.x - halfV));
+      h.setAttribute('y', num(p.y - halfV));
+      h.setAttribute('width', num(VERTEX_DRAW_PX));
+      h.setAttribute('height', num(VERTEX_DRAW_PX));
+      wrap.appendChild(h);
+    }
+    return wrap;
   }
 
   /** The four corner grips of a room's view box, as a <g class="plan-handles">. */
@@ -565,7 +687,9 @@ export function createOverlay(rootEl, {
   /** The rubber band + the live size/area readout. Only drawn while a drag is in progress. */
   function renderDraft(vp) {
     draftG.replaceChildren();
-    if (!draft || destroyed) return;
+    if (destroyed) return;
+    if (shapeDraft) { renderShapeDraft(vp); return; }
+    if (!draft) return;
     const rect = rectOf(draft);
     if (!rect) return;
 
@@ -596,6 +720,69 @@ export function createOverlay(rootEl, {
     t.textContent = `${wM.toFixed(2)} × ${hM.toFixed(2)} m · ${area.toFixed(2)} m²`;
     // near the cursor, nudged below-right of the crosshair, kept on the canvas
     const cur = draft.cursorView || { x: box.x + box.w, y: box.y };
+    t.setAttribute('x', num(Math.max(2, Math.min(cur.x + 12, size.w - 4))));
+    t.setAttribute('y', num(Math.max(14, Math.min(cur.y + 20, size.h - 4))));
+    draftG.appendChild(t);
+  }
+
+  /** The in-progress 'Draw shape' polygon: the vertices placed so far, the segment that follows the
+   *  cursor, a dashed line showing where clicking the first vertex would close the ring, the vertex
+   *  squares, and the live shoelace area (computed through the SAME points→m² conversion the placed
+   *  rectangles use, see polyAreaM2). */
+  function renderShapeDraft(vp) {
+    const pts = shapeDraft.pts;
+    const cursor = shapeDraft.cursorView || null;
+    const view = pts.map((p) => pdfPointToView(vp, p));
+    const denom = Number(safeCall(getScaleDenom)) || 100;
+
+    if (view.length >= 2) {
+      const ring = cursor ? view.concat([cursor]) : view;
+      const pl = document.createElementNS(SVG_NS, 'polyline');
+      pl.setAttribute('class', 'plan-draft-ring');
+      pl.setAttribute('points', ring.map((p) => `${num(p.x)},${num(p.y)}`).join(' '));
+      pl.setAttribute('vector-effect', 'non-scaling-stroke');
+      draftG.appendChild(pl);
+    }
+    if (view.length >= 3 && cursor) {
+      const line = document.createElementNS(SVG_NS, 'line');
+      line.setAttribute('class', 'plan-draft-close');
+      line.setAttribute('x1', num(cursor.x));
+      line.setAttribute('y1', num(cursor.y));
+      line.setAttribute('x2', num(view[0].x));
+      line.setAttribute('y2', num(view[0].y));
+      line.setAttribute('vector-effect', 'non-scaling-stroke');
+      draftG.appendChild(line);
+    }
+    const closeNow = view.length >= 3 && cursor
+      && Math.hypot(view[0].x - cursor.x, view[0].y - cursor.y) <= SHAPE_CLOSE_PX + MIN_VERTEX_PX;
+    view.forEach((p, i) => {
+      const half = VERTEX_DRAW_PX / 2;
+      const r = document.createElementNS(SVG_NS, 'rect');
+      r.setAttribute('class', 'plan-vertex'
+        + (i === 0 ? ' is-first' : '')
+        + (i === 0 && closeNow ? ' is-close' : ''));
+      r.setAttribute('x', num(p.x - half));
+      r.setAttribute('y', num(p.y - half));
+      r.setAttribute('width', num(VERTEX_DRAW_PX));
+      r.setAttribute('height', num(VERTEX_DRAW_PX));
+      r.setAttribute('vector-effect', 'non-scaling-stroke');
+      draftG.appendChild(r);
+    });
+
+    if (view.length < 2) return;
+    // live area: shoelace of the vertices placed so far (the segment still following the cursor is
+    // NOT counted — it is not part of the shape until it is clicked in). Shown next to the cursor.
+    const area = polyAreaM2(pts, denom);
+    const t = document.createElementNS(SVG_NS, 'text');
+    t.setAttribute('class', 'plan-overlay-readout');
+    t.setAttribute('text-anchor', 'start');
+    t.setAttribute('data-vertices', String(pts.length));
+    t.setAttribute('data-area-m2', num(area));
+    t.setAttribute('data-close', closeNow ? 'true' : 'false');
+    t.textContent = closeNow
+      ? `click to close · ${area.toFixed(2)} m²`
+      : `${pts.length} side(s) · close: click the first point · ${area.toFixed(2)} m²`;
+    const cur = cursor || view[view.length - 1];
     t.setAttribute('x', num(Math.max(2, Math.min(cur.x + 12, size.w - 4))));
     t.setAttribute('y', num(Math.max(14, Math.min(cur.y + 20, size.h - 4))));
     draftG.appendChild(t);
@@ -738,6 +925,66 @@ export function createOverlay(rootEl, {
     render();
   }
 
+  /* ------------------------------------------------ 'Draw shape': a polygon with any number of edges
+   * A click adds a vertex; the last segment follows the cursor with a dashed preview and a live area.
+   * The shape closes on a click near the first vertex, a double-click, or Enter. Backspace removes the
+   * last vertex; Escape throws the whole in-progress shape away. The overlay only measures the ring —
+   * the APP decides whether it is a usable shape (simple, non-degenerate) and shows the refusal. */
+  /** Add a vertex at a PDF point, unless it lands on the previous one (that is what makes a
+   *  double-click add ONE vertex: its second pointerdown is within MIN_VERTEX_PX of the first). */
+  function addShapeVertex(vp, pdf, view) {
+    if (!shapeDraft) return false;
+    const pts = shapeDraft.pts;
+    const last = pts[pts.length - 1];
+    if (last && nearViewPoint(vp, last, view, MIN_VERTEX_PX)) return false;
+    // a click near the FIRST vertex (with 3+ already placed) CLOSES the shape
+    if (pts.length >= 3 && nearViewPoint(vp, pts[0], view, SHAPE_CLOSE_PX)) {
+      finishShape();
+      return true;
+    }
+    pts.push({ x: pdf.x, y: pdf.y });
+    shapeDraft.cursorView = view;
+    return true;
+  }
+
+  function startShape(e) {
+    const vp = viewport();
+    if (!vp) return;
+    const p = localPoint(e);
+    const pdf = viewPointToPdf(vp, p);
+    if (!shapeDraft) shapeDraft = { page: safeCall(getPage) ?? 1, pts: [], cursorView: p };
+    addShapeVertex(vp, pdf, p);
+    downAt = p;
+    render();
+  }
+
+  function updateShapeCursor(e) {
+    if (!shapeDraft) return;
+    const vp = viewport();
+    if (!vp) return;
+    shapeDraft.cursorView = localPoint(e);
+    render();
+  }
+
+  /** Commit the drawn ring: exactly one onDrawShape, and only when it has 3+ vertices. Usability
+   *  (self-crossing / zero area) is the app's call — it owns the message the user sees. */
+  function finishShape() {
+    if (!shapeDraft) return;
+    const ring = copyRing(shapeDraft.pts);
+    const page = shapeDraft.page;
+    shapeDraft = null;
+    downAt = null;
+    render();
+    if (ring.length >= 3) safeCall(onDrawShape, ring, { page });
+  }
+
+  function cancelShape() {
+    if (!shapeDraft) return;
+    shapeDraft = null;
+    downAt = null;
+    render();
+  }
+
   /* ------------------------------------------------------------- gestures */
   /** Middle button, or primary while Space is held: a PAN. Decided before the mode, so a Space-drag
    *  never starts a draft, and it works in both modes. */
@@ -781,14 +1028,17 @@ export function createOverlay(rootEl, {
   }
 
   /** Begin a move (handle=null) or a resize (handle='nw'|'ne'|'se'|'sw') of one room. A traced
-   *  outline is snapshotted as its ring; a rectangle as its rect. The two never mix. */
-  function startDrag(e, kind, room, handle, p, pdf) {
+   *  outline or a drawn polygon is snapshotted as its ring; a rectangle as its rect. The two never
+   *  mix. `extra.poly` overrides the snapshot (the edge-midpoint gesture inserts a vertex first) and
+   *  `extra.vertex` marks a VERTEX edit: every move then moves exactly that one ring point. */
+  function startDrag(e, kind, room, handle, p, pdf, extra = null) {
     e.preventDefault?.();   // dragging a box must not start a text selection / browser drag
-    const ring = ringOfRoom(room);
+    const ring = extra && extra.poly ? extra.poly : ringOfRoom(room);
     drag = {
       kind,
       id: idOf(room),
       handle: handle || null,
+      vertex: extra && Number.isInteger(extra.vertex) ? extra.vertex : null,
       startRect: room.rect ? { ...room.rect } : null,
       startPoly: ring ? copyRing(ring) : null,
       startPdf: { ...pdf },
@@ -815,15 +1065,21 @@ export function createOverlay(rootEl, {
     return clampRectToPage(rect, pageSizeOf(vp));
   }
 
-  /** The payload this drag reports for a traced outline: the ring TRANSLATED by the pointer's PDF
-   *  delta, every point by the SAME delta, so the shape (and its area) is preserved exactly. No clamp
-   *  is applied — a clamp would break the one-delta rule — and the page rides along so the app can
-   *  store the moved outline against its page, exactly as a rect carries `page`. */
+  /** The payload this drag reports for a traced outline or hand-drawn polygon: the ring, with the
+   *  ONE dragged vertex moved when this is a vertex edit, or TRANSLATED by the pointer's PDF delta
+   *  when it is a move — every point by the SAME delta, so the shape (and its area) is preserved
+   *  exactly. No clamp is applied — a clamp would break the one-delta rule — and the page rides along
+   *  so the app can store the ring against its page, exactly as a rect carries `page`. `kind` tells
+   *  the app whether the AREA may have changed (a vertex edit) or cannot have (a move). */
   function dragPoly(pdf) {
+    const poly = drag.vertex != null
+      ? ringMoveVertex(drag.startPoly, drag.vertex, pdf)
+      : translateRing(drag.startPoly, pdf.x - drag.startPdf.x, pdf.y - drag.startPdf.y);
     return {
       id: drag.id,
-      poly: translateRing(drag.startPoly, pdf.x - drag.startPdf.x, pdf.y - drag.startPdf.y),
+      poly,
       page: drag.page,
+      kind: drag.vertex != null ? 'vertex' : 'move',
     };
   }
 
@@ -871,6 +1127,11 @@ export function createOverlay(rootEl, {
     if (isPanStart(e)) { startPan(e); return; }
     // mouse only reacts to the primary button; touch/pen have button 0 too
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (mode === 'shape') {
+      e.preventDefault?.();
+      startShape(e);
+      return;
+    }
     if (mode === 'draw') {
       e.preventDefault?.();
       startDraft(e);
@@ -893,6 +1154,22 @@ export function createOverlay(rootEl, {
     const handle = selected && !ringOfRoom(selected)
       ? handleAtPoint(selected.rect, pdf, handleTolPt(vp)) : null;
     if (handle) { startDrag(e, 'resize', selected, handle, p, pdf); return; }
+    // 1b. a VERTEX or EDGE-MIDPOINT grip of the SELECTED polygon room → edit the ring. Vertices win
+    //     over midpoints (they are checked first), so a grip is grabbed exactly as it is aimed at.
+    const selRing = selected ? ringOfRoom(selected) : null;
+    if (selRing) {
+      const tolV = tolPtFor(vp, VERTEX_PX);
+      const vi = ringVertexAt(selRing, pdf, tolV);
+      if (vi >= 0) { startDrag(e, 'vertex', selected, null, p, pdf, { vertex: vi }); return; }
+      const ei = ringMidpointAt(selRing, pdf, tolV);
+      if (ei >= 0) {
+        // insert a vertex at that edge's midpoint, then drag the new point: the ring the drag reports
+        // already carries the new vertex, so even a bare click-drag leaves it in place.
+        const base = ringInsertVertex(selRing, ei, ringMidpoint(selRing, ei));
+        startDrag(e, 'vertex', selected, null, p, pdf, { vertex: ei + 1, poly: base });
+        return;
+      }
+    }
     // 2. the body of any drawn room or traced outline → move. The grabbed target decides once, so a
     //    body drag can never resize and vice versa.
     const room = roomAtPointShaped(safeCall(getRooms) || [], safeCall(getPage) ?? 1, pdf);
@@ -932,9 +1209,22 @@ export function createOverlay(rootEl, {
       const room = roomUnder();
       if (d.dragged) {
         // a real drag: report the final geometry for persistence, never a selection change. A rect
-        // reports its rect; a traced outline reports its NEW ring (with the page) so the app stores it.
-        safeCall(onRoomMoveEnd, d.id,
-          d.startPoly ? { id: d.id, poly: d.lastPoly, page: d.page } : d.lastRect);
+        // reports its rect; a polygon room reports its NEW ring (with the page) so the app stores it.
+        if (d.startPoly) {
+          let poly = d.lastPoly;
+          let kind = d.vertex != null ? 'vertex' : 'move';
+          // Alt + drop a dragged vertex ON ANOTHER EDGE removes that vertex (merging two edges into
+          // one). Only a NON-adjacent edge counts — a vertex always lies on its own two edges. Never
+          // let the ring fall below 3 points.
+          if (d.vertex != null && vp && e && e.altKey && d.startPoly.length > 3) {
+            const pdf = viewPointToPdf(vp, p);
+            const ei = ringEdgeNotTouching(d.startPoly, d.vertex, pdf, tolPtFor(vp, VERTEX_PX));
+            if (ei >= 0) { poly = ringRemoveVertex(d.lastPoly, d.vertex); kind = 'vertex'; }
+          }
+          safeCall(onRoomMoveEnd, d.id, { id: d.id, poly, page: d.page, kind });
+        } else {
+          safeCall(onRoomMoveEnd, d.id, d.lastRect);
+        }
       } else {
         // no movement beyond the slop: it was a click — exactly the Stage-1 behaviour
         safeCall(onSelect, room || null);
@@ -944,6 +1234,7 @@ export function createOverlay(rootEl, {
       return;
     }
 
+    if (mode === 'shape') { render(); return; }
     if (mode === 'draw') { finishDraft(e); return; }
     releaseCapture(e);
     const wasClick = downAt
@@ -965,12 +1256,40 @@ export function createOverlay(rootEl, {
     downAt = null;
   }
 
+  /** A DOUBLE-CLICK closes the in-progress shape — the other half of "click the first point". The
+   *  second pointerdown of the double-click is within MIN_VERTEX_PX of the first, so it added no
+   *  extra vertex (see addShapeVertex); here the ring is simply committed. */
+  function onDoubleClick(e) {
+    if (destroyed) return;
+    if (mode !== 'shape' || !shapeDraft) return;
+    if (shapeDraft.pts.length >= 3) {
+      e.preventDefault?.();
+      finishShape();
+    }
+  }
+
   function onKeyDown(e) {
     if (destroyed) return;
     if (e.key === 'Escape') {
-      if (drag) cancelDrag();
+      if (shapeDraft) cancelShape();       // an in-progress shape is the innermost thing to cancel
+      else if (drag) cancelDrag();
       else if (draft) cancelDraft();
       return;
+    }
+    // While a shape is being drawn the keyboard belongs to the SHAPE: Enter closes it, Backspace
+    // takes back the last vertex. Never steal either from a text field.
+    if (shapeDraft && !isTextEntry(document.activeElement) && !isTextEntry(e.target)) {
+      if (e.key === 'Enter') {
+        e.preventDefault?.();
+        if (shapeDraft.pts.length >= 3) finishShape();
+        return;
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault?.();               // Backspace must not act as "go back"
+        if (shapeDraft.pts.length) shapeDraft.pts.pop();
+        render();
+        return;
+      }
     }
     if (isSpaceKey(e)) {
       // Space is the pan modifier. Never steal it from a text field.
@@ -1005,7 +1324,8 @@ export function createOverlay(rootEl, {
   svg.addEventListener('pointermove', onPointerMove);
   svg.addEventListener('pointerup', onPointerUp);
   svg.addEventListener('pointercancel', onPointerCancel);
-  svg.addEventListener('pointerleave', () => { if (mode !== 'draw' && !drag && !pan) setHover(null); });
+  svg.addEventListener('dblclick', onDoubleClick);
+  svg.addEventListener('pointerleave', () => { if (mode !== 'draw' && mode !== 'shape' && !drag && !pan) setHover(null); });
   svg.addEventListener('mousedown', onMouseDown);
   svg.addEventListener('mouseup', onMouseDown);
   svg.addEventListener('auxclick', onMouseDown);
@@ -1018,13 +1338,21 @@ export function createOverlay(rootEl, {
 
   /* --------------------------------------------------------------- public */
   function setMode(m) {
-    mode = m === 'draw' ? 'draw' : 'select';
+    mode = normalizeMode(m);
     svg.classList.toggle('is-draw', mode === 'draw');
-    svg.classList.toggle('is-select', mode !== 'draw');
+    svg.classList.toggle('is-shape', mode === 'shape');
+    svg.classList.toggle('is-select', mode === 'select');
     cancelDrag();
     cancelDraft();
+    cancelShape();
     setHover(null);
     render();
+  }
+
+  /** Is a 'Draw shape' polygon being drawn right now? The app checks this so its own Escape handling
+   *  (close the report / the room breakdown) never fights the in-progress shape. */
+  function hasDraft() {
+    return !!shapeDraft;
   }
 
   function destroy() {
@@ -1039,9 +1367,11 @@ export function createOverlay(rootEl, {
     svg.removeEventListener('pointermove', onPointerMove);
     svg.removeEventListener('pointerup', onPointerUp);
     svg.removeEventListener('pointercancel', onPointerCancel);
+    svg.removeEventListener('dblclick', onDoubleClick);
     svg.removeEventListener('mousedown', onMouseDown);
     releaseCapture();
     draft = null;
+    shapeDraft = null;
     drag = null;
     pan = null;
     spaceHeld = false;
@@ -1052,8 +1382,9 @@ export function createOverlay(rootEl, {
 
   // initial state: mode class + a box that matches the canvas
   svg.classList.toggle('is-draw', mode === 'draw');
-  svg.classList.toggle('is-select', mode !== 'draw');
+  svg.classList.toggle('is-shape', mode === 'shape');
+  svg.classList.toggle('is-select', mode === 'select');
   resize();
 
-  return { render, setMode, resize, destroy, el: svg };
+  return { render, setMode, resize, destroy, hasDraft, el: svg };
 }

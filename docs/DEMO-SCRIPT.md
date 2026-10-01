@@ -92,6 +92,17 @@ Put it back to 35 (or click **Reset to defaults**).
 
 Leave the drawn room in place (or delete it with the row's **×** before moving on).
 
+**If you have 60 seconds more — a room that is not a box (optional).** Switch the mode to **Draw
+shape** and click the corners of an **L-shaped** room on the sheet (five or six clicks), then click the
+**first corner** again to close it. The chooser appears: leave it on **`(new room)`** for a new room, or
+pick an existing row from the list to **give that room the shape**.
+
+> "Real rooms are not rectangles. This room is an L, so I click its corners — one, two, three, four,
+> five — and close it on the first corner. See the area: it is the **shape's own** area, not the box
+> around it, which would be about a third bigger. And I can hand it to a room the reader already found:
+> pick it in this list, and that row takes the shape and the area — the table cell, the totals, the CSV
+> and the report all follow it, because that room really is that big now."
+
 ### 2:15 – 3:15 — where the number comes from
 
 **What to do:** sort by clicking the **TR** column heading (highest first), then click the **ATRIUM**

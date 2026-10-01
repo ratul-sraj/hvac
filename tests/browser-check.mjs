@@ -526,6 +526,471 @@ if (!sampleMissing) {
   const boxesBack = await page.$$eval(".plan-room", (n) => n.length);
   ok("the drawn rooms are still drawn on their page after a refresh", boxesBack >= 1, `${boxesBack} box(es)`);
 
+  // 15b. 'Draw shape' — a room with ANY number of edges, drawn by clicking its corners. The shape's
+  //      own shoelace area (through the same points->m2 conversion the placed rectangles use) drives
+  //      the room, and a closed shape can be GIVEN to an existing table row. All three gestures are
+  //      exercised on the live page: close by first corner / Enter, Esc mid-draw, self-crossing
+  //      refusal, vertex move, edge-midpoint insert, Alt-drop remove, assign, dismiss, reload.
+  {
+    const sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
+    const rowCount = () => page.$$eval("#roomsBody tr", (r) => r.length);
+    const readTotalTr2 = () => page.$eval("#summaryCards", (e) => {
+      const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+      return m ? parseFloat(m[1]) : NaN;
+    });
+    const m2PerPt2 = areaOf(1, 1, 100);          // m² one square PDF point covers at 1:100
+    const shoelaceArea = (pts, scale) => {       // view px ring -> m² through the same scale
+      let s = 0;
+      for (let i = 0; i < pts.length; i += 1) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        s += a[0] * b[1] - b[0] * a[1];
+      }
+      return (Math.abs(s) / 2) / (scale * scale) * m2PerPt2;
+    };
+    /** The newest hand-drawn polygon room: its stored ring, the area cell, and its RENDERED ring in
+     *  view pixels (the shape the user actually sees, so the shoelace check needs no click offsets). */
+    const newestShape = () => page.evaluate(() => {
+      const rooms = window.webhvac.state.rooms.filter((r) => r.source === "drawn" && Array.isArray(r.poly));
+      const r = rooms[rooms.length - 1];
+      if (!r) return null;
+      // the room's OWN group, by id — the overlay draws biggest-first, so DOM order is not room order
+      const g = document.querySelector(`.plan-room[data-room-id="${r.id}"]`);
+      const pts = g ? g.querySelector(".plan-room-box").getAttribute("points").trim()
+        .split(/\s+/).map((s) => s.split(",").map(Number)) : null;
+      const svg = document.querySelector(".plan-overlay");
+      const sr = svg ? svg.getBoundingClientRect() : null;
+      const cell = document.querySelector(`tr[data-id="${r.id}"] input[data-field="area"]`);
+      return {
+        id: r.id, name: r.name, area: r.area, polyLen: r.poly.length,
+        page: r.polyPage, cell: cell ? Number(cell.value) : null,
+        pts, origin: sr ? { x: sr.x, y: sr.y } : null,
+      };
+    });
+    /** A polygon is concave when the cross product of consecutive edges changes sign. */
+    const isConcave = (pts) => {
+      const signs = [];
+      for (let i = 0; i < pts.length; i += 1) {
+        const a = pts[i], b = pts[(i + 1) % pts.length], c = pts[(i + 2) % pts.length];
+        const cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+        if (Math.abs(cr) > 1e-6) signs.push(cr > 0 ? 1 : -1);
+      }
+      return signs.some((s) => s !== signs[0]);
+    };
+    // the EXACT viewport scale (the % readout is rounded to a whole percent, which is up to ~1% of
+    // area — too coarse for a 0.5% check)
+    const scaleNow = () => page.evaluate(() => {
+      const v = window.webhvac.plan && window.webhvac.plan.viewer;
+      return v && typeof v.getScale === "function" ? v.getScale() : 1;
+    });
+
+    // ---- (a) an OLD saved project (a room with a rect but no drawn shape) must open untouched
+    const storageBefore = await page.evaluate(() => localStorage.getItem("webhvac.state.v1"));
+    await page.evaluate(() => {
+      const h = window.webhvac;
+      localStorage.setItem("webhvac.state.v1", JSON.stringify({
+        v: 1, project: h.state.project,
+        rooms: [{ id: "old1", name: "Old room", level: "L1", area: 25, height: 3, include: true,
+          source: "label", rect: { page: 1, x: 50, y: 50, w: 60, h: 60 } }],
+      }));
+    });
+    await page.reload({ waitUntil: "load", timeout: 90000 });
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length === 1,
+      { timeout: 60000, polling: 300 });
+    const oldProject = await page.evaluate(() => {
+      const r = window.webhvac.state.rooms[0] || {};
+      const a = document.querySelector('#roomsBody tr input[data-field="area"]');
+      return { name: r.name, area: r.area, hasPoly: Array.isArray(r.poly), cell: a ? Number(a.value) : null };
+    });
+    ok("a saved project from an older version (no drawn shapes) opens untouched",
+      oldProject.name === "Old room" && oldProject.area === 25 && oldProject.hasPoly === false,
+      JSON.stringify(oldProject));
+    // put the real work back
+    await page.evaluate((s) => { if (s) localStorage.setItem("webhvac.state.v1", s); }, storageBefore);
+    await page.reload({ waitUntil: "load", timeout: 90000 });
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    await page.evaluate(() => {
+      const v = document.getElementById("planView");
+      v.scrollLeft = 0; v.scrollTop = 0;
+      v.scrollIntoView({ block: "center" });
+    });
+    await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
+      { timeout: 60000, polling: 400 });
+    await sleep2(500);
+
+    // a 20 m² manual room to assign a shape to. #btnManual opens that room's breakdown, which scrolls
+    // the PAGE down to it — so the plan panel must be brought back into view AFTER this click.
+    await page.click("#btnManual");
+    await sleep2(400);
+    const manualId = await page.evaluate(() => {
+      const r = window.webhvac.state.rooms.find((x) => x.source === "manual" && x.name === "New Room");
+      return r ? r.id : null;
+    });
+    ok("there is a manual 20 m² room to give a shape to", !!manualId, String(manualId));
+
+    // the mouse coordinates are viewport-relative: the plan MUST be on screen or a click delivers no
+    // pointer event at all (that mistake looks exactly like a broken feature).
+    await page.evaluate(() => {
+      const v = document.getElementById("planView");
+      v.scrollLeft = 0; v.scrollTop = 0;
+      v.scrollIntoView({ block: "center" });
+    });
+    await sleep2(600);
+    const viewBox2 = await page.$eval("#planView", (e) => {
+      const r = e.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height, onScreen: r.top > 0 && r.bottom < window.innerHeight };
+    });
+    ok("the plan panel is on screen before the shape is drawn", viewBox2.onScreen,
+      `panel at ${Math.round(viewBox2.x)},${Math.round(viewBox2.y)} (${Math.round(viewBox2.w)}x${Math.round(viewBox2.h)})`);
+    // every shape point is given as a FRACTION of the visible panel, so a shape can never be clicked
+    // outside the scroll box (a click there delivers no pointer event at all). The panel's position is
+    // re-read on EVERY click: a status line or the chooser appearing above the drawing moves it.
+    const panelBox = async () => {
+      const read = () => page.$eval("#planView", (e) => {
+        const r = e.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height,
+          onScreen: r.top >= 0 && r.bottom <= window.innerHeight };
+      });
+      let b = await read();
+      if (!b.onScreen) {   // a status line or a save can scroll the page out from under the clicks
+        await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+        await sleep2(450);
+        b = await read();
+      }
+      return b;
+    };
+    const clickAt = async (fx, fy) => {
+      const b = await panelBox();
+      await page.mouse.click(b.x + fx * b.w, b.y + fy * b.h);
+      await sleep2(110);
+    };
+    const atF = async (fx, fy) => {
+      const b = await panelBox();
+      return { x: b.x + fx * b.w, y: b.y + fy * b.h };
+    };
+
+    // ---- (b) draw a 6-corner CONCAVE shape, close it on the first corner, keep it as a new room
+    const rowsBeforeShape = await rowCount();
+    await page.click("#planModeShape");
+    await sleep2(250);
+    const L = [[0.08, 0.16], [0.22, 0.16], [0.22, 0.28], [0.15, 0.28], [0.15, 0.40], [0.08, 0.40]];
+    for (const [x, y] of L) await clickAt(x, y);
+    const cornersWhileDrawing = await page.$$eval(".plan-vertex", (n) => n.length);
+    const readout = await page.$eval(".plan-overlay-readout", (e) => e.getAttribute("data-vertices")).catch(() => null);
+    await clickAt(L[0][0], L[0][1]);                       // click the first corner: closes the shape
+    await sleep2(400);
+    const chooserUp = await page.evaluate(() => {
+      const box = document.getElementById("planShapeAssign");
+      const sel = document.getElementById("planShapeAssignRoom");
+      return { open: !box.classList.contains("hidden"), value: sel ? sel.value : null,
+        first: sel && sel.options[0] ? sel.options[0].text : null, options: sel ? sel.options.length : 0 };
+    });
+    ok("six clicks draw a six-corner shape, with a live corner count",
+      cornersWhileDrawing === 6 && readout === "6", `${cornersWhileDrawing} corner(s), readout ${readout}`);
+    ok("closing the shape opens the chooser with (new room) preselected",
+      chooserUp.open && chooserUp.value === "" && /new room/i.test(String(chooserUp.first)),
+      JSON.stringify(chooserUp));
+    await page.click("#planShapeAssignGo");                // "(new room)" is selected: make a new room
+    await sleep2(700);
+    const shape1 = await newestShape();
+    const scale1 = await scaleNow();
+    ok("the shape becomes a new room with its own number of edges",
+      (await rowCount()) === rowsBeforeShape + 1 && !!shape1 && shape1.polyLen === 6,
+      `${rowsBeforeShape} -> ${await rowCount()} rows, ${shape1 && shape1.polyLen} edge(s)`);
+    ok("the hand-drawn room's area IS the shape's shoelace area (within 0.5%)",
+      !!shape1 && Math.abs(shape1.cell - shoelaceArea(shape1.pts, scale1)) <= shoelaceArea(shape1.pts, scale1) * 0.005,
+      shape1 ? `table ${shape1.cell} m² vs shoelace ${shoelaceArea(shape1.pts, scale1).toFixed(3)} m²` : "no shape");
+    ok("the shape is a real concave polygon, not a box",
+      !!shape1 && shape1.pts.length === 6 && isConcave(shape1.pts),
+      shape1 ? `${shape1.pts.length} corners, concave ${isConcave(shape1.pts)}` : "no shape");
+    ok("a hand-drawn shape is drawn as its own kind (data-shape=poly, data-source=drawn)",
+      await page.$$eval('.plan-room[data-shape="poly"][data-source="drawn"]', (n) => n.length) === 1);
+
+    const afterCommit = await page.evaluate((id) => ({
+      mode: window.webhvac.state.ui.planMode,
+      selectRadio: document.getElementById("planModeSelect").checked,
+      shapeRadio: document.getElementById("planModeShape").checked,
+      selected: !!document.querySelector(`.plan-room[data-room-id="${id}"].is-selected`),
+      open: window.webhvac.state.ui.openId === id,
+    }), shape1.id);
+    ok("closing a shape hands over to Select/edit with the new room selected",
+      afterCommit.mode === "select" && afterCommit.selectRadio && !afterCommit.shapeRadio
+        && afterCommit.selected && afterCommit.open,
+      JSON.stringify(afterCommit));
+
+    // ---- (c) EDIT a vertex: the row area follows the shoelace, the load only moves on release
+    await page.click("#planModeSelect");
+    await sleep2(250);
+    const sel1 = await newestShape();
+    const insideL = await atF(0.12, 0.22);
+    await page.mouse.click(insideL.x, insideL.y);   // inside the L's bottom bar
+    await sleep2(400);
+    const handles = await page.evaluate(() => ({
+      vertices: document.querySelectorAll(".plan-vertex-handle").length,
+      edges: document.querySelectorAll(".plan-edge-handle").length,
+    }));
+    ok("a selected shape shows a handle on every corner and every edge middle",
+      handles.vertices === 6 && handles.edges === 6, JSON.stringify(handles));
+
+    const trRow = (id) => page.$eval(`tr[data-id="${id}"] .v-tr`, (e) => parseFloat(e.textContent)).catch(() => NaN);
+    const geom0 = await newestShape();
+    const totalBeforeDrag = await readTotalTr2();
+    const rowTrBeforeDrag = await trRow(geom0.id);
+    const v0 = { x: geom0.origin.x + geom0.pts[0][0], y: geom0.origin.y + geom0.pts[0][1] };
+    await page.mouse.move(v0.x, v0.y);
+    await page.mouse.down();
+    await page.mouse.move(v0.x - 90, v0.y - 90, { steps: 10 });
+    await sleep2(250);
+    const midDrag = await newestShape();
+    const totalMidDrag = await readTotalTr2();
+    await page.mouse.up();
+    await sleep2(600);
+    const afterDrag = await newestShape();
+    const scale2 = await scaleNow();
+    const totalAfterDrag = await readTotalTr2();
+    ok("dragging a corner changes the row's area to the new shoelace (within 0.5%)",
+      Math.abs(afterDrag.cell - shoelaceArea(afterDrag.pts, scale2)) <= shoelaceArea(afterDrag.pts, scale2) * 0.005
+        && afterDrag.cell !== geom0.cell,
+      `${geom0.cell} -> ${afterDrag.cell} m² (shoelace ${shoelaceArea(afterDrag.pts, scale2).toFixed(3)})`);
+    ok("the row area updates LIVE while the corner is dragged",
+      Math.abs(midDrag.cell - shoelaceArea(midDrag.pts, scale2)) <= shoelaceArea(midDrag.pts, scale2) * 0.02,
+      `mid-drag row ${midDrag.cell} m², stored ring ${midDrag.polyLen} points`);
+    ok("the LOAD does not change while the geometry is being edited (mid-drag)",
+      totalMidDrag === totalBeforeDrag,
+      `${totalBeforeDrag} TR -> ${totalMidDrag} TR mid-drag`);
+    ok("on release the load follows the shape's new area (the room's own delta)",
+      Math.abs((totalAfterDrag - totalBeforeDrag) - (await trRow(geom0.id) - rowTrBeforeDrag)) <= 0.02
+        && totalAfterDrag !== totalBeforeDrag,
+      `total ${totalBeforeDrag} -> ${totalAfterDrag} TR, row ${rowTrBeforeDrag} -> ${await trRow(geom0.id)} TR`);
+    // put the corner back where it was: the load returns exactly
+    await page.mouse.move(v0.x - 90, v0.y - 90);
+    await page.mouse.down();
+    await page.mouse.move(v0.x, v0.y, { steps: 10 });
+    await page.mouse.up();
+    await sleep2(600);
+    const restored = await newestShape();
+    const totalRestored = await readTotalTr2();
+    ok("editing the geometry and putting it back leaves the load exactly as it was",
+      Math.abs(restored.cell - geom0.cell) <= 0.2 && Math.abs(totalRestored - totalBeforeDrag) <= 0.02,
+      `area ${geom0.cell} -> ${restored.cell} m², load ${totalBeforeDrag} -> ${totalRestored} TR`);
+
+    // ---- (d) an edge MIDDLE drag inserts a new corner
+    const g2 = await newestShape();
+    const em = { x: (g2.pts[0][0] + g2.pts[1][0]) / 2, y: (g2.pts[0][1] + g2.pts[1][1]) / 2 };
+    await page.mouse.move(g2.origin.x + em.x, g2.origin.y + em.y);
+    await page.mouse.down();
+    await page.mouse.move(g2.origin.x + em.x + 30, g2.origin.y + em.y - 30, { steps: 8 });
+    await page.mouse.up();
+    await sleep2(600);
+    const added = await newestShape();
+    ok("dragging an edge middle adds a corner there", added.polyLen === g2.polyLen + 1,
+      `${g2.polyLen} -> ${added.polyLen} corners`);
+
+    // ---- (e) Alt + drop a corner on ANOTHER edge removes that corner
+    const g3 = await newestShape();
+    const vi = 3;                                  // a corner; edges 0 and 3 don't touch it
+    const target = { x: (g3.pts[0][0] + g3.pts[1][0]) / 2, y: (g3.pts[0][1] + g3.pts[1][1]) / 2 };
+    const vp = { x: g3.origin.x + g3.pts[vi][0], y: g3.origin.y + g3.pts[vi][1] };
+    await page.keyboard.down("Alt");
+    await page.mouse.move(vp.x, vp.y);
+    await page.mouse.down();
+    await page.mouse.move(g3.origin.x + target.x, g3.origin.y + target.y, { steps: 10 });
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    await sleep2(600);
+    const removed = await newestShape();
+    ok("Alt + dropping a corner on another edge removes it",
+      removed.polyLen === g3.polyLen - 1, `${g3.polyLen} -> ${removed.polyLen} corners`);
+
+    // ---- (f) Escape mid-draw cancels the shape and creates nothing
+    // (the vertex edits above ran in Select/edit, so go back to the shape tool first)
+    await page.click("#planModeShape");
+    await sleep2(250);
+    const rowsBeforeEsc = await rowCount();
+    for (const [x, y] of [[0.06, 0.50], [0.20, 0.50], [0.20, 0.60]]) await clickAt(x, y);
+    await page.keyboard.press("Escape");
+    await sleep2(400);
+    const afterEsc = await page.evaluate(() => ({
+      vertices: document.querySelectorAll(".plan-vertex").length,
+      chooser: !document.getElementById("planShapeAssign").classList.contains("hidden"),
+    }));
+    ok("Escape mid-draw throws the shape away and creates no room",
+      afterEsc.vertices === 0 && !afterEsc.chooser && (await rowCount()) === rowsBeforeEsc,
+      JSON.stringify({ ...afterEsc, rows: await rowCount() }));
+
+    // ---- (g) a self-crossing draw is refused with one plain line
+    const rowsBeforeBad = await rowCount();
+    for (const [x, y] of [[0.06, 0.66], [0.20, 0.80], [0.20, 0.66], [0.06, 0.80]]) await clickAt(x, y);
+    await clickAt(0.06, 0.66);                     // close the bow-tie
+    await sleep2(500);
+    const bad = await page.evaluate(() => ({
+      rows: document.querySelectorAll("#roomsBody tr").length,
+      status: document.getElementById("planStatus").textContent.replace(/\s+/g, " "),
+      chooser: !document.getElementById("planShapeAssign").classList.contains("hidden"),
+    }));
+    ok("a self-crossing shape is refused with a plain one-line message and no room",
+      bad.rows === rowsBeforeBad && /cannot be used/i.test(bad.status) && !bad.chooser,
+      bad.status.slice(0, 90));
+
+    // ---- (h) ASSIGN a 5-corner shape to the existing 20 m² row: its area becomes the shoelace,
+    //          and the total load moves by exactly that room's own delta
+    const five = [[0.42, 0.18], [0.62, 0.18], [0.62, 0.36], [0.52, 0.44], [0.42, 0.36]];
+    for (const [x, y] of five) await clickAt(x, y);
+    await clickAt(five[0][0], five[0][1]);
+    await sleep2(400);
+    const assignUp = await page.evaluate(() => !document.getElementById("planShapeAssign").classList.contains("hidden"));
+    const rowTrBefore = await trRow(manualId);
+    const totalBeforeAssign = await readTotalTr2();
+    await page.evaluate((id) => {
+      const sel = document.getElementById("planShapeAssignRoom");
+      sel.value = id;
+    }, manualId);
+    await page.click("#planShapeAssignGo");
+    await sleep2(800);
+    const assigned = await page.evaluate((id) => {
+      const r = window.webhvac.state.rooms.find((x) => x.id === id);
+      const g = document.querySelector(`.plan-room[data-room-id="${id}"]`);
+      const pts = g ? g.querySelector(".plan-room-box").getAttribute("points").trim()
+        .split(/\s+/).map((s) => s.split(",").map(Number)) : null;
+      const cell = document.querySelector(`tr[data-id="${id}"] input[data-field="area"]`);
+      const svg = document.querySelector(".plan-overlay");
+      const sr = svg ? svg.getBoundingClientRect() : null;
+      return { area: r.area, source: r.source, polyLen: r.poly.length, pts,
+        origin: sr ? { x: sr.x, y: sr.y } : null, cell: cell ? Number(cell.value) : null };
+    }, manualId);
+    const scale3 = await scaleNow();
+    const rowTrAfter = await trRow(manualId);
+    const totalAfterAssign = await readTotalTr2();
+    ok("a drawn shape can be GIVEN to an existing table row (chooser opened)",
+      assignUp && assigned.polyLen === 5 && assigned.source === "drawn",
+      `chooser ${assignUp}, ${assigned.polyLen} edges, source ${assigned.source}`);
+    ok("the assigned room's area becomes the shape's shoelace area (within 0.5%)",
+      Math.abs(assigned.cell - shoelaceArea(assigned.pts, scale3)) <= shoelaceArea(assigned.pts, scale3) * 0.005
+        && assigned.cell !== 20,
+      `row ${assigned.cell} m² vs shoelace ${shoelaceArea(assigned.pts, scale3).toFixed(3)} m²`);
+    ok("the total load changes by exactly the assigned room's own delta",
+      totalAfterAssign !== totalBeforeAssign
+        && Math.abs((totalAfterAssign - totalBeforeAssign) - (rowTrAfter - rowTrBefore)) <= 0.02,
+      `total ${totalBeforeAssign} -> ${totalAfterAssign} TR, room ${rowTrBefore} -> ${rowTrAfter} TR`);
+    const propagation = await page.evaluate((id) => {
+      const h = window.webhvac;
+      const calc = h.currentCalc();
+      const rooms = h.state.rooms.find((x) => x.id === id);
+      const detail = document.getElementById("detailBody").innerText.replace(/\s+/g, " ");
+      const csv = h.toCsv(h.state.project, calc);
+      const html = h.buildReportHtml(h.state.project, calc);
+      const areaStr = String(rooms.area);
+      const d2 = rooms.area.toFixed(2), d1 = rooms.area.toFixed(1);
+      return {
+        detailHasArea: detail.includes(areaStr) || detail.includes(d1),
+        csvHasArea: csv.includes(areaStr) || csv.includes(d2),
+        // the report and the table round to 1-2 decimals; the raw JSON value may carry more
+        reportHasArea: html.includes(d2) || html.includes(d1),
+        csvHasName: csv.includes("New Room"),
+      };
+    }, manualId);
+    ok("the new area shows in the detail panel, the CSV and the printable report",
+      propagation.detailHasArea && propagation.csvHasArea && propagation.reportHasArea && propagation.csvHasName,
+      JSON.stringify(propagation));
+
+    // the shape travels in the saved project file, and a poly room still obeys the include tick
+    await page.evaluate(() => {
+      const orig = URL.createObjectURL.bind(URL);
+      window.__json = null;
+      URL.createObjectURL = (blob) => { try { blob.text().then((t) => { window.__json = t; }); } catch (e) {} return orig(blob); };
+    });
+    await page.click("#btnSave");
+    await sleep2(700);
+    const savedJson = await page.evaluate((id) => {
+      let d = null;
+      try { d = JSON.parse(window.__json || "null"); } catch (e) { d = null; }
+      const r = d && Array.isArray(d.rooms) ? d.rooms.find((x) => x.id === id) : null;
+      return {
+        parsed: !!d, rooms: d && d.rooms ? d.rooms.length : 0,
+        hasPoly: !!(r && Array.isArray(r.poly) && r.poly.length === 5),
+        polyPage: r ? r.polyPage : null, area: r ? r.area : null, source: r ? r.source : null,
+      };
+    }, manualId);
+    ok("the drawn shape (its 5 corners, page and area) is in the saved .json project",
+      savedJson.parsed && savedJson.hasPoly && savedJson.source === "drawn" && savedJson.polyPage >= 1,
+      JSON.stringify(savedJson));
+
+    const totalWithRoom = await readTotalTr2();
+    await page.evaluate((id) => {
+      document.querySelector(`tr[data-id="${id}"] input[data-field="include"]`).click();
+    }, manualId);
+    await sleep2(600);
+    const totalWithoutRoom = await readTotalTr2();
+    await page.evaluate((id) => {
+      document.querySelector(`tr[data-id="${id}"] input[data-field="include"]`).click();
+    }, manualId);
+    await sleep2(600);
+    const totalBackAgain = await readTotalTr2();
+    ok("the include tick still takes a drawn poly room out of the totals, and puts it back",
+      totalWithoutRoom < totalWithRoom && Math.abs(totalBackAgain - totalWithRoom) <= 0.01,
+      `${totalWithRoom} -> excluded ${totalWithoutRoom} -> back ${totalBackAgain} TR`);
+
+    // ---- (i) dismissing the chooser keeps a NEW room (the tool's normal behaviour)
+    // (committing a shape hands over to Select/edit, so go back to the shape tool)
+    await page.click("#planModeShape");
+    await sleep2(250);
+    const rowsBeforeDismiss = await rowCount();
+    for (const [x, y] of [[0.62, 0.50], [0.78, 0.50], [0.76, 0.64], [0.66, 0.68], [0.60, 0.58]]) await clickAt(x, y);
+    await clickAt(0.62, 0.50);
+    await sleep2(400);
+    const chooserBeforeDismiss = await page.evaluate(() =>
+      !document.getElementById("planShapeAssign").classList.contains("hidden"));
+    await page.click("#planShapeAssignClose");
+    await sleep2(600);
+    ok("dismissing the chooser keeps the shape as a new room",
+      chooserBeforeDismiss && (await rowCount()) === rowsBeforeDismiss + 1,
+      `${rowsBeforeDismiss} -> ${await rowCount()} rows`);
+
+    // also: Enter closes a shape (the keyboard path)
+    await page.click("#planModeShape");
+    await sleep2(250);
+    const rowsBeforeEnter = await rowCount();
+    for (const [x, y] of [[0.42, 0.62], [0.56, 0.62], [0.56, 0.76], [0.42, 0.76]]) await clickAt(x, y);
+    await page.keyboard.press("Enter");
+    await sleep2(400);
+    const enterChooser = await page.evaluate(() =>
+      !document.getElementById("planShapeAssign").classList.contains("hidden"));
+    await page.click("#planShapeAssignGo");
+    await sleep2(600);
+    ok("Enter closes a shape too",
+      enterChooser && (await rowCount()) === rowsBeforeEnter + 1, `chooser ${enterChooser}`);
+
+    // ---- (j) the drawn shapes survive a reload
+    const beforeReload = await page.evaluate(() => {
+      const rooms = window.webhvac.state.rooms.filter((r) => r.source === "drawn" && Array.isArray(r.poly));
+      return { n: rooms.length, lens: rooms.map((r) => r.poly.length).join(","),
+        areas: rooms.map((r) => r.area).join(",") };
+    });
+    await page.reload({ waitUntil: "load", timeout: 90000 });
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
+      { timeout: 60000, polling: 400 });
+    await sleep2(800);
+    const afterReload2 = await page.evaluate(() => {
+      const rooms = window.webhvac.state.rooms.filter((r) => r.source === "drawn" && Array.isArray(r.poly));
+      return { n: rooms.length, lens: rooms.map((r) => r.poly.length).join(","),
+        areas: rooms.map((r) => r.area).join(","),
+        onPlan: document.querySelectorAll('.plan-room[data-source="drawn"]').length };
+    });
+    ok("the hand-drawn shapes survive a reload, ring and area intact",
+      beforeReload.n >= 3 && afterReload2.n === beforeReload.n && afterReload2.lens === beforeReload.lens
+        && afterReload2.areas === beforeReload.areas && afterReload2.onPlan >= 1,
+      `${beforeReload.n} drawn -> ${afterReload2.n} after reload (${afterReload2.onPlan} on this page)`);
+
+    await page.screenshot({ path: `${OUT}/live-plan-shape.png` });
+
+    // leave the sheet on page 1, exactly where the sections after this one expect to find it (the
+    // reload above put the app back on the page the user was on, which is 2)
+    await page.click("#planPrev");
+    await sleep2(900);
+  }
+
   // 16. renaming a room must follow through to every place the room is shown: the table row, its box
   //     label on the drawing, and its description under the table. The drawing was the one that stayed
   //     stale: the in-table edit path deliberately does not rebuild the table (that would take the
@@ -548,7 +1013,10 @@ if (!sampleMissing) {
     renameResult.detailOpen = await page.evaluate(() =>
       !document.getElementById("detailPanel").classList.contains("hidden"));
     renameResult.before = await page.evaluate((e) => e.value, drawnEl);
-    renameResult.labelsBefore = await page.$$eval(".plan-room-label", (n) => n.length);
+    // count the labels that carry the DEFAULT name: renaming one room must retire exactly one of them
+    // (some boxes on this page carry a name of their own, e.g. a hand-drawn shape given to a row)
+    renameResult.labelsBefore = await page.$$eval(".plan-room-label",
+      (n) => n.filter((e) => /Drawn room/.test(e.textContent)).length);
     await drawnEl.focus();
     await page.keyboard.down("Control");
     await page.keyboard.press("KeyA");

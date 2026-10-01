@@ -219,6 +219,46 @@
         </details>
 
         <details>
+          <summary>My room is not a rectangle. Can I draw its real shape?</summary>
+          <p>
+            Yes &mdash; use <strong>Draw shape</strong>, the mode next to <em>Draw room</em> in the plan
+            view. Instead of dragging a box, you <strong>click each corner</strong> of the room, however
+            many there are: an L-shaped room or a stepped room gets its real outline.
+          </p>
+          <ul>
+            <li><strong>Close the shape</strong> by clicking the <strong>first corner</strong> again,
+              <strong>double-clicking</strong>, or pressing <strong>Enter</strong>.</li>
+            <li><strong>Backspace</strong> takes back the last corner while you are drawing;
+              <strong>Esc</strong> throws the whole shape away and creates nothing.</li>
+            <li>The room's <strong>area is the shape's own area</strong> (measured at the drawing scale),
+              not the box around it &mdash; so an L-shaped room counts for less than the rectangle that
+              would enclose it. A shape that <strong>crosses itself</strong> is refused with one short
+              line, and nothing is created.</li>
+          </ul>
+          <p>
+            When the shape closes, a small chooser asks <strong>&ldquo;This shape is room:&rdquo;</strong>.
+            Leave it on <strong>(new room)</strong> to get a new room, or <strong>pick a room from the
+            list</strong> to give that row the shape &mdash; a room read from the PDF, or a schedule
+            import, then takes the shape's outline and the shape's area. <strong>Note that this changes
+            the room's area, and therefore its load</strong> (the table, the totals, the CSV and the
+            report all follow it) &mdash; that is the point of the gesture. Closing the chooser keeps the
+            shape as a new room. Either way the plan then switches to <strong>Select / edit</strong> with
+            that room selected, so you can reshape it straight away; switch back to
+            <strong>Draw shape</strong> to draw the next room.
+          </p>
+          <p>
+            Afterwards, in <strong>Select / edit</strong>, a shape (or a traced outline) shows a
+            <strong>square handle on every corner</strong> and a <strong>dot on every edge</strong>: drag
+            a corner to move it, drag an edge's dot to add a corner, or hold <strong>Alt</strong> and drop
+            a corner onto the edge next to it to remove it. A shape you drew is drawn with a
+            <strong>thicker line and a stronger fill</strong> than a traced outline, and its row carries
+            a <strong>drawn</strong> badge, so the two are easy to tell apart. Shapes (and the areas they
+            gave a room) are saved with the project, in the browser and in the
+            <em>Save project (.json)</em> file.
+          </p>
+        </details>
+
+        <details>
           <summary>I drew a room box in the wrong place. Can I move, resize or delete it?</summary>
           <p>
             Yes. Switch the plan view to <strong>Select / edit</strong> and work on the box directly:
@@ -231,6 +271,12 @@
               <strong>re-measures the room</strong>: its area and its length &times; width are
               recalculated at the drawing scale, the row in the table updates and the total cooling load
               follows.</li>
+            <li><strong>Reshape a shape or an outline:</strong> a room drawn with <em>Draw shape</em>, or
+              traced from the drawing's walls, has <strong>no box to resize</strong>. Instead it shows a
+              <strong>square handle on every corner</strong> and a <strong>dot on every edge</strong>:
+              drag a corner to move it, drag the dot on an edge to add a corner, or hold
+              <strong>Alt</strong> and drop a corner onto the edge next to it to remove it. For a shape
+              you drew, the area cell follows your drag, and the load follows it when you let go.</li>
             <li><strong>Delete:</strong> select the box and press <em>Delete</em> (or
               <em>Backspace</em>). The room is removed from the table and from the totals. The same
               <strong>&times;</strong> button at the end of the row does the same thing.</li>
@@ -396,6 +442,14 @@
             Rooms that fail either check keep their box, and every row is marked <b>outline</b> or
             <b>box</b>. Nothing is guessed, and the load never changes — the area always stays the one
             your plan (or you) gave.
+          </p>
+          <p>
+            You are not limited to tracing, either. <b>Draw shape</b> in the plan panel lets you click
+            the corners of a room yourself, however many it has, and that shape's <b>own area</b> becomes
+            the room's — so an L-shaped room is measured as an L, not as the box around it. A hand-drawn
+            shape is drawn with a heavier line than a traced outline and its row is marked
+            <b>drawn</b>, so the two never get mixed up. See
+            <em>My room is not a rectangle</em> above.
           </p>
           <p>
             If almost nothing traces, your <b>drawing scale</b> is wrong for that sheet. The outlines

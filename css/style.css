@@ -610,6 +610,7 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   position: absolute; left: 0; top: 0; touch-action: none; overflow: visible; overflow-anchor: none;
 }
 .plan-overlay.is-draw { cursor: crosshair; }
+.plan-overlay.is-shape { cursor: crosshair; }
 .plan-overlay.is-select { cursor: default; }
 .plan-room { cursor: pointer; }
 /* Only rooms that HAVE geometry are drawn, i.e. the ones placed on the plan: parsed and scheduled
@@ -634,6 +635,30 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 }
 .plan-room.is-selected[data-shape="poly"] .plan-room-box { stroke: var(--danger); stroke-width: 2.5; }
 .plan-room.is-dragging[data-shape="poly"] .plan-room-box { stroke-width: 3; }
+/* A SHAPE DRAWN BY HAND (data-source="drawn") reads differently from a traced outline: a solid,
+   thicker stroke and a slightly stronger fill, so the user can tell the room they drew from one the
+   tracer read out of the plan's linework. Same polygon geometry, same behaviour — only the look. */
+.plan-room[data-shape="poly"][data-source="drawn"] .plan-room-box {
+  fill: var(--accent); fill-opacity: .24; stroke: var(--accent); stroke-width: 2.5;
+}
+.plan-room.is-excluded[data-shape="poly"][data-source="drawn"] .plan-room-box {
+  fill: #8b95a1; fill-opacity: .2; stroke: #6b7480;
+}
+.plan-room.is-selected[data-shape="poly"][data-source="drawn"] .plan-room-box { stroke: var(--danger); stroke-width: 3; }
+/* Vertex + edge-midpoint grips on a SELECTED polygon room (js/overlay.js polyHandleShape). They are
+   presentational: pointer-events:none, because the overlay grabs them geometrically on PDF points. */
+.plan-vertex-handle { fill: #fff; stroke: var(--danger); stroke-width: 1.5; pointer-events: none; }
+.plan-edge-handle { fill: #ffe0b8; stroke: var(--danger); stroke-width: 1; pointer-events: none; }
+/* The in-progress 'Draw shape' ring: the segment that follows the cursor, the dashed line that shows
+   where clicking the first point would close it, and the vertex squares. */
+.plan-draft-ring {
+  fill: var(--accent); fill-opacity: .12; stroke: var(--accent); stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+}
+.plan-draft-close { fill: none; stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; }
+.plan-vertex { fill: #fff; stroke: var(--accent); stroke-width: 1.5; }
+.plan-vertex.is-first { fill: var(--accent); }
+.plan-vertex.is-close { fill: #ff8a00; stroke: #ff8a00; }
 /* A placed LOCATOR box at low zoom (data-shape="marker"): the plan names many rooms, and 50+ area
    boxes centred on the names overlap into a grey wall-less mess that hides the drawn walls and labels
    (UX review, item 3). When they crowd, js/overlay.js draws each as a small diamond at the point that
@@ -683,6 +708,24 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   border: 1px solid #e8d7a6; background: var(--warn-soft); color: var(--warn); border-radius: 6px;
 }
 .plan-scalefix .plan-scalefix-text { flex: 1 1 260px; }
+/* The chooser shown when a hand-drawn shape closes (js/app.js planShowShapeChooser). It sits in the
+   flow, just above the drawing, so it is seen next to what was drawn, and it is one click to dismiss
+   (the × keeps the shape as a new room, the tool's normal behaviour). */
+.plan-shape-assign {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  margin: 0 0 10px; padding: 8px 11px; font-size: 13px;
+  border: 1px solid #bcd4f5; background: var(--accent-soft); color: var(--ink); border-radius: 6px;
+}
+.plan-shape-assign select {
+  padding: 4px 6px; font-size: 13px; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; background: #fff; max-width: 320px;
+}
+.plan-shape-assign-hint { flex: 1 1 220px; color: var(--ink-soft); }
+.plan-shape-assign-x {
+  border: none; background: none; cursor: pointer; font-size: 18px; line-height: 1;
+  color: var(--ink-soft); padding: 0 4px;
+}
+.plan-shape-assign-x:hover { color: var(--danger); }
 @media (max-width: 700px) {
   .plan-toolbar { gap: 6px 10px; padding: 7px 8px; }
   .plan-view { max-height: 58vh; }

@@ -13,6 +13,10 @@ import {
   rectFromLabel, isPlacedRoom,
   DRAWING_SCALES, DEFAULT_SCALE_DENOM,
 } from './planview.js';
+// Pure ring maths for a hand-drawn polygon (js/polyshape.js): the shoelace area in m² (through the
+// SAME scale conversion the placed rectangles use) and the simplicity test that lets the app refuse
+// a self-crossing or zero-area shape. No DOM, so it is loaded with the app, not on demand.
+import { polyAreaM2, ringIsUsable, ringBBox, roundRing } from './polyshape.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -88,6 +92,7 @@ const state = {
     openId: null,
     order: [],
     busy: false,
+    planMode: 'draw',
   },
   // Filled once on load by probeServer(): is the Express server (server.js) there?
   server: { available: false, version: null, checked: false },
@@ -133,11 +138,16 @@ const el = {
   planFit: $('#planFit'),
   planScale: $('#planScale'),
   planModeDraw: $('#planModeDraw'),
+  planModeShape: $('#planModeShape'),
   planModeSelect: $('#planModeSelect'),
   planPlaceAll: $('#planPlaceAll'),
   planPlaceClear: $('#planPlaceClear'),
   planTraceOutlines: $('#planTraceOutlines'),
   planTraceClear: $('#planTraceClear'),
+  planShapeAssign: $('#planShapeAssign'),
+  planShapeAssignRoom: $('#planShapeAssignRoom'),
+  planShapeAssignGo: $('#planShapeAssignGo'),
+  planShapeAssignClose: $('#planShapeAssignClose'),
   planHint: $('#planHint'),
   planStatus: $('#planStatus'),
   planScaleFix: $('#planScaleFix'),
@@ -448,6 +458,13 @@ function shapeBadge(raw) {
   const hasPoly = !!(raw && Array.isArray(raw.poly) && raw.poly.length > 2);
   const hasRect = !!(raw && raw.rect);
   if (hasPoly) {
+    if (raw.source === 'drawn') {
+      const a = Number(raw.area);
+      const title = Number.isFinite(a) && a > 0
+        ? `shape drawn on the plan by hand; its area, ${fmt(a, 1)} m², is the drawn shape's own area`
+        : 'shape drawn on the plan by hand';
+      return ` <span class="row-badge is-outline" title="${esc(title)}">drawn</span>`;
+    }
     const traced = Number(raw.polyArea), stated = Number(raw.area);
     const title = Number.isFinite(traced) && traced > 0 && Number.isFinite(stated) && stated > 0
       ? `outline traced from the drawing: ${fmt(traced, 1)} m² traced against ${fmt(stated, 1)} m² stated`
@@ -461,6 +478,15 @@ function shapeBadge(raw) {
     return ` <span class="row-badge is-box" title="${esc(title)}">box</span>`;
   }
   return '';
+}
+
+/** One plain line for the detail panel saying where this room's shape comes from — the drawn shape's
+ *  own area, or the plan's stated area for a traced outline. Empty when the room has no polygon. */
+function shapeNote(raw) {
+  if (!raw || !Array.isArray(raw.poly) || raw.poly.length <= 2) return '';
+  return raw.source === 'drawn'
+    ? '&middot; shape drawn on the plan (the area is the drawn shape)'
+    : "&middot; outline traced from the drawing (the area is the plan's stated area)";
 }
 
 function defaultText(key, rn) {
@@ -683,6 +709,7 @@ function renderDetail(calc) {
         height ${fmt(room.height, 2)} m &middot;
         ${fmt(room.people, 0)} people &middot; ${esc(room.orient)} facing &middot;
         glass ${fmt(room.glass, 1)} m&sup2; ${room.roof ? '&middot; roof exposed' : ''}
+        ${shapeNote(state.rooms[idx])}
         ${room.include === false ? '&middot; <strong>excluded from totals</strong>' : ''}
       </div>
     </div>
@@ -1361,11 +1388,19 @@ function planHintText() {
   const placed = state.rooms.filter(isPlacedRoom).length;
   if (state.ui.planMode === 'select') {
     return `Click a room box to open its load breakdown. Drag a room to move it, drag a corner to ` +
-      `resize, Delete to remove, middle-drag or hold Space to pan. ` +
+      `resize, drag a shape's vertex to reshape it (drag an edge middle to add a point; hold Alt and ` +
+      `drop a point on another edge to remove it), Delete to remove, middle-drag or hold Space to pan. ` +
       `${drawn} hand-drawn and ${placed} placed room box(es) on the plan.`;
   }
+  if (state.ui.planMode === 'shape') {
+    return `Click to add a corner, and click the first corner again (or double-click, or press Enter) ` +
+      `to close the shape. Backspace takes back the last corner, Escape throws the shape away. When it ` +
+      `closes you choose which room it is. Areas are measured at 1:${planScaleDenom()}. ` +
+      `${drawn} room(s) drawn so far, ${placed} placed.`;
+  }
   return `Drag a rectangle over a room in the drawing to add it as a room, or use ` +
-    `"Place all rooms on the plan" to give every room the drawing names a locator box. ` +
+    `"Place all rooms on the plan" to give every room the drawing names a locator box, or ` +
+    `"Draw shape" to trace a room with any number of sides. ` +
     `Areas are measured at 1:${planScaleDenom()} — change the drawing scale above if the sheet differs. ` +
     `${drawn} room(s) drawn so far, ${placed} placed. Switch to Select / edit to move, resize or delete a box.`;
 }
@@ -1410,12 +1445,26 @@ function roomById(id) {
  *  of times a second, and the full project calc over a large table (159 sample rooms) is far too
  *  heavy to repeat per move. The row's area cell, the totals and the summary are refreshed once, in
  *  planRoomMoveEnd(). Keeping the live path this small is what makes the box follow the pointer. */
-function planRoomMoved(id, rect) {
+function planRoomMoved(id, payload) {
   const room = roomById(id);
-  if (!room || !rect) return;
+  if (!room || !payload) return;
+  // A polygon room (a traced outline, or a hand-drawn shape) reports { id, poly, page, kind }: write
+  // the ring. For a HAND-DRAWN shape the row's area cell is refreshed live too (a vertex edit changes
+  // the area, and the user should see it), but the TOTALS are deliberately left alone until the
+  // release — exactly as for a rectangle move — so the load can never move mid-gesture.
+  if (Array.isArray(payload.poly)) {
+    setRoomRing(room, payload.poly, payload.page);
+    if (room.source === 'drawn') {
+      room.area = drawnPolyArea(room);
+      const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
+      if (inp) inp.value = String(room.area);
+    }
+    if (plan.overlay) plan.overlay.render();
+    return;
+  }
   room.rect = {
-    page: rect.page != null ? rect.page : (room.rect && room.rect.page) || plan.page || 1,
-    x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+    page: payload.page != null ? payload.page : (room.rect && room.rect.page) || plan.page || 1,
+    x: payload.x, y: payload.y, w: payload.w, h: payload.h,
   };
   if (plan.overlay) plan.overlay.render();
 }
@@ -1425,14 +1474,31 @@ function planRoomMoved(id, rect) {
  *  shows), recalculate, refresh the summary and the open description, redraw the map and persist.
  *  updateLive() is the same no-table-rebuild refresh the in-table edits use, so the table keeps the
  *  room's row and the user's focus instead of being thrown away and rebuilt. */
-function planRoomMoveEnd(id, rect) {
+function planRoomMoveEnd(id, payload) {
   const room = roomById(id);
-  if (!room || !rect) return;
+  if (!room || !payload) return;
+  // A polygon room: store the new ring. A hand-drawn shape OWNS its area through the ring, so it is
+  // re-derived here (a translation leaves a shoelace area untouched, so a move reports the same area
+  // and the load does not move; a VERTEX edit really does change it, so the load follows). A traced
+  // outline keeps the stated area it already had — the load must never read `poly*` (AGENTS.md).
+  if (Array.isArray(payload.poly)) {
+    const denom = roomDenom(room);
+    setRoomRing(room, payload.poly, payload.page);
+    if (!room.scaleDenom) room.scaleDenom = denom;
+    if (room.source === 'drawn') {
+      room.area = drawnPolyArea(room);
+      const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
+      if (inp) inp.value = String(room.area);
+    }
+    updateLive();   // recalculates, refreshes computed cells, summary, description and the shapes
+    saveSoon();
+    return;
+  }
   const denom = roomDenom(room);
   // store the rectangle the same rounded way roomFromRect() does, so a move matches a fresh draw
   const next = {
-    page: rect.page != null ? rect.page : (room.rect && room.rect.page) || plan.page || 1,
-    x: round2(rect.x), y: round2(rect.y), w: round2(rect.w), h: round2(rect.h),
+    page: payload.page != null ? payload.page : (room.rect && room.rect.page) || plan.page || 1,
+    x: round2(payload.x), y: round2(payload.y), w: round2(payload.w), h: round2(payload.h),
   };
   room.rect = next;
   room.scaleDenom = denom;
@@ -1684,11 +1750,14 @@ async function planTraceOutlines() {
 
   // A project saved before the parser recorded WHERE the sheet names each room has no `at`; recover
   // the positions exactly like Place all rooms does, so tracing works on such a project too.
-  let withPos = positionedRooms();
+  // A room the user drew BY HAND is left out on purpose: its shape is their own work, not a stale
+  // outline from an earlier trace, and tracing must not overwrite or drop it.
+  const traceable = () => positionedRooms().filter((r) => r.source !== 'drawn');
+  let withPos = traceable();
   if (!withPos.length) {
     const n = await rehydratePositions();
     if (n) saveSoon();
-    withPos = positionedRooms();
+    withPos = traceable();
   }
   if (!withPos.length) {
     setStatus('warn', 'No room carries both a position on the sheet and an area, so there is nothing to trace. ' +
@@ -1936,11 +2005,13 @@ function passLabel(keys) {
   return list.map(name).join(' and ');
 }
 
-/** Remove ONLY the traced outlines. The rooms, their boxes, areas and the load are all untouched. */
+/** Remove ONLY the traced outlines. The rooms, their boxes, areas and the load are all untouched.
+ *  A shape the user DREW by hand (source 'drawn') is not a trace and is left alone. */
 function planTraceClear() {
   let removed = 0;
   for (const room of state.rooms) {
     if (!room.poly) continue;
+    if (room.source === 'drawn') continue;
     delete room.poly;
     delete room.polyPage;
     delete room.polyArea;
@@ -1968,6 +2039,118 @@ function planLevelForPage(page) {
   return seen[page - 1] || (seen.length ? seen[seen.length - 1] : '');
 }
 
+/* ---- "Draw shape": a hand-drawn polygon with any number of edges ---------------------------------
+ * The overlay (js/overlay.js, mode 'shape') reports a CLOSED ring in PDF space — the same space
+ * room.poly uses for a traced outline — so a hand-drawn shape is stored, drawn, hit-tested, moved and
+ * exported exactly like a traced one. Two extra things happen here:
+ *   • a ring that crosses itself, or encloses almost no area, is refused with one plain line and never
+ *     becomes a room (polyshape.polygonIsSimple / the MIN area rule);
+ *   • a usable ring is offered to the user: it can become its OWN new room, or REPLACE the shape and
+ *     AREA of an existing table row. Assigning a shape changes that room's area, and therefore its
+ *     load — that is the whole point of tracing a real boundary by hand — and the chooser says so.
+ * The area is the ring's shoelace converted to m² through the SAME points→metres conversion the
+ * placed rectangles use (planview.areaFromRect, wrapped by polyshape.polyAreaM2): there is no second
+ * formula. */
+
+/** A room the user drew by hand: source 'drawn' plus a poly ring. */
+function isDrawnPolyRoom(room) {
+  return !!(room && room.source === 'drawn' && Array.isArray(room.poly) && room.poly.length > 2);
+}
+
+/** Write a ring onto a room: the ring, its page, and a bounding-box rect — so every existing "this
+ *  room has geometry on the plan" path (hints, place-all, the table badge) keeps working. The ring is
+ *  what the overlay draws and hit-tests; the rect is only its box. NEVER touches `source`: a traced
+ *  outline stays traced. */
+function setRoomRing(room, ring, page) {
+  const pts = roundRing(ring);
+  room.poly = pts;
+  room.polyPage = page != null ? page : (room.polyPage || plan.page || 1);
+  const bbox = ringBBox(pts);
+  if (bbox) {
+    room.rect = {
+      page: room.polyPage, x: round2(bbox.x), y: round2(bbox.y),
+      w: round2(bbox.w), h: round2(bbox.h),
+    };
+  }
+}
+
+/** The area (m²) a hand-drawn room's own ring represents at its own drawing scale. */
+function drawnPolyArea(room) {
+  return round2(polyAreaM2(room.poly, roomDenom(room)));
+}
+
+/** The ring is stored, pending the user's choice in the chooser. */
+let pendingShape = null;   // { ring:[{x,y}], page }
+
+/** A shape closed in the overlay: refuse a nonsense one, otherwise ask what room it belongs to. */
+function planDrawShape(ring, info) {
+  const page = (info && info.page) || plan.page || 1;
+  const denom = planScaleDenom();
+  if (!ringIsUsable(ring, denom)) {
+    setStatus('warn', 'That shape cannot be used: its lines cross each other, or it encloses almost ' +
+      'no area. Please draw it again.', 'plan');
+    return;
+  }
+  // A previous shape still waiting for a choice is kept as a new room (the tool's normal behaviour)
+  // before the new one takes the chooser.
+  if (pendingShape) planCommitShape(null);
+  pendingShape = { ring: roundRing(ring), page };
+  planShowShapeChooser();
+}
+
+/** Fill and show the "This shape is room:" chooser near the plan. */
+function planShowShapeChooser() {
+  if (!el.planShapeAssign || !pendingShape) return;
+  el.planShapeAssignRoom.innerHTML = '<option value="">(new room)</option>' +
+    state.rooms.map((r) => {
+      const n = normalizeRoom(r, state.project);
+      const lv = (n.level || '').trim();
+      const area = Number(n.area);
+      const label = `${n.name || 'Room'}${lv ? ` (${lv})` : ''}`
+        + (Number.isFinite(area) && area > 0 ? ` · ${fmt(area, 1)} m²` : '');
+      return `<option value="${esc(r.id)}">${esc(label)}</option>`;
+    }).join('');
+  el.planShapeAssignRoom.value = '';
+  el.planShapeAssign.classList.remove('hidden');
+  if (plan.overlay) plan.overlay.render();
+  try { el.planShapeAssign.scrollIntoView({ block: 'nearest' }); } catch (err) { /* older browsers */ }
+}
+
+function planHideShapeChooser() {
+  if (el.planShapeAssign) el.planShapeAssign.classList.add('hidden');
+}
+
+/**
+ * Apply the pending shape. `roomId` = an existing row to give the shape to; empty/null = make a NEW
+ * room (also what a dismiss does, exactly like the plain tool). Assigning sets the room's area to the
+ * ring's shoelace area, so the table, the totals, the CSV and the report all move with it.
+ */
+function planCommitShape(roomId) {
+  if (!pendingShape) return;
+  const shape = pendingShape;
+  pendingShape = null;
+  planHideShapeChooser();
+  const room = roomId ? roomById(roomId) : null;
+  if (room) {
+    const before = Number(normalizeRoom(room, state.project).area) || 0;
+    room.source = 'drawn';
+    room.scaleDenom = planScaleDenom();
+    setRoomRing(room, shape.ring, shape.page);
+    room.area = drawnPolyArea(room);
+    renderAll();
+    saveNow();
+    const delta = round2(room.area - before);
+    setStatus('ok', `${room.name || 'Room'} was given the drawn shape: its area is now ` +
+      `${fmt(room.area, 1)} m² (${delta >= 0 ? '+' : ''}${fmt(delta, 1)} m²), and the load has ` +
+      `changed with it. Its shape now comes from the drawing.`, 'plan');
+    planSetMode('select');       // hand the user the new geometry, ready to reshape
+    planSelectRoom(room);
+    return;
+  }
+  planCreateShapeRoom(shape);
+}
+
+/** Create a new room from a ring — the tool's normal behaviour. */
 function planDrawRoom(rect, info) {
   const page = (info && info.page) || plan.page || 1;
   const denom = planScaleDenom();
@@ -1990,6 +2173,31 @@ function planDrawRoom(rect, info) {
   }
 }
 
+function planCreateShapeRoom(shape) {
+  const page = shape.page;
+  const denom = planScaleDenom();
+  const n = state.rooms.filter((r) => isDrawnRoom(r) && !isPlacedRoom(r)).length + 1;
+  const room = {
+    id: newId(),
+    name: `Drawn room ${n}`,
+    level: planLevelForPage(page),
+    scaleDenom: denom,
+    source: 'drawn',
+    include: true,
+  };
+  setRoomRing(room, shape.ring, page);
+  room.area = drawnPolyArea(room);
+  const res = addRooms([room]);
+  renderAll();
+  saveNow();
+  if (res.added) {
+    setStatus('ok', `${room.name} added — ${fmt(room.area, 1)} m² drawn on the plan at 1:${denom}. ` +
+      `Set its name, orientation and glazing below; the load already uses it.`, 'plan');
+    planSetMode('select');       // hand the user the new geometry, ready to reshape
+    planSelectRoom(room);
+  }
+}
+
 /** The drawing scale is the one input the whole panel depends on, so changing it re-measures every
  *  room that was drawn (their areas are derived from the rectangle, not typed). PLACED rooms are
  *  deliberately skipped: their box was computed BACK from the room's own area, so their area is the
@@ -2001,6 +2209,14 @@ function planApplyScale(denom) {
   let changed = 0;
   for (const r of state.rooms) {
     if (!isDrawnRoom(r) || isPlacedRoom(r)) continue;
+    if (isDrawnPolyRoom(r)) {
+      // a HAND-DRAWN SHAPE owns its area through the RING, not through the bounding box, so it is
+      // re-measured from the ring at the new scale (a traced outline keeps the old rect behaviour)
+      r.scaleDenom = n;
+      r.area = round2(polyAreaM2(r.poly, n));
+      changed += 1;
+      continue;
+    }
     const dims = dimsFromRect(r.rect, n);
     r.scaleDenom = n;
     r.area = round2(areaFromRect(r.rect, n));
@@ -2183,7 +2399,12 @@ async function planFitWidth() {
 }
 
 function planSetMode(mode) {
-  state.ui.planMode = mode === 'select' ? 'select' : 'draw';
+  state.ui.planMode = mode === 'select' ? 'select' : (mode === 'shape' ? 'shape' : 'draw');
+  // keep the radio buttons in step with the state: the mode can also be changed from code (a closed
+  // shape hands over to Select / edit), and a stale radio would then swallow the next click on it.
+  if (el.planModeDraw) el.planModeDraw.checked = state.ui.planMode === 'draw';
+  if (el.planModeShape) el.planModeShape.checked = state.ui.planMode === 'shape';
+  if (el.planModeSelect) el.planModeSelect.checked = state.ui.planMode === 'select';
   if (plan.overlay) { plan.overlay.setMode(state.ui.planMode); plan.overlay.render(); }
   planSync();
   saveSoon();
@@ -2212,7 +2433,12 @@ function planWire() {
   if (el.planZoomOut) el.planZoomOut.addEventListener('click', () => planZoomBy(1 / 1.25));
   if (el.planFit) el.planFit.addEventListener('click', planFitWidth);
   if (el.planModeDraw) el.planModeDraw.addEventListener('change', () => planSetMode('draw'));
+  if (el.planModeShape) el.planModeShape.addEventListener('change', () => planSetMode('shape'));
   if (el.planModeSelect) el.planModeSelect.addEventListener('change', () => planSetMode('select'));
+  if (el.planShapeAssignGo) el.planShapeAssignGo.addEventListener('click', () => {
+    planCommitShape(el.planShapeAssignRoom ? el.planShapeAssignRoom.value : '');
+  });
+  if (el.planShapeAssignClose) el.planShapeAssignClose.addEventListener('click', () => planCommitShape(null));
   if (el.planPlaceAll) el.planPlaceAll.addEventListener('click', planPlaceAllRooms);
   if (el.planPlaceClear) el.planPlaceClear.addEventListener('click', planClearPlaced);
   if (el.planTraceOutlines) el.planTraceOutlines.addEventListener('click', planTraceOutlines);
@@ -2260,14 +2486,15 @@ async function openPlan(bytes, opts) {
         getPage: () => plan.page,
         getSelectedId: () => state.ui.openId || null,
         getScaleDenom: planScaleDenom,
-        getMode: () => (state.ui.planMode === 'select' ? 'select' : 'draw'),
+        getMode: () => state.ui.planMode,
         onDraw: planDrawRoom,
+        onDrawShape: planDrawShape,
         onSelect: planSelectRoom,
         onRoomMoved: planRoomMoved,
         onRoomMoveEnd: planRoomMoveEnd,
         onDelete: planDeleteRoom,
       });
-      if (plan.overlay.setMode) plan.overlay.setMode(state.ui.planMode === 'select' ? 'select' : 'draw');
+      if (plan.overlay.setMode) plan.overlay.setMode(state.ui.planMode);
       planWire();
     }
     const info = await plan.viewer.load(own);
@@ -2591,9 +2818,13 @@ function wire() {
     el.jsonInput.value = '';
   });
 
-  // Escape backs out one layer at a time: the report if it is open, otherwise the room breakdown
+  // Escape backs out one layer at a time: an in-progress drawn shape (left to the overlay, which owns
+  // it — do NOT also close the breakdown under it), a shape waiting for the chooser (kept as a new
+  // room, the tool's normal behaviour), the report if it is open, otherwise the room breakdown.
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (plan.overlay && typeof plan.overlay.hasDraft === 'function' && plan.overlay.hasDraft()) return;
+    if (pendingShape) { planCommitShape(null); return; }
     if (closeReport()) return;
     closeDetail();
   });
@@ -2622,4 +2853,4 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, plan };
+window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, plan, planDrawShape, planCommitShape, planShowShapeChooser };

@@ -167,9 +167,10 @@ opening the page again restores the last table. **Clear all rooms** empties it.
 
 As soon as a drawing is loaded — an uploaded PDF, or the **Try sample drawing** button — the
 calculator shows a plan view, **3. Draw rooms on the plan**. It renders the actual page of the
-drawing and lets you place rooms by dragging a rectangle on it. Use it to add a room the reader
-missed, or to measure a room straight off the sheet. **Place all rooms on the plan** also drops a
-box on the sheet for every room the reader found, so you can click a room in the drawing instead of
+drawing and lets you place rooms on it: drag a **rectangle** with **Draw room**, or click the
+**corners of any shape** with **Draw shape** when the room is not a box. Use it to add a room the
+reader missed, or to measure a room straight off the sheet. **Place all rooms on the plan** also drops
+a box on the sheet for every room the reader found, so you can click a room in the drawing instead of
 in the table.
 
 The page is rendered **one page at a time, on demand** (a dense A1 CAD sheet takes roughly **0.3–0.5 s**
@@ -184,7 +185,7 @@ applies to it.
 | **← Prev / Next →** with a **Page N of M** readout | Move between the pages of the loaded drawing |
 | **− / +** with a **%** readout | Zoom out / zoom in |
 | **Fit width** | Zoom the page to the width of the panel |
-| **Draw room** / **Select / edit** | Choose the mode: add a room, or click an existing box to open it |
+| **Draw room** / **Draw shape** / **Select / edit** | Choose the mode: drag a rectangle, click the corners of any shape, or click an existing box to open it |
 | **Place all rooms on the plan** | Give every table room the drawing *names* a locator box on the sheet (see below) |
 | **Remove placed rooms** | Take those locator boxes away again — your own drawn boxes are untouched |
 | **Drawing scale** | 1:20, 1:50, **1:100 (default)**, 1:200, 1:500 — the scale a drawn room is measured at |
@@ -207,6 +208,54 @@ applies to it.
    the room table immediately and is **already counted in the cooling load**.
 4. Its **load breakdown** opens so you can set the name, space type, orientation, glazing and the rest
    — exactly like any other room.
+
+### Draw a shape — a room with any number of edges
+
+A rectangle is only right for a rectangular room. **Draw shape** builds a room from as many corners as
+you like, so an L-shaped or stepped room gets its **real floor plan** instead of a box around it.
+
+1. Set **Drawing scale** first (same rule as above), then switch the mode to **Draw shape**.
+2. **Click** each corner of the room in turn. Every click adds a corner, and the part you have drawn so
+   far is shown while the **current edge follows your pointer** with a dashed line back to the first
+   corner, so you can see where it will close.
+3. **Close the shape** in any of three ways: click the **first corner** again (within about 8 pixels),
+   **double-click** anywhere, or press **`Enter`**.
+4. **Backspace** removes the last corner while you are still drawing. **`Esc`** throws the whole shape
+   away — nothing is created.
+5. The **area comes from the shape itself**: LoadLens uses the drawn polygon's own area at the drawing
+   scale (the same conversion the rectangles use), not the box around it. So an L-shaped room counts
+   for less than the rectangle that would enclose it.
+6. If the shape **crosses itself** (a bow-tie) or is too small to be a room, LoadLens **refuses it**
+   with one short line and creates nothing. A shape with a notch is fine; a shape with a loop is not.
+
+### Give the shape to a room — or make a new room
+
+When a shape closes, a small chooser appears just above the drawing, saying **"This shape is room:"**
+with every room in the table in the list and **`(new room)`** already selected:
+
+- **Leave it on `(new room)`** and press **Set the shape** — the shape becomes a new room named
+  `Drawn room N`, exactly as the plain tool behaves.
+- **Pick a room from the list** instead — that room's **area is replaced by the shape's area**, the
+  shape becomes that room's outline, and the row is marked **`drawn`**. This is how you give a real
+  plan shape to a room that came from the PDF or from a schedule.
+- **Close the chooser** (the **×**, or `Esc`) and the shape simply becomes a **new room** — the same as
+  picking `(new room)`.
+
+After the shape is applied, the plan switches to **Select / edit** with that room **selected** (its
+breakdown open), so you can immediately reshape it or set its name, space type and glazing. Switch back
+to **Draw shape** to draw the next room.
+
+**Be aware:** giving a shape to an existing room **changes that room's area, and therefore its load**.
+The row's area, the **total cooling load**, the CSV, the printable report and the room's breakdown all
+follow the new area. That is the point of the gesture — a bigger shape means a bigger load — and the
+status line tells you the old area, the new one and the difference. Only the **shape and the area**
+are replaced; the room's name, space type, level, orientation and glazing are left alone.
+
+**How you can tell the two kinds of outline apart.** A room **traced** from the drawing's own walls
+(**Trace real outlines**) is drawn with a **thin, light outline** so the plan's linework stays readable
+underneath. A shape **you** drew keeps the same geometry and behaviour but is drawn with a
+**noticeably thicker line and a stronger fill**, and its table row carries a small **`drawn`** badge —
+so a hand-drawn room never looks like a traced one.
 
 ### Place every room from the table on the plan
 
@@ -259,6 +308,31 @@ In **Select / edit** you work on the box directly, and the table stays in step a
 - **Pan** — when the sheet is zoomed past the width of the panel it scrolls. Drag with the **middle
   mouse button**, or hold **Space** and drag, to pan.
 
+### Reshape a room you traced or drew — corner by corner
+
+A traced outline and a hand-drawn shape have **no box around them**, so they are edited corner by
+corner instead. Select the room in **Select / edit** and every corner shows a small **square handle**,
+with a small **dot on the middle of every edge**:
+
+- **Move a corner** — drag its square handle. The shape follows, and for a **shape you drew** the
+  **Area m² cell in the table updates while you drag** (that room's area *is* its shape). The **total
+  load is not touched while you drag**; on release it follows the new area.
+- **Add a corner** — drag the **dot on the edge** where you want the new corner. The edge splits there
+  and the shape keeps its outline. Useful for turning a straight wall into a step.
+- **Remove a corner** — hold **`Alt`** and drag that corner **onto one of the edges next to it**, then
+  let go. The corner is dropped and the two edges join up. (`Alt` is not used by Windows for this, so
+  the gesture never fights the system.)
+- **Move the whole shape** — drag the **body** of the shape (not a handle). Its area is unchanged.
+
+What a reshape does to the load depends on where the room's area comes from:
+
+- A **shape you drew** (or a room you gave a shape to) **gets its area from the shape**, so moving a
+  corner really does change the room's area, and the load follows it on release. You are editing the
+  room's real size.
+- A **traced outline** keeps the area the **plan** states for it — the trace was only accepted because
+  it agreed with that number — so reshaping it moves the outline without rewriting the area. If you
+  want the shape to drive the number, draw the room with **Draw shape** instead.
+
 A move or a resize is saved with the project automatically (it is part of the same local storage and
 **Save project (.json)** file as everything else), so the box is still where you put it after a
 reload.
@@ -266,8 +340,9 @@ reload.
 ### Changing the scale re-measures the rooms you drew
 
 A drawn room's area is derived from its rectangle, so it keeps the scale it was measured at. **Change
-the drawing scale and every room you drew is re-measured** at the new scale. Set the scale before you
-draw a floor, and check the area in the table afterwards.
+the drawing scale and every room you drew is re-measured** at the new scale — a **Draw shape** room is
+re-measured from its **polygon**, the same way. Set the scale before you draw a floor, and check the
+area in the table afterwards.
 
 ### What the plan cannot do — the honest limit
 
@@ -308,7 +383,12 @@ was the difference between 2 rooms traced and 78.
 **Moving and removing.** Drag an outline to move it (it keeps its shape exactly) and delete it like any
 other region. Outlines have **no resize handles** — there is no box to drag, and turning an outline back
 into a rectangle would be a lie about the room. To re-measure a room by dragging, draw it yourself or
-trace again.
+trace again. In **Select / edit** you *can* still edit an outline **corner by corner** (add, move and
+remove corners — see *Reshape a room you traced or drew* above); what an outline will not do is take its
+area from your edits, because its area stays the figure the plan states.
+
+**Clear traced outlines** takes away the traced outlines and nothing else — the rooms, their boxes,
+their areas and the load are untouched, and so are the shapes **you** drew by hand.
 
 **The honest limits.** A room cannot be traced when its name lies on a wall line, when its space merges
 with a neighbour through a doorway, when the space is open plan, or when the traced area simply does not
@@ -319,7 +399,14 @@ and the status line always tells you how many and why.
 
 A drawn room keeps its **rectangle and its scale**, and both are stored in the project — in the
 browser's local storage and in the **Save project (.json)** file — so your drawn rooms come back after
-a reload or on another computer. The drawing scale you picked is saved with the project too.
+a reload or on another computer. A room drawn with **Draw shape** is saved the same way: its **polygon**
+(the list of corners in drawing coordinates), the page it sits on and its area travel in the same
+project file, so a drawn shape, its corners and the area it gave a room all come back exactly as you
+left them. The drawing scale you picked is saved with the project too, and the drawing scale you had for
+a shape is remembered with that room.
+
+A project saved by an **older version** of LoadLens — one with no drawn shapes in it at all — opens
+untouched: nothing is added to a room that never had a shape, and no area changes.
 
 The drawing itself comes back too. It is kept in this browser (never uploaded), so a reload
 hands you the sheet again — on the page you were last looking at — with the rooms you drew still
