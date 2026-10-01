@@ -328,6 +328,85 @@ if (!sampleMissing) {
   ok("the drawn room is included in the total cooling load", trWithPlan > tr,
       `${tr} TR -> ${trWithPlan} TR`);
   await page.screenshot({ path: `${OUT}/live-plan.png` });
+
+  // 14. drawing must keep working when the sheet is zoomed past fit-width and has to be scrolled.
+  //     The overlay is a layer over the drawing: if it is sized to the visible window instead of to
+  //     the drawing, everything further down the sheet takes no pointer events and cannot be drawn on.
+  const fitScale = await page.evaluate(() => {
+    const c = document.getElementById("planCanvas");
+    const v = document.getElementById("planView");
+    return { canvas: c.clientWidth, panel: v.clientWidth };
+  });
+  for (let i = 0; i < 3; i += 1) {
+    await page.click("#planZoomIn");
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  const zoomed = await page.evaluate(() => {
+    const c = document.getElementById("planCanvas");
+    const v = document.getElementById("planView");
+    const svg = document.querySelector(".plan-overlay");
+    const sr = svg.getBoundingClientRect(), cr = c.getBoundingClientRect();
+    return {
+      scale: Number(document.getElementById("planZoomPct").textContent) / 100,
+      canvasCss: c.clientWidth, panelW: v.clientWidth,
+      scrollableX: v.scrollWidth > v.clientWidth + 1, scrollableY: v.scrollHeight > v.clientHeight + 1,
+      svgW: Math.round(sr.width), svgH: Math.round(sr.height),
+      coversCanvas: Math.abs(sr.left - cr.left) < 2 && Math.abs(sr.top - cr.top) < 2 &&
+                    sr.width >= c.clientWidth - 2 && sr.height >= c.clientHeight - 2,
+    };
+  });
+  ok("zooming past fit-width makes the sheet scrollable",
+      zoomed.scrollableX || zoomed.scrollableY, JSON.stringify(zoomed));
+  ok("the overlay covers the whole drawing, not just the visible window",
+      zoomed.coversCanvas, `svg ${zoomed.svgW}x${zoomed.svgH} vs canvas ${zoomed.canvasCss} css px`);
+
+  // scroll to the far corner of the sheet: this is the part that used to be undrawable
+  await page.evaluate(() => {
+    const v = document.getElementById("planView");
+    v.scrollLeft = v.scrollWidth;
+    v.scrollTop = v.scrollHeight;
+  });
+  await new Promise((r) => setTimeout(r, 500));
+
+  const rowsBeforeZoomDraw = await page.$$eval("#roomsBody tr", (r) => r.length);
+  const zoomBox = await page.$eval("#planView", (e) => {
+    const r = e.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  const zx = 260, zy = 190;
+  const qx = zoomBox.x + 40, qy = zoomBox.y + 40;
+  await page.mouse.move(qx, qy);
+  await page.mouse.down();
+  await page.mouse.move(qx + zx / 2, qy + zy / 2, { steps: 5 });
+  await page.mouse.move(qx + zx, qy + zy, { steps: 8 });
+  await page.mouse.up();
+  await new Promise((r) => setTimeout(r, 900));
+
+  const rowsAfterZoomDraw = await page.$$eval("#roomsBody tr", (r) => r.length);
+  ok("a room can still be drawn on a zoomed-in, scrolled sheet",
+      rowsAfterZoomDraw === rowsBeforeZoomDraw + 1,
+      `${rowsBeforeZoomDraw} -> ${rowsAfterZoomDraw} at ${zoomed.scale}x`);
+
+  const zoomDrawn = await page.evaluate(() => {
+    const out = [];
+    for (const tr of document.querySelectorAll("#roomsBody tr")) {
+      const n = tr.querySelector('input[data-field="name"]');
+      const a = tr.querySelector('input[data-field="area"]');
+      if (n && /Drawn room/.test(n.value)) out.push({ name: n.value, area: a ? Number(a.value) : null });
+    }
+    return out;
+  });
+  const newest = zoomDrawn[zoomDrawn.length - 1];
+  const zoomExpected = areaOf(zx / zoomed.scale, zy / zoomed.scale, 100);
+  ok("the room drawn on the scrolled sheet has the right area",
+      !!newest && Math.abs(newest.area - zoomExpected) <= Math.max(1, zoomExpected * 0.05),
+      newest ? `table ${newest.area} m² vs geometry ${zoomExpected.toFixed(2)} m²` : "not found");
+
+  // put the view back so the screenshot shows the whole sheet
+  await page.click("#planFit");
+  await new Promise((r) => setTimeout(r, 800));
+  await page.screenshot({ path: `${OUT}/live-plan-zoomed.png` });
+
 } // end of the checks that need the sample drawing
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample

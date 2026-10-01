@@ -556,8 +556,12 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 }
 .viewer-wrap { position: relative; line-height: 0; }
 #planCanvas { display: block; max-width: none; }
-/* --- the overlay (js/overlay.js) --- */
-.plan-overlay { position: absolute; inset: 0; touch-action: none; overflow: visible; }
+/* --- the overlay (js/overlay.js) ---
+   Anchored to the CONTENT origin and sized by the width/height attributes the overlay sets from the
+   canvas box. It must NOT be stretched to the container (inset: 0): .plan-view is the scroll box, so
+   that would size the layer to the visible window, and everything further down the sheet would have
+   no overlay covering it — no pointer events, no drawing (the "above 70% I cannot draw" bug). */
+.plan-overlay { position: absolute; left: 0; top: 0; touch-action: none; overflow: visible; }
 .plan-overlay.is-draw { cursor: crosshair; }
 .plan-overlay.is-select { cursor: default; }
 .plan-room { cursor: pointer; }

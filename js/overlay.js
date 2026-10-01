@@ -245,9 +245,16 @@ export function createOverlay(rootEl, {
   }
 
   function resize() {
+    // Measure the DRAWING, not the window. rootEl is a scroll container as soon as the sheet is
+    // zoomed past fit-width, and a layer sized to the visible box scrolls away with the content:
+    // the parts of the drawing that need scrolling to then take no pointer events at all, so rooms
+    // could not be drawn there (reported from real use: "above 70% I can no longer draw").
+    // The canvas box IS the scrollable content; rootEl is only the fallback.
+    const canvas = rootEl.querySelector('canvas');
+    const box = canvas && canvas.clientWidth ? canvas : rootEl;
     size = {
-      w: Math.max(0, Math.round(rootEl.clientWidth || 0)),
-      h: Math.max(0, Math.round(rootEl.clientHeight || 0)),
+      w: Math.max(0, Math.round(box.clientWidth || 0)),
+      h: Math.max(0, Math.round(box.clientHeight || 0)),
     };
     svg.setAttribute('width', String(size.w));
     svg.setAttribute('height', String(size.h));
