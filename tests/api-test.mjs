@@ -157,6 +157,14 @@ async function main() {
         "every room has sourceFile"
       );
       assert.ok(json.rooms.every((r) => r.id && r.sourceFile && r.name), "room shape");
+
+      // The parsed rooms must carry WHERE the plan names them: the app places the table's rooms on the
+      // drawing from this. It is easy to break silently — the parser keeps the position, but the API
+      // runs a BUNDLED copy of the parser, so a stale bundle ships rooms with no position and the
+      // drawing stays empty for an uploaded file while the sample button (parsed in the browser) works.
+      const withAt = json.rooms.filter((r) => r.at && Number.isFinite(r.at.x) && Number.isFinite(r.at.y));
+      assert.equal(withAt.length, json.rooms.length,
+        `every parsed room carries its position on the sheet (${withAt.length}/${json.rooms.length})`);
       const levels = new Set(json.rooms.map((r) => r.level));
       assert.equal(levels.size, 3, "3 levels in the merged list");
     });
