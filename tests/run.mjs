@@ -48,7 +48,7 @@ for (const [label, mod] of suites) {
 // Suites that are self-contained scripts (they print their own PASS/FAIL and exit non-zero on
 // failure) rather than modules exporting test* functions. js/planview.js is the geometry behind
 // drawing rooms on the plan, so its 46 checks must gate CI like every other suite.
-const STANDALONE = [["plan/geometry", "tests/test-planview.mjs"]];
+const STANDALONE = [["plan/geometry", "tests/test-planview.mjs"], ["saved projects", "tests/test-rehydrate.mjs"]];
 
 for (const [label, file] of STANDALONE) {
   if (only && !label.includes(only)) continue;
