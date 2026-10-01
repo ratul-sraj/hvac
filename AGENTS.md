@@ -131,3 +131,51 @@ node tests: `pdfjs-dist/legacy/build/pdf.mjs`). parsePdf must NOT import pdf.js 
 - Units: SI in the engine (m, m², W). UI shows TR, W, L/s, m² and ft².
 - Simple English in UI text (user is non-native English speaker).
 - Keep code readable; no minification.
+
+## trace.js contract — real room outlines from the plan's linework (PLANNER owns this module)
+
+A placed region was a RECTANGLE sized back from the room's stated area, because only the PDF's TEXT
+layer was read. The walls are the PDF's VECTOR PATHS. `js/trace.js` is pure (no DOM, no canvas, no
+pdf.js) and works entirely in **PDF user space (y up, points)** — the same space `room.at` and
+`room.rect` use, so the overlay needs no extra conversion.
+
+```js
+segmentsFromOperatorList(fnArray, argsArray, OPS, ctm) -> { segments, styled }
+   // segments: {x1,y1,x2,y2,width,color} — width/color are the graphics state at constructPath time,
+   // which is how the plan's own line class is told from hatching, symbols and the title block.
+dominantStyle(segments) -> "width|r,g,b"      // the most common line class in a sheet
+filterByStyle(segments, key) -> segments
+rasterizeWalls(segments, box, pxPerPt, thickness) -> { w, h, grid }   // grid 1 = wall
+pointToCell(x, y, box, pxPerPt) -> { cx, cy }        // box = {x0,y0,x1,y1} = the page MediaBox
+regionAt(grid, w, h, cx, cy) -> { cells, areaPx, bbox, key }         // null if on a wall / outside
+outlineFromRegion(region, w, box, pxPerPt) -> [ring]                 // rings of {x,y} in PDF space
+polygonAreaPt2 / outlineAreaPt2 / pt2ToM2(areaPt2, denom) / metresPerPt(denom)
+judgeTrace(tracedM2, statedArea, labelsInRegion, band) -> { ok, ratio, reason }
+traceRooms({segments, box, rooms:{id,at,area}, denom, pxPerPt, thickness, band}) -> { results, stats }
+```
+
+**A traced outline is ACCEPTED only when both hold** (this is the whole point of the module):
+1. the enclosed region contains exactly ONE room label — the region's `key` is canonical (its smallest
+   cell index), never `cells[0]`, which is only the seed and differs per label; and
+2. its area at the drawing scale is within `TRACE_BAND` (`lo 0.8`, `hi 1.35`) of the area the plan
+   states. The band is asymmetric because a region bounded by wall CENTRELINES is systematically
+   larger (measured ≈ +9% with 220 mm walls).
+Everything refused keeps its rectangle. A refusal must carry a plain-language `reason` and no outline.
+
+**Room fields added by tracing** (display + verification ONLY):
+`room.poly` = closed ring in PDF space, `room.polyPage` = the page it belongs to,
+`room.polyArea` = traced m², `room.polyRatio` = traced ÷ stated.
+**The load must never read `poly*`** — `room.area`/`length`/`width` stay exactly as the plan or the
+user gave them, so tracing cannot move a load figure. Assert that.
+
+**Rendering rules** (`js/overlay.js`): a room with `poly` draws as a polygon path instead of a rect,
+keeping the same classes, `data-room-id`, include/exclude toggle, selection, move and delete.
+Dragging translates every point. **Resize handles exist only for rect rooms** — an outline has no box
+to drag, and silently turning it into a rectangle would be a lie. Pan/zoom are unaffected.
+
+**Extraction rules** (`js/app.js`): read each page's operator list, transform every point with the
+matrix that lands it in the MediaBox, and ASSERT it does (warn otherwise) — the app and the trace must
+agree on the space. Try the plan's `dominantStyle` class first, falling back to all segments when that
+accepts too few rooms; report which was used in the status line. The drawing scale comes from the
+user's own scale setting: if almost nothing is accepted, say the scale may be wrong rather than
+quietly retrying with another one.

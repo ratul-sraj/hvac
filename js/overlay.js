@@ -86,16 +86,20 @@ import {
   normalizeRect,       // two drag corners (any order) -> {x,y,w,h} positive
   rectIsUsable,        // big enough to be a room? (MIN_RECT_PT)
   areaFromRect,        // PDF rect + drawing scale -> m²
-  roomAtPoint,         // smallest drawn room under a PDF point on a page
-  roomsOnPage,         // drawn rooms of one page, biggest first
   isDrawnRoom,         // has rect geometry? (parsed/scheduled rooms have none)
+  rectContainsPoint,   // PDF point inside a PDF rect
   rectToViewBox,       // PDF rect -> SVG box in view pixels, rotation-safe
+  pdfPointToView,      // PDF point -> view pixel (the SAME adapter rectToViewBox uses)
   viewPointToPdf,      // view pixel -> PDF point
   handleAtPoint,       // which corner grip a PDF point grabs (the ONLY grab test allowed)
   moveRect,            // PDF rect moved by a delta
   resizeRect,          // PDF rect with one corner dragged, opposite corner pinned
   clampRectToPage,     // keep a PDF rect on the sheet
 } from './planview.js';
+// Pure, planner-owned tracing maths. polygonAreaPt2 is the shoelace area in square points — the very
+// definition js/trace.js uses to accept a traced outline, so the overlay measures an outline the same
+// way the tracer did. Importing it keeps a single definition of "area of a ring".
+import { polygonAreaPt2, pt2ToM2 } from './trace.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -123,6 +127,123 @@ function num(n) {
   if (!Number.isFinite(v)) return '0';
   return String(Math.round(v * 100) / 100);
 }
+
+/* ---------------------------------------------------- traced outlines (room.poly)
+ * A room may carry `room.poly`, a CLOSED ring of {x,y} points in PDF user space (y up, points) — the
+ * same space `room.rect` uses. It is produced by js/trace.js and accepted only when the enclosed
+ * region holds exactly one room label and its area matches the stated one (AGENTS.md). The overlay
+ * DRAWS it (never invents it): a room with a usable ring on the current page renders as a polygon
+ * path through the same viewport adapter the rectangles use, keeps every class/data/behaviour of a
+ * rect room, and can be MOVED. It cannot be resized: an outline has no box to drag, and silently
+ * replacing it with a rectangle would be a lie about the room's shape, so it gets no grips.
+ * The overlay never writes state: a move reports the translated ring, exactly as it reports a moved
+ * rectangle, and the app persists it. room.polyPage is the ring's page; room.polyArea/polyRatio are
+ * verification fields the overlay never reads or touches.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** The ring a room carries, or null. Points must be finite; fewer than 3 points is not a ring. */
+function ringOfRoom(room) {
+  if (!room || !Array.isArray(room.poly)) return null;
+  const ring = room.poly.filter((p) => p && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y)));
+  return ring.length >= 3 ? ring : null;
+}
+
+/** The page an outline belongs to: room.polyPage, falling back to the room's rect page. */
+function polyPageOf(room) {
+  const n = Number(room.polyPage);
+  if (Number.isFinite(n)) return n;
+  const r = Number(room && room.rect && room.rect.page);
+  return Number.isFinite(r) ? r : null;
+}
+
+/** Deep-enough copy of a ring (plain {x,y} objects). */
+function copyRing(ring) {
+  return ring.map((p) => ({ x: p.x, y: p.y }));
+}
+
+/** Translate EVERY point of a ring by the same delta — the shape is preserved exactly. */
+function translateRing(ring, dx, dy) {
+  return ring.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+}
+
+/** Even-odd ray cast: is a PDF-space point inside a closed ring? (Hit-testing only.) */
+function pointInRing(ring, pt) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i];
+    const b = ring[j];
+    if (((a.y > pt.y) !== (b.y > pt.y))
+      && (pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x)) inside = !inside;
+  }
+  return inside;
+}
+
+/** PDF ring -> view-pixel points through the same pdfPointToView adapter the rect path uses. */
+function ringToView(vp, ring) {
+  return ring.map((p) => pdfPointToView(vp, p));
+}
+
+/** Bounding box of a list of view-pixel points, or null when empty. */
+function viewBoxOfPoints(pts) {
+  if (!pts || !pts.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/** The area of one render entry in square PDF points, for draw order and smallest-wins hit testing. */
+function shapeAreaPt2(entry) {
+  if (entry.ring) return polygonAreaPt2(entry.ring);
+  const r = entry.room.rect;
+  return Math.abs(r.w * r.h);
+}
+
+/** Rooms of one page that can be drawn — outlines first-class, rectangles unchanged — biggest first
+ *  so small rooms stay clickable and labels stay readable. */
+function shapesOnPage(rooms, page) {
+  const out = [];
+  for (const room of rooms || []) {
+    if (!room) continue;
+    const ring = ringOfRoom(room);
+    if (ring) {
+      // A traced outline belongs to its own page. A ring whose page is elsewhere is not this page's.
+      if (polyPageOf(room) === page) out.push({ room, ring });
+      continue;
+    }
+    if (isDrawnRoom(room) && room.rect.page === page) out.push({ room, ring: null });
+  }
+  out.sort((a, b) => shapeAreaPt2(b) - shapeAreaPt2(a));
+  return out;
+}
+
+/** Smallest drawn shape (outline or rectangle) under a PDF point on a page. This is planview's
+ *  roomAtPoint extended to outlines: a click INSIDE a traced ring picks that room, and a click in
+ *  the notch of an L-shaped room's bounding box does NOT. */
+function roomAtPointShaped(rooms, page, pt) {
+  let best = null;
+  let bestArea = Infinity;
+  for (const room of rooms || []) {
+    if (!room) continue;
+    const ring = ringOfRoom(room);
+    if (ring) {
+      if (polyPageOf(room) !== page || !pointInRing(ring, pt)) continue;
+      const a = polygonAreaPt2(ring);
+      if (a < bestArea) { bestArea = a; best = room; }
+      continue;
+    }
+    if (!isDrawnRoom(room) || room.rect.page !== page) continue;
+    if (!rectContainsPoint(room.rect, pt)) continue;
+    const a = Math.abs(room.rect.w * room.rect.h);
+    if (a < bestArea) { bestArea = a; best = room; }
+  }
+  return best;
+}
+
 
 export function createOverlay(rootEl, {
   getViewport = () => null,
@@ -198,13 +319,15 @@ export function createOverlay(rootEl, {
     if (!d) return null;
     return normalizeRect(d.startPdf, d.endPdf);
   }
-  /** The selected room, but only when it is a drawn room on the current page (else null). */
+  /** The selected room, but only when it is drawable on the current page (rect or traced outline). */
   function selectedRoom() {
     const id = safeCall(getSelectedId);
     if (id == null) return null;
     const page = safeCall(getPage) ?? 1;
     for (const room of safeCall(getRooms) || []) {
-      if (room && String(room.id) === String(id) && isDrawnRoom(room) && room.rect.page === page) return room;
+      if (!room || String(room.id) !== String(id)) continue;
+      if (ringOfRoom(room)) { if (polyPageOf(room) === page) return room; continue; }
+      if (isDrawnRoom(room) && room.rect.page === page) return room;
     }
     return null;
   }
@@ -268,31 +391,43 @@ export function createOverlay(rootEl, {
   }
 
   /* ---------------------------------------------------------- rendering */
-  function roomShape(room, box, selected, dragging) {
+  /** One room's <g class="plan-room">. `ring`, when given, is the traced outline in VIEW pixels and
+   *  the shape is a <polygon>; otherwise the rect view `box` is drawn as a <rect>. Everything else —
+   *  classes, data attributes, label, and whether grips are added — is identical for both, except
+   *  that ONLY a rectangle gets the four resize grips (an outline has no box to resize). */
+  function roomShape(room, box, ring, selected, dragging) {
     const g = document.createElementNS(SVG_NS, 'g');
     const excluded = room.include === false;
+    const isPoly = !!ring;
     g.setAttribute('class',
       'plan-room' + (excluded ? ' is-excluded' : ' is-included')
       + (selected ? ' is-selected' : '') + (dragging ? ' is-dragging' : ''));
     g.setAttribute('data-room-id', room.id == null ? '' : String(room.id));
     g.setAttribute('data-include', excluded ? 'false' : 'true');
+    // data-shape tells a traced outline from an ordinary rectangle (tests + CSS).
+    g.setAttribute('data-shape', isPoly ? 'poly' : 'rect');
     if (selected) g.setAttribute('data-selected', 'true');
 
-    const rect = document.createElementNS(SVG_NS, 'rect');
-    rect.setAttribute('class', 'plan-room-box');
-    rect.setAttribute('x', num(box.x));
-    rect.setAttribute('y', num(box.y));
-    rect.setAttribute('width', num(box.w));
-    rect.setAttribute('height', num(box.h));
-    rect.setAttribute('vector-effect', 'non-scaling-stroke');
-    g.appendChild(rect);
+    const shape = document.createElementNS(SVG_NS, isPoly ? 'polygon' : 'rect');
+    shape.setAttribute('class', 'plan-room-box');
+    if (isPoly) {
+      shape.setAttribute('points', ring.map((p) => `${num(p.x)},${num(p.y)}`).join(' '));
+    } else {
+      shape.setAttribute('x', num(box.x));
+      shape.setAttribute('y', num(box.y));
+      shape.setAttribute('width', num(box.w));
+      shape.setAttribute('height', num(box.h));
+    }
+    shape.setAttribute('vector-effect', 'non-scaling-stroke');
+    g.appendChild(shape);
 
     const label = roomLabel(room, box);
     if (label) g.appendChild(label);
-    // The four corner grips, only on the selected room — the room the resize gesture can act on.
+    // The four corner grips, only on the selected RECTANGLE — the room the resize gesture can act on.
     // They are drawn from the SAME view box as the outline, and are presentational only: the grab
-    // test is geometric (handleAtPoint on PDF points), never a hit on this DOM.
-    if (selected) g.appendChild(handleShape(box));
+    // test is geometric (handleAtPoint on PDF points), never a hit on this DOM. An OUTLINE gets NONE:
+    // it has no box to drag, and silently turning it into a rectangle would be a lie about its shape.
+    if (selected && !isPoly) g.appendChild(handleShape(box));
     return g;
   }
 
@@ -384,14 +519,22 @@ export function createOverlay(rootEl, {
     if (!vp) { draftG.replaceChildren(); return; }   // no page rendered yet: draw nothing, throw nothing
 
     const page = safeCall(getPage) ?? 1;
-    const rooms = roomsOnPage(safeCall(getRooms) || [], page).filter(isDrawnRoom);
+    const shapes = shapesOnPage(safeCall(getRooms) || [], page);
     const selectedId = safeCall(getSelectedId) ?? null;
 
-    for (const room of rooms) {
+    for (const { room, ring } of shapes) {
+      const dragging = !!drag && drag.dragged && String(drag.id) === String(room.id);
+      if (ring) {
+        // A traced outline: every point through the SAME viewport adapter the rectangles use.
+        const viewRing = ringToView(vp, ring);
+        const box = viewBoxOfPoints(viewRing);
+        if (!box || box.w <= 0 || box.h <= 0) continue;
+        roomsG.appendChild(roomShape(room, box, viewRing, room.id === selectedId, dragging));
+        continue;
+      }
       const box = clampBox(rectToViewBox(vp, room.rect));
       if (box.w <= 0 || box.h <= 0) continue;        // wholly off-page: nothing visible to draw
-      const dragging = !!drag && drag.dragged && String(drag.id) === String(room.id);
-      roomsG.appendChild(roomShape(room, box, room.id === selectedId, dragging));
+      roomsG.appendChild(roomShape(room, box, null, room.id === selectedId, dragging));
     }
     renderDraft(vp);
   }
@@ -535,17 +678,22 @@ export function createOverlay(rootEl, {
     svg.classList.remove('is-pan');
   }
 
-  /** Begin a move (handle=null) or a resize (handle='nw'|'ne'|'se'|'sw') of one room. */
+  /** Begin a move (handle=null) or a resize (handle='nw'|'ne'|'se'|'sw') of one room. A traced
+   *  outline is snapshotted as its ring; a rectangle as its rect. The two never mix. */
   function startDrag(e, kind, room, handle, p, pdf) {
     e.preventDefault?.();   // dragging a box must not start a text selection / browser drag
+    const ring = ringOfRoom(room);
     drag = {
       kind,
       id: idOf(room),
       handle: handle || null,
-      startRect: { ...room.rect },
+      startRect: room.rect ? { ...room.rect } : null,
+      startPoly: ring ? copyRing(ring) : null,
       startPdf: { ...pdf },
       startView: p,
-      lastRect: { ...room.rect },
+      lastRect: room.rect ? { ...room.rect } : null,
+      lastPoly: ring ? copyRing(ring) : null,
+      page: polyPageOf(room) ?? (safeCall(getPage) ?? 1),
       dragged: false,
     };
     downAt = p;
@@ -565,6 +713,18 @@ export function createOverlay(rootEl, {
     return clampRectToPage(rect, pageSizeOf(vp));
   }
 
+  /** The payload this drag reports for a traced outline: the ring TRANSLATED by the pointer's PDF
+   *  delta, every point by the SAME delta, so the shape (and its area) is preserved exactly. No clamp
+   *  is applied — a clamp would break the one-delta rule — and the page rides along so the app can
+   *  store the moved outline against its page, exactly as a rect carries `page`. */
+  function dragPoly(pdf) {
+    return {
+      id: drag.id,
+      poly: translateRing(drag.startPoly, pdf.x - drag.startPdf.x, pdf.y - drag.startPdf.y),
+      page: drag.page,
+    };
+  }
+
   function updateDrag(e) {
     const vp = viewport();
     if (!vp) return;
@@ -576,20 +736,31 @@ export function createOverlay(rootEl, {
         && Math.abs(p.y - drag.startView.y) <= CLICK_SLOP_PX) return;
       drag.dragged = true;
     }
-    const rect = dragRect(viewPointToPdf(vp, p), vp);
-    drag.lastRect = rect;
-    safeCall(onRoomMoved, drag.id, rect);   // live: every pointermove, no persistence here
+    const pdf = viewPointToPdf(vp, p);
+    if (drag.startPoly) {
+      // a traced outline: report the translated ring live, exactly as a rect room reports its rect
+      const payload = dragPoly(pdf);
+      drag.lastPoly = payload.poly;
+      safeCall(onRoomMoved, drag.id, payload);
+    } else {
+      const rect = dragRect(pdf, vp);
+      drag.lastRect = rect;
+      safeCall(onRoomMoved, drag.id, rect);   // live: every pointermove, no persistence here
+    }
     render();
   }
 
-  /** Abandon a drag: put the app's rect back, and never fire onRoomMoveEnd. */
+  /** Abandon a drag: put the app's geometry back, and never fire onRoomMoveEnd. */
   function cancelDrag() {
     if (!drag) return;
     const d = drag;
     drag = null;
     downAt = null;
     releaseCapture();
-    if (d.dragged) safeCall(onRoomMoved, d.id, { ...d.startRect });
+    if (d.dragged) {
+      safeCall(onRoomMoved, d.id,
+        d.startPoly ? { id: d.id, poly: d.startPoly, page: d.page } : { ...d.startRect });
+    }
     render();
   }
 
@@ -612,15 +783,18 @@ export function createOverlay(rootEl, {
       return;
     }
     const pdf = viewPointToPdf(vp, p);
-    // 1. a corner of the SELECTED room → resize. The grab test is planview.handleAtPoint() with the
-    //    pixel radius converted to PDF points through the viewport; never re-derived here.
+    // 1. a corner of the SELECTED RECTANGLE → resize. The grab test is planview.handleAtPoint() with
+    //    the pixel radius converted to PDF points through the viewport; never re-derived here.
+    //    A traced OUTLINE never resizes: it has no corner box, so it is skipped entirely and a
+    //    pointerdown on it falls through to a MOVE.
     const selected = selectedRoom();
-    const handle = selected ? handleAtPoint(selected.rect, pdf, handleTolPt(vp)) : null;
+    const handle = selected && !ringOfRoom(selected)
+      ? handleAtPoint(selected.rect, pdf, handleTolPt(vp)) : null;
     if (handle) { startDrag(e, 'resize', selected, handle, p, pdf); return; }
-    // 2. the body of any drawn room → move. The grabbed target decides once, so a body drag can
-    //    never resize and vice versa.
-    const room = roomAtPoint(safeCall(getRooms) || [], safeCall(getPage) ?? 1, pdf);
-    if (room && isDrawnRoom(room)) { startDrag(e, 'move', room, null, p, pdf); return; }
+    // 2. the body of any drawn room or traced outline → move. The grabbed target decides once, so a
+    //    body drag can never resize and vice versa.
+    const room = roomAtPointShaped(safeCall(getRooms) || [], safeCall(getPage) ?? 1, pdf);
+    if (room) { startDrag(e, 'move', room, null, p, pdf); return; }
     // 3. empty sheet: the Stage-1 click-to-select / click-to-deselect path
     downAt = p;
     try { svg.setPointerCapture(e.pointerId); captureId = e.pointerId; } catch { /* ignore */ }
@@ -636,7 +810,7 @@ export function createOverlay(rootEl, {
     }
     const vp = viewport();
     if (!vp) { setHover(null); return; }
-    setHover(roomAtPoint(safeCall(getRooms) || [], safeCall(getPage) ?? 1, viewPointToPdf(vp, localPoint(e))));
+    setHover(roomAtPointShaped(safeCall(getRooms) || [], safeCall(getPage) ?? 1, viewPointToPdf(vp, localPoint(e))));
   }
 
   function onPointerUp(e) {
@@ -645,7 +819,7 @@ export function createOverlay(rootEl, {
     const p = localPoint(e);
     const vp = viewport();
     const roomUnder = () => (vp
-      ? roomAtPoint(safeCall(getRooms) || [], safeCall(getPage) ?? 1, viewPointToPdf(vp, p))
+      ? roomAtPointShaped(safeCall(getRooms) || [], safeCall(getPage) ?? 1, viewPointToPdf(vp, p))
       : null);
 
     if (drag) {
@@ -655,8 +829,10 @@ export function createOverlay(rootEl, {
       releaseCapture(e);
       const room = roomUnder();
       if (d.dragged) {
-        // a real drag: report the final rect for persistence, never a selection change
-        safeCall(onRoomMoveEnd, d.id, d.lastRect);
+        // a real drag: report the final geometry for persistence, never a selection change. A rect
+        // reports its rect; a traced outline reports its NEW ring (with the page) so the app stores it.
+        safeCall(onRoomMoveEnd, d.id,
+          d.startPoly ? { id: d.id, poly: d.lastPoly, page: d.page } : d.lastRect);
       } else {
         // no movement beyond the slop: it was a click — exactly the Stage-1 behaviour
         safeCall(onSelect, room || null);

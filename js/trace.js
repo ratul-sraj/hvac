@@ -1,0 +1,444 @@
+/**
+ * js/trace.js — real room outlines read from a floor plan's own linework.
+ *
+ * WHY THIS EXISTS
+ * A placed region used to be a rectangle sized back from the room's stated area, because only the
+ * PDF's TEXT layer (room names + areas) was read. The walls are the PDF's VECTOR PATHS. This module
+ * turns those paths into enclosed areas and hands back a real outline for the rooms whose outline can
+ * be TRUSTED — and nothing at all for the rest, so a shape is never invented.
+ *
+ * CONTRACT
+ * - Pure: no DOM, no canvas, no pdf.js. Everything is testable in Node.
+ * - All coordinates are PDF user space (y up, points) — the same space room.at and room.rect use,
+ *   so the overlay can draw the result with no extra conversion.
+ * - A traced outline is ACCEPTED only when both hold:
+ *     1. the enclosed region contains exactly ONE room label, and
+ *     2. its area, converted at the drawing scale, agrees with the area the plan states for that room
+ *        within TRACE_BAND.
+ *   A region that swallows two rooms fails test 1; a leak through a door fails both. Everything that
+ *   fails keeps its rectangle.
+ * - The load is never touched: the outline is display + verification only. room.area stays the figure
+ *   the plan (or the user) gave.
+ *
+ * MEASURED ON A REAL A1 SHEET (748 kB, 149 rooms): all 149 paths read in 0.4 s, raster 2-13 ms,
+ * 149 flood fills in 17-230 ms. With every path stroked, 27% of labels sit ON a wall line and 8
+ * regions held several rooms; isolating the plan's own line class took reached labels from 109 to 125
+ * of 149 and rooms agreeing on one drawing scale from 34% to 57%. That is why the module refuses the
+ * rooms it cannot verify, and why the caller runs it on a filtered class of lines and falls back.
+ */
+
+// Curve flattening: how many straight pieces one Bezier is cut into. Walls are drawn as lines and
+// rectangles in practice; curves (door swings, rounded corners) only need to be smooth enough that a
+// 1-2 px stroke is continuous.
+export const CURVE_STEPS = 8;
+
+// How far the traced area may sit from the area the plan states. The traced region is bounded by wall
+// CENTRELINES, so it is systematically a little larger than a net internal area: on the measured sheet
+// the inflation was ~+9% (220 mm walls round a 6x5 m room), and the p25-p75 spread was 224.7-238.5
+// against a median implied denominator of 229. Hence an asymmetric band, generous upwards.
+export const TRACE_BAND = { lo: 0.8, hi: 1.35 };
+
+// A region smaller than this many cells is noise (a pocket between two strokes), not a room.
+export const MIN_REGION_CELLS = 24;
+
+// ---------------------------------------------------------------------------------------------
+// 1. Paths -> segments
+// ---------------------------------------------------------------------------------------------
+
+/** Apply a pdf.js-style 2-D matrix [a,b,c,d,e,f] to a point. */
+export function applyMatrix(m, x, y) {
+  return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
+
+/** Compose two pdf.js matrices the way pdf.js's own Util.transform does (m1 then m2 = m1 x m2). */
+export function mulMatrix(m1, m2) {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+  ];
+}
+
+/** Flatten one cubic Bezier into CURVE_STEPS straight segments. */
+function flattenCurve(x0, y0, x1, y1, x2, y2, x3, y3, out, mx) {
+  let px = x0, py = y0;
+  for (let i = 1; i <= CURVE_STEPS; i += 1) {
+    const t = i / CURVE_STEPS, u = 1 - t;
+    const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    const x = a * x0 + b * x1 + c * x2 + d * x3;
+    const y = a * y0 + b * y1 + c * y2 + d * y3;
+    out.push({ x1: px, y1: py, x2: x, y2: y, ...mx });
+    px = x; py = y;
+  }
+}
+
+/**
+ * Pull wall segments out of a pdf.js operator list.
+ * @param {Array} fnArray   opList.fnArray
+ * @param {Array} argsArray opList.argsArray
+ * @param {object} OPS      the same module's OPS map (to identify constructPath etc.)
+ * @param {number[]} ctm    matrix to apply to every point (see caller: required to land inside the page box)
+ * @returns {{segments: Array, styled: number}} segments carry {x1,y1,x2,y2,width,color} where
+ *   width/color are whatever the graphics state held when the path was constructed (they are how the
+ *   plan's own line class is told apart from symbols, hatching and the title block).
+ */
+export function segmentsFromOperatorList(fnArray, argsArray, OPS, ctm) {
+  let m = ctm || [1, 0, 0, 1, 0, 0];
+  const mx = { width: 1, color: null };
+  const segments = [];
+  const stack = [];
+  let width = 1, color = null;
+  for (let i = 0; i < fnArray.length; i += 1) {
+    const fn = fnArray[i];
+    const args = argsArray[i];
+    if (fn === OPS.save) { stack.push(m); continue; }
+    if (fn === OPS.restore) { m = stack.pop() || (ctm || [1, 0, 0, 1, 0, 0]); continue; }
+    // A CAD sheet places most of its content with a transform (and often a form XObject), so the
+    // running matrix must be tracked per path — one fixed matrix for the whole list would put most
+    // geometry in the wrong place.
+    if (fn === OPS.transform) { m = mulMatrix(m, args); continue; }
+    if (fn === OPS.paintFormXObjectBegin) { stack.push(m); if (args && args[0]) m = mulMatrix(m, args[0]); continue; }
+    if (fn === OPS.paintFormXObjectEnd) { m = stack.pop() || (ctm || [1, 0, 0, 1, 0, 0]); continue; }
+    if (fn === OPS.setLineWidth) { width = args[0]; continue; }
+    if (fn === OPS.setStrokeRGBColor) { color = args; continue; }
+    if (fn === OPS.setStrokeGray) { color = [args[0], args[0], args[0]]; continue; }
+    if (fn !== OPS.constructPath) continue;
+    // args: [pathOps, pathCoords] (pdf.js 4.x). Older/newer builds may nest them one level deeper.
+    let ops = args[0], coords = args[1];
+    if (ops && !Array.isArray(ops) && Array.isArray(ops[0])) { ops = args[0][0]; coords = args[0][1] != null ? args[0][1] : args[1]; }
+    if (!Array.isArray(ops) || !Array.isArray(coords)) continue;
+    const style = { width, color: color ? color.slice(0, 3) : null };
+    let at = 0, startX = 0, startY = 0, curX = 0, curY = 0;
+    for (const op of ops) {
+      const p = (n) => { const x = coords[at]; const y = coords[at + 1];
+        at += 2; const t = applyMatrix(m, x, y); return t; };
+      if (op === OPS.moveTo) { const t = p(); curX = startX = t.x; curY = startY = t.y; continue; }
+      if (op === OPS.lineTo) { const t = p(); segments.push({ x1: curX, y1: curY, x2: t.x, y2: t.y, ...style }); curX = t.x; curY = t.y; continue; }
+      if (op === OPS.curveTo) {
+        const c1 = p(), c2 = p(), to = p();
+        flattenCurve(curX, curY, c1.x, c1.y, c2.x, c2.y, to.x, to.y, segments, style);
+        curX = to.x; curY = to.y; continue;
+      }
+      if (op === OPS.curveTo2) {
+        const c2 = p(), to = p();
+        flattenCurve(curX, curY, curX, curY, c2.x, c2.y, to.x, to.y, segments, style);
+        curX = to.x; curY = to.y; continue;
+      }
+      if (op === OPS.curveTo3) {
+        const c1 = p(), to = p();
+        flattenCurve(curX, curY, c1.x, c1.y, to.x, to.y, to.x, to.y, segments, style);
+        curX = to.x; curY = to.y; continue;
+      }
+      if (op === OPS.rect) {
+        const t = p();                     // rect() pushes a whole rectangle as one op
+        const t2 = p(); const t3 = p(); const t4 = p();
+        const pts = [t, t2, t3, t4];
+        for (let k = 0; k < 4; k += 1) {
+          const a = pts[k], b = pts[(k + 1) % 4];
+          segments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...style });
+        }
+        curX = startX = pts[3].x; curY = startY = pts[3].y; continue;
+      }
+      if (op === OPS.closePath) {
+        if (curX !== startX || curY !== startY) segments.push({ x1: curX, y1: curY, x2: startX, y2: startY, ...style });
+        curX = startX; curY = startY; continue;
+      }
+      // Any other path op (quadratic curves, etc.) is ignored: walls do not use them.
+    }
+  }
+  return { segments, styled: segments.filter((s) => s.color).length };
+}
+
+/** The most common (width, colour) class in a segment list — how the plan's own linework is picked
+ *  out from hatching, symbols and the title block without knowing anything about the sheet. */
+export function dominantStyle(segments) {
+  const counts = new Map();
+  for (const s of segments) {
+    const key = `${s.width}|${s.color ? s.color.join(',') : 'none'}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let best = null, bestN = 0;
+  for (const [key, n] of counts) if (n > bestN) { best = key; bestN = n; }
+  return best;
+}
+
+/** Keep only the segments of one (width, colour) class. */
+export function filterByStyle(segments, key) {
+  return segments.filter((s) => `${s.width}|${s.color ? s.color.join(',') : 'none'}` === key);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 2. Raster
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Stroke the segments onto a grid of wall pixels.
+ * @param {Array} segments
+ * @param {{x0:number,y0:number,x1:number,y1:number}} box  PDF-space window (the page MediaBox)
+ * @param {number} pxPerPt
+ * @param {number} thickness pixels of wall stroke (a hairline needs >=1)
+ * @returns {{w:number,h:number,grid:Uint8Array}} grid value 1 = wall, 0 = free
+ */
+export function rasterizeWalls(segments, box, pxPerPt, thickness = 1) {
+  const w = Math.max(1, Math.ceil((box.x1 - box.x0) * pxPerPt));
+  const h = Math.max(1, Math.ceil((box.y1 - box.y0) * pxPerPt));
+  const grid = new Uint8Array(w * h);
+  const cx = (x) => Math.round((x - box.x0) * pxPerPt);
+  const cy = (y) => Math.round((y - box.y0) * pxPerPt);          // y up in PDF space == y up here
+  const half = Math.max(0, Math.floor((thickness - 1) / 2));
+  for (const s of segments) {
+    let x0 = cx(s.x1), y0 = cy(s.y1), x1 = cx(s.x2), y1 = cy(s.y2);
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    for (let guard = 0; guard < 1e7; guard += 1) {
+      for (let oy = -half; oy <= half; oy += 1) {
+        for (let ox = -half; ox <= half; ox += 1) {
+          const px = x0 + ox, py = y0 + oy;
+          if (px >= 0 && py >= 0 && px < w && py < h) grid[py * w + px] = 1;
+        }
+      }
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x0 += sx; }
+      if (e2 < dx) { err += dx; y0 += sy; }
+    }
+  }
+  return { w, h, grid };
+}
+
+/** PDF-space point -> raster cell. */
+export function pointToCell(x, y, box, pxPerPt) {
+  return { cx: Math.round((x - box.x0) * pxPerPt), cy: Math.round((y - box.y0) * pxPerPt) };
+}
+
+/** Raster cell -> PDF-space point (cell centre). */
+export function cellToPoint(cx, cy, box, pxPerPt) {
+  return { x: box.x0 + (cx + 0.5) / pxPerPt, y: box.y0 + (cy + 0.5) / pxPerPt };
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3. Regions
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Flood fill the free space (4-connected) around a cell.
+ * 4-connected on purpose: free space joined only diagonally is joined through a wall joint, and
+ * treating that as one room would merge two rooms across a corner.
+ * @returns {{cells:number[], areaPx:number, bbox:{x0,y0,x1,y1}}|null} null if the cell is a wall or outside
+ */
+export function regionAt(grid, w, h, cx, cy, opts = {}) {
+  if (cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
+  const start = cy * w + cx;
+  if (grid[start]) return null;                       // the label sits ON a wall line
+  const seen = new Uint8Array(w * h);
+  const stack = [start];
+  seen[start] = 1;
+  const cells = [];
+  let x0 = cx, y0 = cy, x1 = cx, y1 = cy;
+  while (stack.length) {
+    const c = stack.pop();
+    cells.push(c);
+    const px = c % w, py = (c - px) / w;
+    if (px < x0) x0 = px; if (px > x1) x1 = px;
+    if (py < y0) y0 = py; if (py > y1) y1 = py;
+    if (px > 0 && !seen[c - 1] && !grid[c - 1]) { seen[c - 1] = 1; stack.push(c - 1); }
+    if (px < w - 1 && !seen[c + 1] && !grid[c + 1]) { seen[c + 1] = 1; stack.push(c + 1); }
+    if (py > 0 && !seen[c - w] && !grid[c - w]) { seen[c - w] = 1; stack.push(c - w); }
+    if (py < h - 1 && !seen[c + w] && !grid[c + w]) { seen[c + w] = 1; stack.push(c + w); }
+    if (opts.maxCells && cells.length > opts.maxCells) return { cells, areaPx: cells.length, bbox: { x0, y0, x1, y1 }, over: true };
+  }
+  return { cells, areaPx: cells.length, bbox: { x0, y0, x1, y1 }, over: false };
+}
+
+/** Is a raster cell inside a region? */
+export function regionHasCell(region, cx, cy, w) {
+  if (!region) return false;
+  const c = cy * w + cx;
+  for (let i = 0; i < region.cells.length; i += 1) if (region.cells[i] === c) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4. Outline
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Trace the boundary of a region as polygons in PDF space, using the region's own cells against its
+ * complement (marching squares on cell edges, so the outline follows the wall faces).
+ * @returns {Array<Array<{x:number,y:number}>>} one or more closed rings, PDF space
+ */
+export function outlineFromRegion(region, w, box, pxPerPt, opts = {}) {
+  if (!region || !region.cells || !region.cells.length) return [];
+  const bw = region.bbox.x1 - region.bbox.x0 + 2;
+  const bh = region.bbox.y1 - region.bbox.y0 + 2;
+  const mask = new Uint8Array(bw * bh);
+  const at = (x, y) => (x < 0 || y < 0 || x >= bw || y >= bh ? 0 : mask[y * bw + x]);
+  for (const c of region.cells) {
+    const px = (c % w) - region.bbox.x0 + 1;
+    const py = ((c - (c % w)) / w) - region.bbox.y0 + 1;
+    mask[py * bw + px] = 1;
+  }
+  // Every cell edge that separates inside from outside, emitted as a DIRECTED edge in a consistent
+  // orientation (interior always on the left). Consistency is what makes stitching exact: from any
+  // vertex there is exactly one outgoing boundary edge to follow.
+  const edges = [];
+  for (let y = 0; y < bh; y += 1) {
+    for (let x = 0; x < bw; x += 1) {
+      if (!at(x, y)) continue;
+      if (!at(x, y + 1)) edges.push([x, y + 1, x + 1, y + 1]);   // top, left to right
+      if (!at(x + 1, y)) edges.push([x + 1, y + 1, x + 1, y]);   // right, top to bottom
+      if (!at(x, y - 1)) edges.push([x + 1, y, x, y]);           // bottom, right to left
+      if (!at(x - 1, y)) edges.push([x, y, x, y + 1]);           // left, bottom to top
+    }
+  }
+  const outFrom = new Map();
+  const key = (x, y) => `${x},${y}`;
+  edges.forEach((e, i) => {
+    const k = key(e[0], e[1]);
+    if (!outFrom.has(k)) outFrom.set(k, []);
+    outFrom.get(k).push(i);
+  });
+  const used = new Uint8Array(edges.length);
+  const rings = [];
+  for (let i = 0; i < edges.length; i += 1) {
+    if (used[i]) continue;
+    const ring = [];
+    let cur = i;
+    for (let guard = 0; guard <= edges.length && cur != null; guard += 1) {
+      if (used[cur]) break;
+      used[cur] = 1;
+      const e = edges[cur];
+      ring.push({ x: e[0], y: e[1] });
+      const next = (outFrom.get(key(e[2], e[3])) || []).find((j) => !used[j]);
+      cur = next == null ? null : next;
+    }
+    if (ring.length > 2) rings.push(ring);
+  }
+  // Drop collinear runs (a long wall becomes one segment) and convert to PDF space.
+  const out = [];
+  for (const ring of rings) {
+    const simp = [];
+    for (let i = 0; i < ring.length; i += 1) {
+      const a = ring[(i - 1 + ring.length) % ring.length], b = ring[i], c = ring[(i + 1) % ring.length];
+      const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+      if (cross !== 0) simp.push(b);
+    }
+    if (simp.length < 3) continue;
+    out.push(simp.map((p) => cellToPoint(p.x - 1 + region.bbox.x0, p.y - 1 + region.bbox.y0, box, pxPerPt)));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// 5. Area, scale and the accept rules
+// ---------------------------------------------------------------------------------------------
+
+/** Shoelace area of a closed ring, in square points. */
+export function polygonAreaPt2(ring) {
+  let a = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const p = ring[i], q = ring[(i + 1) % ring.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Total area of a multi-ring outline (outer rings only; holes are not used by this module). */
+export function outlineAreaPt2(rings) {
+  return (rings || []).reduce((sum, r) => sum + polygonAreaPt2(r), 0);
+}
+
+/**
+ * Square points -> square metres on the real building.
+ * 1 pt = 1/72 inch of paper; at 1:denom one paper inch is denom real inches.
+ */
+export function pt2ToM2(areaPt2, denom) {
+  const m = (0.0254 * denom) / 72;
+  return areaPt2 * m * m;
+}
+
+/** Metres per PDF point at a drawing scale (used by the overlay for nothing, but handy in tests). */
+export function metresPerPt(denom) {
+  return (0.0254 * denom) / 72;
+}
+
+/**
+ * The single decision this module exists to make: is this traced outline trustworthy for this room?
+ * @param {number} tracedM2 area of the enclosed region at the drawing scale
+ * @param {number} statedArea the area the plan states for the room
+ * @param {number} labelsInRegion how many room labels fell inside this region
+ * @param {{lo:number,hi:number}} band
+ */
+export function judgeTrace(tracedM2, statedArea, labelsInRegion, band = TRACE_BAND) {
+  if (labelsInRegion > 1) {
+    return { ok: false, ratio: statedArea ? tracedM2 / statedArea : NaN,
+      reason: `its area is shared with ${labelsInRegion - 1} other room(s)` };
+  }
+  if (!statedArea || !(statedArea > 0)) return { ok: false, ratio: NaN, reason: 'the room has no stated area' };
+  const ratio = tracedM2 / statedArea;
+  if (ratio < band.lo) return { ok: false, ratio, reason: `traced area ${Math.round(ratio * 100)}% of the stated one` };
+  if (ratio > band.hi) return { ok: false, ratio, reason: `traced area ${Math.round(ratio * 100)}% of the stated one` };
+  return { ok: true, ratio, reason: '' };
+}
+
+/**
+ * The whole job for one page: walls + rooms -> an outline per room, or a reason why not.
+ * @param {object} p
+ * @param {Array} p.segments wall segments (already filtered to the plan's line class if desired)
+ * @param {{x0,y0,x1,y1}} p.box  page MediaBox in PDF space
+ * @param {Array<{id:any, at:{x,y}, area:number, name?:string}>} p.rooms  rooms that have a position
+ * @param {number} p.denom drawing scale denominator (100 for 1:100)
+ * @param {number} [p.pxPerPt] raster resolution (2 keeps a 3 px wall at 1:250 visible)
+ * @param {number} [p.thickness] wall stroke in pixels
+ * @param {object} [p.band]
+ * @returns {{results: Array, stats: object}}
+ */
+export function traceRooms(p) {
+  const pxPerPt = p.pxPerPt || 2;
+  const denom = p.denom || 100;
+  const box = p.box;
+  const rast = rasterizeWalls(p.segments, box, pxPerPt, p.thickness || 2);
+  const { w, h, grid } = rast;
+  // Seed every label once; a label on a wall line has no region.
+  const seeds = p.rooms.map((r) => {
+    const c = pointToCell(r.at.x, r.at.y, box, pxPerPt);
+    return { room: r, cell: c.cx >= 0 && c.cy >= 0 && c.cx < w && c.cy < h ? c.cy * w + c.cx : -1, cx: c.cx, cy: c.cy };
+  });
+  const regionByRoom = new Map();
+  const labelsPerRegion = new Map();
+  for (const s of seeds) {
+    if (s.cell < 0 || grid[s.cell]) continue;                     // off-page or sitting on a wall
+    const region = regionAt(grid, w, h, s.cx, s.cy);
+    if (!region || region.areaPx < MIN_REGION_CELLS) continue;
+    regionByRoom.set(s.room, region);
+    // Count the labels sharing this region. The key must be CANONICAL for the region — the smallest
+    // cell index in it — because the flood fill's first cell is just the seed, which differs per label.
+    let canon = region.cells[0];
+    for (let i = 1; i < region.cells.length; i += 1) if (region.cells[i] < canon) canon = region.cells[i];
+    region.key = canon;
+    labelsPerRegion.set(canon, (labelsPerRegion.get(canon) || 0) + 1);
+  }
+  const results = [];
+  for (const s of seeds) {
+    const region = regionByRoom.get(s.room);
+    if (!region) { results.push({ id: s.room.id, ok: false, reason: 'no enclosed area around its name', rings: [] }); continue; }
+    const labels = labelsPerRegion.get(region.key) || 0;
+    const rings = outlineFromRegion(region, w, box, pxPerPt);
+    const tracedM2 = pt2ToM2(outlineAreaPt2(rings), denom);
+    const verdict = judgeTrace(tracedM2, s.room.area, labels, p.band);
+    results.push({
+      id: s.room.id, ok: verdict.ok, reason: verdict.reason, ratio: verdict.ratio,
+      tracedM2, rings: verdict.ok ? rings : [], cells: region.areaPx,
+    });
+  }
+  const accepted = results.filter((r) => r.ok).length;
+  return { results, stats: {
+    labels: p.rooms.length, reached: regionByRoom.size, accepted,
+    refused: results.length - accepted,
+    raster: `${w}x${h}`, pxPerPt, denom,
+  } };
+}
