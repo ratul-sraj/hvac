@@ -372,6 +372,19 @@
   </div>
 </footer>
 
+<!-- The loading report, shown INSIDE the page. It used to be written into a window opened with
+     window.open(), which a pop-up blocker refuses — and which an embedded preview pane blocks
+     outright, where "allow pop-ups" cannot help. An inline frame needs no permission: the report
+     keeps its own styles, prints on its own, and never leaves the page. -->
+<section id="reportView" class="report-view hidden" aria-label="Loading report">
+  <div class="report-bar">
+    <span class="report-bar-title">Loading report</span>
+    <button type="button" id="reportPrint" class="btn btn-small">Print / Save as PDF</button>
+    <button type="button" id="reportClose" class="btn btn-small btn-ghost">Close</button>
+  </div>
+  <iframe id="reportFrame" class="report-frame" title="Loading report"></iframe>
+</section>
+
 <script type="module" src="js/app.js"></script>
 <script src="js/nav.js" defer></script>
 </body>

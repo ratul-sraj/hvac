@@ -166,6 +166,10 @@ const REPORT_CSS = `
   .btnbar { margin-bottom: 14px; }
   .btnbar button { font: inherit; padding: 6px 14px; border: 1px solid #1b5e9c; background: #1b5e9c;
                    color: #fff; border-radius: 4px; cursor: pointer; }
+  /* The report is shown inside the app's own report view, whose bar carries Print / Save as PDF,
+     so the button inside the document is a duplicate on screen. It was already hidden when
+     printing; hide it on screen too, and the printed sheet stays clean either way. */
+  .btnbar { display: none; }
   @media print {
     body { margin: 8mm; font-size: 11px; }
     .btnbar { display: none; }

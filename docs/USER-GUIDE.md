@@ -149,10 +149,11 @@ This panel is what you show when someone asks *"where does the number come from?
 - **Download CSV** (`<project>-cooling-load.csv`) — one row per room with all inputs and results
   (Sensible W, Latent W, Total W, TR, supply air L/s, fresh-air L/s, ft²/TR, SHF), with the project settings
   repeated as `#` comment lines at the top. This is the file you put into Excel.
-- **Print / Save PDF report** — opens a formatted report in a new window with the design
+- **Print / Save PDF report** — shows a formatted report over the page with the design
   conditions, the assumptions used, the room-wise table, the load summary, the level-wise
-  subtotals and the "Important notes" list. Use the **Print / Save as PDF** button in that window
-  (A4 landscape) to keep a signed copy.
+  subtotals and the "Important notes" list. Press **Print / Save as PDF** on the report's own bar
+  (A4 landscape) to keep a signed copy, and **Close** or **Escape** to go back. It opens inside the
+  page, so it needs no pop-up permission — a blocked-pop-up message cannot happen here.
 - **Save project (.json)** and **Open project (.json)** keep a file copy of the rooms and settings,
   so you can move the work to another computer.
 

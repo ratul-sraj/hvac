@@ -169,30 +169,67 @@ if (!sampleMissing) {
   ok("CSV has a row per room and the totals", csvLines.length > 100 && /TR/i.test(csv || ""),
     (csvLines[0] || "").slice(0, 140));
 
-  // 8. print report: capture the generated HTML instead of leaving a real popup open
+  // 8. print report. It must NOT depend on window.open(): a pop-up blocker refuses it, and an embedded
+  //    preview pane blocks it outright, where "allow pop-ups for this page" cannot help. The report is
+  //    opened in an inline frame inside the page instead, and printed from there.
   try {
+    let popupAttempts = 0;
     await page.evaluate(() => {
-      window.__html = null;
-      window.__printed = false;
-      window.open = () => ({
-        document: { write: (h) => { window.__html = h; }, close: () => {}, open: () => {}, },
-        focus: () => {}, print: () => { window.__printed = true; }, close: () => {},
-      });
+      window.__popups = 0;
+      window.open = () => { window.__popups += 1; return null; };   // behave like a blocker
     });
     await page.click("#btnPrint");
-    await page.waitForFunction(() => window.__html !== null, { timeout: 20000 }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 1200)); // app calls print() 500 ms after opening
-    const html = await page.evaluate(() => window.__html);
-    const printed = await page.evaluate(() => window.__printed);
-    ok("print report is generated", !!html && html.length > 5000, `${html ? html.length : 0} characters of report HTML`);
-    ok("print is called on the report", printed === true, String(printed));
-    const text = (html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    await new Promise((r) => setTimeout(r, 1200));
+    popupAttempts = await page.evaluate(() => window.__popups);
+
+    const report = await page.evaluate(() => {
+      const view = document.getElementById("reportView");
+      const frame = document.getElementById("reportFrame");
+      const doc = frame && frame.contentDocument ? frame.contentDocument : null;
+      const html = doc ? doc.documentElement.outerHTML : "";
+      return {
+        visible: !!view && !view.classList.contains("hidden"),
+        reporting: document.body.classList.contains("reporting"),
+        blockedMessageShown: /pop-ups/i.test((document.getElementById("statusBox") || {}).textContent || ""),
+        len: html.length,
+        text: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "),
+      };
+    });
+    ok("the loading report opens without a pop-up window", report.visible, JSON.stringify({ visible: report.visible, popups: popupAttempts }));
+    ok("it shows a real report, not an empty frame",
+        report.len > 5000, `${report.len} characters in the frame`);
+    ok("it says nothing about pop-ups being blocked", !report.blockedMessageShown, String(report.blockedMessageShown));
     ok("report has design conditions, country and room totals",
-      /Design conditions/i.test(text) && /Total cooling load/i.test(text) && /India/i.test(text) && /TR/.test(text),
-      text.slice(0, 160));
-    fs.writeFileSync(`${OUT}/report.html`, html || "");
+      /Design conditions/i.test(report.text) && /Total cooling load/i.test(report.text) &&
+        /India/i.test(report.text) && /TR/.test(report.text), report.text.slice(0, 160));
+    fs.writeFileSync(`${OUT}/report.html`, report.text.slice(0, 40000));
+
+    // printing happens from the frame itself (same origin), so stub its print and press the button
+    await page.evaluate(() => {
+      const frame = document.getElementById("reportFrame");
+      frame.contentWindow.__printed = 0;
+      frame.contentWindow.print = () => { frame.contentWindow.__printed += 1; };
+    });
+    await page.click("#reportPrint");
+    await new Promise((r) => setTimeout(r, 400));
+    const framePrinted = await page.evaluate(() => document.getElementById("reportFrame").contentWindow.__printed);
+    ok("Print / Save as PDF prints the report itself", framePrinted === 1, `print called ${framePrinted} time(s)`);
+
+    // and it closes again
+    await page.click("#reportClose");
+    await new Promise((r) => setTimeout(r, 300));
+    const closed = await page.evaluate(() => {
+      const view = document.getElementById("reportView");
+      return {
+        hidden: view.classList.contains("hidden"),
+        reporting: document.body.classList.contains("reporting"),
+        srcdocCleared: !document.getElementById("reportFrame").hasAttribute("srcdoc"),
+      };
+    });
+    ok("the report view closes and leaves nothing behind",
+        closed.hidden && !closed.reporting && closed.srcdocCleared, JSON.stringify(closed));
   } catch (e) {
-    ok("print report is generated", false, "driver error: " + (e && e.message));
+    ok("the loading report opens without a pop-up window", false, "driver error: " + (e && e.message));
   }
 
   // 9. reload restores state

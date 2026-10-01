@@ -120,6 +120,10 @@ const el = {
   planModeDraw: $('#planModeDraw'),
   planModeSelect: $('#planModeSelect'),
   planHint: $('#planHint'),
+  reportView: $('#reportView'),
+  reportFrame: $('#reportFrame'),
+  reportPrint: $('#reportPrint'),
+  reportClose: $('#reportClose'),
 };
 
 const PROJ_FIELDS = [
@@ -1552,19 +1556,56 @@ function exportCsv() {
   setStatus('ok', 'CSV downloaded.');
 }
 
+/** Open the loading report in the page, and print it from there.
+ *  It used to be written into a window from window.open(), which a pop-up blocker refuses — and which
+ *  an embedded preview pane blocks outright, where "allow pop-ups for this page" cannot help because
+ *  there is no browser chrome to allow it in. The report is self-contained (inline styles, no external
+ *  files), so an inline frame renders it identically: same document, own styles, its own printing, and
+ *  nothing to allow. */
 function printReport() {
   if (!state.rooms.length) { setStatus('warn', 'There are no rooms to report yet.'); return; }
   const html = buildReportHtml(state.project, currentCalc());
-  const w = window.open('', '_blank');
-  if (!w) {
-    setStatus('err', 'The report window was blocked. Please allow pop-ups for this page and try again.');
+  const view = el.reportView;
+  const frame = el.reportFrame;
+  if (!view || !frame) {
+    // last resort: the old behaviour, for a page that has no report view
+    const w = window.open('', '_blank');
+    if (!w) {
+      setStatus('err', 'The report could not be shown. Please allow pop-ups for this page and try again.');
+      return;
+    }
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* the user can press the button */ } }, 500);
+    setStatus('ok', 'Report opened in a new window.');
     return;
   }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* user can press the button */ } }, 500);
-  setStatus('ok', 'Report opened in a new window. Use "Print / Save as PDF" there.');
+  frame.setAttribute('srcdoc', html);
+  view.classList.remove('hidden');
+  document.body.classList.add('reporting');
+  el.reportClose.focus();
+  setStatus(null);
+}
+
+function closeReport() {
+  const view = el.reportView;
+  if (!view || view.classList.contains('hidden')) return false;
+  view.classList.add('hidden');
+  document.body.classList.remove('reporting');
+  // drop the document too: a stale report must not still be printable after new rooms are added
+  if (el.reportFrame) el.reportFrame.removeAttribute('srcdoc');
+  return true;
+}
+
+function printReportFrame() {
+  const frame = el.reportFrame;
+  if (!frame || !frame.contentWindow) { setStatus('warn', 'The report is not open yet.'); return; }
+  try {
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+  } catch (err) {
+    setStatus('warn', `Could not open the print dialog (${(err && err.message) || err}). ` +
+      `Use the browser's own Print (Ctrl+P) — the report is on screen.`);
+  }
 }
 
 function saveProjectFile() {
@@ -1769,6 +1810,8 @@ function wire() {
   $('#btnCsv2').addEventListener('click', exportCsv);
   $('#btnPrint').addEventListener('click', printReport);
   $('#btnPrint2').addEventListener('click', printReport);
+  if (el.reportPrint) el.reportPrint.addEventListener('click', printReportFrame);
+  if (el.reportClose) el.reportClose.addEventListener('click', () => { closeReport(); });
   $('#btnSave').addEventListener('click', saveProjectFile);
   $('#btnOpen').addEventListener('click', () => el.jsonInput.click());
   el.jsonInput.addEventListener('change', () => {
@@ -1776,7 +1819,12 @@ function wire() {
     el.jsonInput.value = '';
   });
 
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); });
+  // Escape backs out one layer at a time: the report if it is open, otherwise the room breakdown
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (closeReport()) return;
+    closeDetail();
+  });
 }
 
 /* ------------------------------------------------------------------ */
