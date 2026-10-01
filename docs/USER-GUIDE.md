@@ -280,6 +280,40 @@ draw a floor, and check the area in the table afterwards.
 - The plan view **uploads nothing**: the drawing is rendered inside your browser, like the rest of the
   app.
 
+### Real room outlines — tracing the drawing's own walls
+
+The boxes are boxes because a PDF's *text* says where a room is named and how big it is, but says
+nothing about where its walls are. The walls are the drawing's **vector lines**, and
+**Trace real outlines** reads them: it finds the enclosed area around each room name and gives that
+room its real shape on the drawing.
+
+It is deliberately cautious. An outline is kept **only when it can be checked** against what the plan
+itself says:
+
+* the room's name must have an enclosed area of its own (a name sitting *on* a wall line has none), and
+* the traced area must agree with the area the plan states for that room.
+
+Everything else keeps its box, and every row in the table is marked **outline** or **box**, so you can
+always see which is which. A wrong shape is never shown to you.
+
+**The load never changes.** An outline is for the drawing and for checking only: the room area always
+stays the figure the plan states (or the one you typed), so tracing cannot move a single number.
+
+**If almost nothing traces, the drawing scale is wrong.** The outlines themselves say what the scale
+must be — the app tells you what they point to and offers that scale in the drawing-scale list (for
+example `1:225 (from the drawing)`). Pick it and press the button again. On a real A1 floor plan this
+was the difference between 2 rooms traced and 78.
+
+**Moving and removing.** Drag an outline to move it (it keeps its shape exactly) and delete it like any
+other region. Outlines have **no resize handles** — there is no box to drag, and turning an outline back
+into a rectangle would be a lie about the room. To re-measure a room by dragging, draw it yourself or
+trace again.
+
+**The honest limits.** A room cannot be traced when its name lies on a wall line, when its space merges
+with a neighbour through a doorway, when the space is open plan, or when the traced area simply does not
+agree with the stated one. On a real sheet roughly half the rooms traced and the rest kept their boxes,
+and the status line always tells you how many and why.
+
 ### Drawn rooms are saved
 
 A drawn room keeps its **rectangle and its scale**, and both are stored in the project — in the

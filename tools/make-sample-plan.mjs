@@ -48,6 +48,29 @@ const cell = (index) => ({ row: Math.floor(index / COLS), col: index % COLS });
 
 const AREA = (n, unit = "m" + SUP2) => `${n} ${unit}`;
 
+// ---------------------------------------------------------------- wall linework
+
+// A rectangle drawn round a room is only HONEST if, at the drawing scale, it encloses the area its
+// own tag states — and that is the whole point: a new feature (js/trace.js) reads the drawing's real
+// linework, and accepts a room only when the traced area agrees with the stated one within TRACE_BAND.
+// At 1:100 one PDF point is (0.0254 m x 100) / 72 = 0.0352778 m of building, so a room of A m² needs
+// A / 0.0352778² pt² of paper. The rectangles must not overlap (overlapping walls merge two rooms
+// into one traced area and the tracer refuses both), must never swallow another room's tag (a region
+// holding two labels is refused outright) and must be big enough to hold the tag they belong to.
+// A room whose tag cannot fit inside an honest rectangle of its own size is left as a bare tag: no
+// rectangle and no fudged geometry. The number of rooms that get walls is therefore measured output,
+// not a target — see the summary the tool prints.
+const M_PER_PT = (0.0254 * 100) / 72;        // metres of building per PDF point at 1:100
+const M2_PER_PT2 = M_PER_PT * M_PER_PT;
+const GLYPH_W = 0.556;                       // every glyph of the built-in face is 556/1000 em wide
+const WALL_RGB = "0.53333 0.53333 0.53333";  // rgb(136,136,136) — the line class js/trace.js looks for
+const WALL_GAP = 8;                          // pt of clear paper kept between two rooms' walls
+const WALL_MARGIN = 30;                      // pt kept clear of the page edge (so no region leaks out)
+const WALL_RES = 2;                          // pt — resolution of the occupancy grid the packer uses
+const WALL_H_MAX = 195;                      // tallest honest rectangle the 100 pt row pitch allows
+const WALL_HEIGHTS = [60, 75, 90, 105, 120, 140, 160, 180, 195];
+
+
 // ---------------------------------------------------------------- deterministic PRNG
 
 function mulberry32(seed) {
@@ -136,16 +159,35 @@ const FORCED = {
   ],
 };
 
-/** All tags of one sheet, with coordinates, as flat text items. */
+/** All tags of one sheet, with coordinates, as flat text items. Each tag also records the box it
+ *  occupies (in PDF user space, y up) and the point js/pdfparse.js will read as the room's `at`. */
 function floorItems(floor) {
   const rooms = [...(FORCED[floor] || []), ...floorRooms(floor)];
 
   const items = [];
+  const tags = [];
   rooms.forEach((room, i) => {
     const { row, col } = cell(i);
     const x = COL_X[col];
     const y = ROW_Y(row);
     const number = String(floor * 100 + i + 1);
+    const size = room.lines ? NAME_FONT : FONT;
+    const lines = room.lines || [room.name];
+    const areaYDisp = room.lines ? y + (room.lines.length + 1) * NAME_SLOT : y + 2 * SLOT;
+    let tw = 0;
+    for (const line of lines) tw = Math.max(tw, line.length * GLYPH_W * size);
+    tw = Math.max(tw, number.length * GLYPH_W * size, AREA(room.area).length * GLYPH_W * size);
+    // The tag's own box, enlarged 5 pt to the left of and below the area line: a rectangle built to
+    // contain it therefore leaves the `at` point (the area line's baseline) clear of its own walls.
+    tags.push({
+      idx: i,
+      name: room.name,
+      m2: Number(String(room.area).replace(/,/g, "")),   // "1,249.3" -> 1249.3
+      x,
+      atY: PAGE_H - areaYDisp,
+      bx0: x - 5, bx1: x + tw + 1,
+      by0: PAGE_H - areaYDisp - 5, by1: PAGE_H - y + 0.72 * size + 1,
+    });
     if (room.lines) {
       // two-line room name: name lines, then number, then the area (bigger face -> more room)
       room.lines.forEach((line, k) =>
@@ -158,7 +200,75 @@ function floorItems(floor) {
     items.push({ str: number, x, y: y + SLOT, size: FONT });
     items.push({ str: AREA(room.area), x, y: y + 2 * SLOT, size: FONT });
   });
-  return { rooms, items };
+  return { rooms, items, tags };
+}
+
+/** Two or three evenly spread values across [lo, hi] — the positions a rectangle is tried at. */
+function spread(lo, hi) {
+  return [...new Set([lo, (lo + hi) / 2, hi])];
+}
+
+/**
+ * The rooms that can hold their own tag inside an honest, non-overlapping rectangle at 1:100.
+ * Greedy, smallest stated area first: the small rooms fit anywhere, so letting them take their space
+ * first leaves the large ones the leftover paper, which places more rooms in total than the reverse.
+ * @returns {Array<{l,b,w,h,m2}>} rectangles in PDF user space (y up, origin bottom-left).
+ */
+function wallRectangles(tags) {
+  const gw = Math.ceil(PAGE_W / WALL_RES), gh = Math.ceil(PAGE_H / WALL_RES);
+  const occ = new Uint8Array(gw * gh);                    // paper already taken (incl. its gap)
+  const mark = (l, b, w, h) => {
+    const x0 = Math.max(0, Math.floor(l / WALL_RES)), x1 = Math.min(gw, Math.ceil((l + w) / WALL_RES));
+    const y0 = Math.max(0, Math.floor(b / WALL_RES)), y1 = Math.min(gh, Math.ceil((b + h) / WALL_RES));
+    for (let gy = y0; gy < y1; gy++) for (let gx = x0; gx < x1; gx++) occ[gy * gw + gx] = 1;
+  };
+  // Is this rectangle (plus WALL_GAP/2 on every side) free paper, inside the page margins?
+  const free = (l, b, w, h) => {
+    const lim0 = Math.floor((WALL_MARGIN - WALL_GAP / 2) / WALL_RES);
+    const limX = Math.floor((PAGE_W - WALL_MARGIN + WALL_GAP / 2) / WALL_RES);
+    const limY = Math.floor((PAGE_H - WALL_MARGIN + WALL_GAP / 2) / WALL_RES);
+    const x0 = Math.max(0, Math.floor((l - WALL_GAP / 2) / WALL_RES)), x1 = Math.min(gw, Math.ceil((l + w + WALL_GAP / 2) / WALL_RES));
+    const y0 = Math.max(0, Math.floor((b - WALL_GAP / 2) / WALL_RES)), y1 = Math.min(gh, Math.ceil((b + h + WALL_GAP / 2) / WALL_RES));
+    if (x0 < lim0 || y0 < lim0 || x1 > limX || y1 > limY) return false;
+    for (let gy = y0; gy < y1; gy++) for (let gx = x0; gx < x1; gx++) if (occ[gy * gw + gx]) return false;
+    return true;
+  };
+
+  const ats = tags.map((t) => ({ x: t.x, y: t.atY, idx: t.idx }));
+  const placed = [];
+  for (const t of [...tags].sort((a, b) => a.m2 - b.m2 || a.idx - b.idx)) {
+    const A = t.m2 / M2_PER_PT2;                          // square points of paper this room needs
+    if (!(A > 0) || !Number.isFinite(A)) continue;        // a room with no stated area gets no walls
+    const bw = t.bx1 - t.bx0, bh = t.by1 - t.by0;
+    const heights = [...new Set([Math.round(Math.sqrt(A)), ...WALL_HEIGHTS]
+      .map((h) => Math.min(WALL_H_MAX, Math.max(Math.ceil(bh), h)))
+      .filter((h) => h >= bh && h <= WALL_H_MAX))].sort((a, b) => a - b);
+    let hit = null;
+    for (const h of heights) {
+      const w = A / h;                                    // area is EXACTLY the stated one at 1:100
+      if (w < bw + 2 || w > PAGE_W - 2 * WALL_MARGIN) continue;
+      // The rectangle must contain the tag: l <= bx0, l + w >= bx1, b <= by0, b + h >= by1.
+      const lLo = Math.max(WALL_MARGIN, t.bx1 - w), lHi = Math.min(PAGE_W - WALL_MARGIN - w, t.bx0);
+      const bLo = Math.max(WALL_MARGIN, t.by1 - h), bHi = Math.min(PAGE_H - WALL_MARGIN - h, t.by0);
+      if (lLo > lHi || bLo > bHi) continue;
+      for (const l of spread(lLo, lHi)) {
+        for (const b of spread(bLo, bHi)) {
+          // Never enclose another room's tag: the region would hold two labels and be refused.
+          if (ats.some((p) => p.idx !== t.idx
+            && p.x > l + 1 && p.x < l + w - 1 && p.y > b + 1 && p.y < b + h - 1)) continue;
+          if (!free(l, b, w, h)) continue;
+          hit = { l, b, w, h };
+          break;
+        }
+        if (hit) break;
+      }
+      if (hit) break;
+    }
+    if (!hit) continue;
+    mark(hit.l, hit.b, hit.w, hit.h);
+    placed.push({ ...hit, m2: t.m2 });
+  }
+  return placed;
 }
 
 // Sheet furniture: a level title (never a room name — it contains PLAN, which the parser rejects
@@ -179,8 +289,23 @@ function floorFurniture(floor) {
 const esc = (s) =>
   String(s).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 
-function contentStream(items) {
-  const out = ["BT"];
+const f2 = (n) => Number(n.toFixed(2));
+
+/** The stroked walls of one sheet, as raw path operators (a fourth `l` returns to the start, so the
+ *  `h` closes nothing — every side is an explicit segment js/trace.js can read). */
+function wallOperators(walls) {
+  if (!walls.length) return [];
+  const out = [`${WALL_RGB} RG`, "1 w"];
+  for (const w of walls) {
+    const x0 = f2(w.l), y0 = f2(w.b), x1 = f2(w.l + w.w), y1 = f2(w.b + w.h);
+    out.push(`${x0} ${y0} m`, `${x1} ${y0} l`, `${x1} ${y1} l`, `${x0} ${y1} l`, "h", "S");
+  }
+  return out;
+}
+
+function contentStream(items, walls = []) {
+  const out = wallOperators(walls);
+  out.push("BT");
   for (const it of items) {
     out.push(`/F1 ${it.size} Tf`);
     out.push(`1 0 0 1 ${it.x} ${(PAGE_H - it.y).toFixed(2)} Tm (${esc(it.str)}) Tj`);
@@ -192,11 +317,15 @@ function contentStream(items) {
 /** @returns {{pdf: Buffer, items: Array, pages: number}} */
 export function buildSamplePlan() {
   const perFloor = [0, 1, 2].map((floor) => {
-    const { rooms, items } = floorItems(floor);
-    return { floor, rooms, items: [...floorFurniture(floor), ...items] };
+    const { rooms, items, tags } = floorItems(floor);
+    return {
+      floor, rooms, tags,
+      walls: wallRectangles(tags),
+      items: [...floorFurniture(floor), ...items],
+    };
   });
 
-  const streams = perFloor.map((f) => contentStream(f.items));
+  const streams = perFloor.map((f) => contentStream(f.items, f.walls));
   const objs = [];
   objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
   objs[2] = "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>";
@@ -229,7 +358,10 @@ export function buildSamplePlan() {
   xref += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
   chunks.push(Buffer.from(xref, "latin1"));
 
-  return { pdf: Buffer.concat(chunks), pages: 3, rooms: perFloor.map((f) => f.rooms) };
+  return {
+    pdf: Buffer.concat(chunks), pages: 3, rooms: perFloor.map((f) => f.rooms),
+    walls: perFloor.map((f) => f.walls), tags: perFloor.map((f) => f.tags),
+  };
 }
 
 export function writeSamplePlan(file = OUT_PATH) {
@@ -240,11 +372,13 @@ export function writeSamplePlan(file = OUT_PATH) {
 }
 
 function summary() {
-  const { pdf, rooms } = buildSamplePlan();
+  const { pdf, rooms, walls } = buildSamplePlan();
   const lines = [
     `sample-plan.pdf: ${pdf.length} bytes, 3 pages`,
-    ...rooms.map((r, i) => `  page ${i + 1}: ${r.length} room tags`),
-    `  total: ${rooms.reduce((a, r) => a + r.length, 0)} room tags`,
+    ...rooms.map((r, i) => `  page ${i + 1}: ${r.length} room tags, ${walls[i].length} with honest walls at 1:100`),
+    `  total: ${rooms.reduce((a, r) => a + r.length, 0)} room tags, ` +
+      `${walls.reduce((a, w) => a + w.length, 0)} with walls (the rest are too small or too large to ` +
+      `hold their own tag inside a rectangle of their stated area)`,
   ];
   return lines.join("\n");
 }

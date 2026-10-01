@@ -1028,6 +1028,33 @@ if (!sampleMissing) {
     await new Promise((r) => setTimeout(r, 1200));
   }
 
+  // ---- A long space-type label must stay inside its own cell ----------------------
+  {
+    const vw = page.viewport() || { width: 1500, height: 1100 };
+    await page.setViewport({ ...vw, width: 900 });
+    await new Promise((r) => setTimeout(r, 600));
+    const overhang = await page.evaluate(() => {
+      let worst = -Infinity, widest = 0, label = '';
+      for (const tr of document.querySelectorAll('#roomsBody tr')) {
+        const td = tr.querySelector('td.c-type');
+        if (!td) continue;
+        const sel = td.querySelector('select');
+        const t = td.getBoundingClientRect(), s = sel.getBoundingClientRect();
+        worst = Math.max(worst, s.right - t.right);
+        if (s.width > widest) { widest = s.width; label = sel.options[sel.selectedIndex].text; }
+      }
+      const cs = getComputedStyle(document.querySelector('td.c-type select'));
+      return { worst: Math.round(worst), widest: Math.round(widest), label,
+        appearance: cs.appearance, ellipsis: cs.textOverflow };
+    });
+    ok('a long space type stays inside its own cell in a narrow window', overhang.worst <= 0,
+      `widest control ${overhang.widest}px, longest label "${overhang.label}", overhang ${overhang.worst}px`);
+    ok('the space type is drawn by us so it can ellipsize instead of spilling',
+      overhang.appearance === 'none' && overhang.ellipsis === 'ellipsis',
+      `${overhang.appearance} / ${overhang.ellipsis}`);
+    await page.setViewport(vw);
+    await new Promise((r) => setTimeout(r, 400));
+  }
 } // end of the checks that need the sample drawing
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample
@@ -1038,6 +1065,7 @@ if (!sampleMissing) {
     if (/ALL SELF TESTS PASSED|CHECK\(S\) FAILED|threw an error/.test(selfOut)) break;
     await new Promise((r) => setTimeout(r, 2000));
   }
+
   ok("in-browser self test (PDF reader + engine)", /ALL SELF TESTS PASSED/.test(selfOut),
       selfOut.split("\n").slice(-3).join(" | "));
   fs.writeFileSync(`${OUT}/selftest.txt`, selfOut);

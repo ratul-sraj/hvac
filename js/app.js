@@ -1571,7 +1571,7 @@ function traceReasonBucket(reason) {
   if (/far larger than any single room/i.test(r)) return 'had no enclosed space around the name (open plan or a gap in the walls)';
   if (/no enclosed area/i.test(r)) return 'had their name on a wall line';
   if (/shared with/i.test(r)) return 'share their area with another room';
-  if (/stated area/i.test(r)) return 'did not match their stated area';
+  if (/traced area/i.test(r)) return 'did not match their stated area';
   return r || 'the tracer could not verify them';
 }
 
@@ -1672,12 +1672,13 @@ async function planTraceOutlines() {
       const allResults = [];
       const reasonCount = new Map();
       const ratios = [];
-      let accepted = 0, refused = 0, emptyPages = 0, badPages = 0;
+      let accepted = 0, refused = 0, refusedWithRect = 0, emptyPages = 0, badPages = 0;
 
       for (const p of [...byPage.keys()].sort((a, b) => a - b)) {
         const list = byPage.get(p);
         if (p < 1 || p > doc.numPages) {
           refused += list.length;
+          refusedWithRect += list.filter((r) => r.rect).length;
           list.forEach(() => bump(reasonCount, 'are on a page the drawing does not have'));
           continue;
         }
@@ -1689,12 +1690,14 @@ async function planTraceOutlines() {
         if (!segs.length) {
           emptyPages += 1;
           refused += list.length;
+          refusedWithRect += list.filter((r) => r.rect).length;
           list.forEach(() => bump(reasonCount, 'are on a page with no wall lines'));
           continue;
         }
         if (!segmentsInBox(segs, box, 2)) {
           badPages += 1;
           refused += list.length;
+          refusedWithRect += list.filter((r) => r.rect).length;
           list.forEach(() => bump(reasonCount, 'could not be placed in the sheet’s own space'));
           console.warn(`[trace] skipped page ${p}: the linework falls outside the page MediaBox — ` +
             `the app and the tracer disagree on the page space, so no shape is stored for it.`);
@@ -1726,6 +1729,7 @@ async function planTraceOutlines() {
             accepted += 1;
           } else {
             refused += 1;
+            if (room.rect) refusedWithRect += 1;
             bump(reasonCount, traceReasonBucket(res.reason));
           }
         }
@@ -1754,7 +1758,11 @@ async function planTraceOutlines() {
       const offered = scaleOff ? planOfferScale(implied.denom) : false;
 
       let msg;
-      if (scaleOff && few) {
+      const noLinework = byPage.size > 0 && emptyPages === byPage.size;
+      if (noLinework) {
+        msg = 'This drawing has no wall lines for the tracer to read (a scan, or a plan that is text ' +
+          'only), so no outline could be stored. ';
+      } else if (scaleOff && few) {
         // The honest answer when almost nothing agrees: say what scale the outlines imply and let the
         // user set it. Never quietly retry at another scale — a wrong scale silently changes every area.
         msg = `Only ${accepted} of ${withPos.length} room(s) traced: this drawing's outlines point to about ` +
@@ -1772,7 +1780,10 @@ async function planTraceOutlines() {
           `imply a scale between about 1:${implied.p25} and 1:${implied.p75}, against the 1:${denom} in use. `;
       }
       if (refused) {
-        msg += `${refused} kept ${refused === 1 ? 'its box' : 'their box'}${parts.length ? ': ' + parts.join(', ') : ''}. `;
+        const kept = refusedWithRect === refused
+          ? `${refused} kept ${refused === 1 ? 'its box' : 'their box'}`
+          : `${refusedWithRect} of the ${refused} kept their box`;
+        msg += `${kept}${parts.length ? ': ' + parts.join(', ') : ''}. `;
       }
       if (noAt) msg += `${noAt} room(s) the sheet does not name ${noAt === 1 ? 'was' : 'were'} left alone. `;
       if (emptyPages) msg += `The drawing has no wall lines on ${emptyPages} page(s). `;

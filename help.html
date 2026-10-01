@@ -382,6 +382,24 @@
           </p>
         </details>
 
+        <details>
+          <summary>Why are the rooms on the drawing boxes, and can they be their real shape?</summary>
+          <p>
+            A PDF's text tells LoadLens where a room is named and how big it is; the walls are separate
+            <b>lines</b> in the file. <b>Trace real outlines</b> in the plan panel reads those lines and
+            gives each room its real shape — but only where the result can be checked: the name must have
+            an enclosed area of its own, and the traced area must agree with the area the plan states.
+            Rooms that fail either check keep their box, and every row is marked <b>outline</b> or
+            <b>box</b>. Nothing is guessed, and the load never changes — the area always stays the one
+            your plan (or you) gave.
+          </p>
+          <p>
+            If almost nothing traces, your <b>drawing scale</b> is wrong for that sheet. The outlines
+            themselves say what the scale should be, and the app offers it in the scale list (for example
+            <b>1:225 (from the drawing)</b>) — pick it and trace again.
+          </p>
+        </details>
+
       </div>
     </div>
   </section>

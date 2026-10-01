@@ -307,11 +307,16 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
   text-overflow: ellipsis;
   white-space: nowrap;
   overflow: hidden;
+  /* Drawing the control ourselves also removes the background Windows used to paint for it, so the
+     pill that told the user "this is a dropdown" has to be put back here. */
+  background-color: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23808b99' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 7px center;
 }
-.rooms-table th.c-type, .rooms-table td.c-type { min-width: 150px; }
+.rooms-table th.c-type, .rooms-table td.c-type { min-width: 175px; }
 .rooms-table th.th-include, .rooms-table td.c-include { width: 34px; text-align: center; }
 .rooms-table th.th-del, .rooms-table td.c-del { width: 34px; text-align: center; border-right: none; }
 .rooms-table th.th-src, .rooms-table td.c-src {
