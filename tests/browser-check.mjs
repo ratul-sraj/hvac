@@ -964,6 +964,70 @@ if (!sampleMissing) {
     ok("and the drawing is left as it was found",
       (await roomsNow()).placed === 0, "placed regions cleared again");
   }
+
+  // ---- A project saved before the parser kept positions ---------------------------
+  // (the user's own report: 'No room to place: N are not named on the sheet')
+  {
+    const storedLacksPositions = await page.evaluate(() => {
+      const h = window.webhvac;
+      // make the table look like one saved by the older parser, then write it exactly as the app's
+      // own saveNow() does (saveSoon is not exposed to scripts, so a probe cannot call it)
+      for (const r of h.state.rooms) delete r.at;
+      localStorage.setItem('webhvac.state.v1',
+        JSON.stringify({ v: 1, project: h.state.project, rooms: h.state.rooms }));
+      const raw = localStorage.getItem('webhvac.state.v1') || '';
+      return !/"at"\s*:/.test(raw);
+    });
+    ok('an old saved project can be simulated (storage holds no positions)', storedLacksPositions,
+      'so a reload restores a table with no positions at all');
+
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => document.querySelectorAll('#roomsBody tr').length > 20,
+      { timeout: 120000, polling: 500 });
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const afterReload = await page.evaluate(() => ({
+      rooms: window.webhvac.state.rooms.length,
+      withAt: window.webhvac.state.rooms.filter((r) => r.at && Number.isFinite(r.at.x)).length,
+    }));
+    ok('the reload brings the old project back without positions', afterReload.withAt === 0,
+      `${afterReload.rooms} rooms, ${afterReload.withAt} with a position`);
+
+    const readLoad = () => page.evaluate(() => {
+      const el = [...document.querySelectorAll('#summaryCards .scard')]
+        .find((c) => /total cooling load/i.test(c.textContent));
+      return el ? el.textContent.replace(/\s+/g, ' ').trim() : '';
+    });
+    const loadBefore = await readLoad();
+    await page.evaluate(() => document.getElementById('planCard').scrollIntoView({ block: 'center' }));
+    await new Promise((r) => setTimeout(r, 400));
+    await page.click('#planPlaceAll');
+    await new Promise((r) => setTimeout(r, 4000));
+
+    const healed = await page.evaluate(() => ({
+      withAt: window.webhvac.state.rooms.filter((r) => r.at && Number.isFinite(r.at.x)).length,
+      placed: window.webhvac.state.rooms.filter((r) => r.rect && r.rect.placed === true).length,
+      boxes: document.querySelectorAll('.plan-room').length,
+      msg: document.getElementById('statusBox').textContent.replace(/\s+/g, ' ').trim(),
+      load: (() => {
+        const el = [...document.querySelectorAll('#summaryCards .scard')]
+          .find((c) => /total cooling load/i.test(c.textContent));
+        return el ? el.textContent.replace(/\s+/g, ' ').trim() : '';
+      })(),
+    }));
+    ok('the old project recovers its positions and places its rooms',
+      healed.withAt > 0 && healed.placed === healed.withAt,
+      `${healed.withAt} rooms recovered, ${healed.placed} placed, ${healed.boxes} boxes on this page`);
+    ok('the app says it re-read the drawing', /re-?read|older version/i.test(healed.msg),
+      healed.msg.slice(0, 96));
+    ok('recovering positions does not change the load', healed.load === loadBefore,
+      `${loadBefore || '(none)'} -> ${healed.load || '(none)'}`);
+
+    // leave the project as it was found, so the checks after this one start clean
+    await page.click('#planPlaceClear');
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+
 } // end of the checks that need the sample drawing
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample
