@@ -139,6 +139,8 @@ const el = {
   planTraceOutlines: $('#planTraceOutlines'),
   planTraceClear: $('#planTraceClear'),
   planHint: $('#planHint'),
+  planStatus: $('#planStatus'),
+  planScaleFix: $('#planScaleFix'),
   reportView: $('#reportView'),
   reportFrame: $('#reportFrame'),
   reportPrint: $('#reportPrint'),
@@ -164,11 +166,36 @@ function newId() {
   return 'r' + Date.now().toString(36) + idSeq.toString(36);
 }
 
-function setStatus(kind, msg) {
-  if (!msg) { el.statusBox.classList.add('hidden'); el.statusBox.textContent = ''; return; }
+/** The one place a status message's TEXT lives, exactly as before.
+ *  `scope` may be 'plan': the SAME string is also mirrored into the plan panel's own message line
+ *  (#planStatus, aria-live) so an answer to a plan-panel button is visible where the user is looking.
+ *  #statusBox lives in the upload section, ~155 px above the plan panel's buttons — off-screen, so
+ *  "Real outlines for 105 of 159 room(s)…" was never seen (UX review, item 1). The text is built once
+ *  and passed to both, never duplicated. */
+function setStatus(kind, msg, scope) {
+  if (!msg) {
+    el.statusBox.classList.add('hidden'); el.statusBox.textContent = '';
+    if (scope === 'plan') hidePlanStatus();
+    return;
+  }
   el.statusBox.className = 'status ' + (kind || '');
   el.statusBox.textContent = msg;
   el.statusBox.classList.remove('hidden');
+  if (scope === 'plan') showPlanStatus(kind, msg);
+}
+
+/** Mirror a status message into the plan panel's own line (see setStatus). */
+function showPlanStatus(kind, msg) {
+  if (!el.planStatus) return;
+  el.planStatus.className = 'plan-status ' + (kind || '');
+  el.planStatus.textContent = msg;
+  el.planStatus.classList.remove('hidden');
+}
+
+function hidePlanStatus() {
+  if (!el.planStatus) return;
+  el.planStatus.classList.add('hidden');
+  el.planStatus.textContent = '';
 }
 
 function setProgress(text, pct) {
@@ -1420,7 +1447,7 @@ function planDeleteRoom(id) {
 /** Give every table room that the drawing names a clickable locator box on its own page. */
 async function planPlaceAllRooms() {
   if (!state.rooms.length) {
-    setStatus('warn', 'There are no rooms in the table to place yet. Load a drawing or add rooms first.');
+    setStatus('warn', 'There are no rooms in the table to place yet. Load a drawing or add rooms first.', 'plan');
     return;
   }
 
@@ -1460,16 +1487,16 @@ async function planPlaceAllRooms() {
 
   if (!placed) {
     if (!notes.length) {
-      setStatus('warn', 'No room to place — none of the rooms carries a usable area to size a box from.');
+      setStatus('warn', 'No room to place — none of the rooms carries a usable area to size a box from.', 'plan');
       return;
     }
     // nothing new, but say WHY rather than a flat "done": rooms already placed, and rooms that have
     // nowhere to sit (the sheet does not name them) or nothing to size a box from.
     if (already && notes.length === 1) {
-      setStatus('ok', rehydrateNote + `All ${already} room(s) the drawing names are already on the plan.`);
+      setStatus('ok', rehydrateNote + `All ${already} room(s) the drawing names are already on the plan.`, 'plan');
       return;
     }
-    setStatus('warn', rehydrateNote + `No room to place: ${notes.join('; ')}.`);
+    setStatus('warn', rehydrateNote + `No room to place: ${notes.join('; ')}.`, 'plan');
     return;
   }
 
@@ -1479,7 +1506,7 @@ async function planPlaceAllRooms() {
 
   let msg = rehydrateNote + `Placed ${placed} room(s) on the plan. `;
   msg += notes.length ? `${notes.join('; ')}.` : 'Each box is a locator centred on the point that names the room, sized back from its own area — the load has not changed.';
-  setStatus('ok', msg);
+  setStatus('ok', msg, 'plan');
 }
 
 /** Remove ONLY the locator boxes made by "Place all rooms on the plan". Hand-drawn rooms and rooms
@@ -1492,14 +1519,14 @@ function planClearPlaced() {
     removed += 1;
   }
   if (!removed) {
-    setStatus('warn', 'There are no placed rooms on the plan to remove.');
+    setStatus('warn', 'There are no placed rooms on the plan to remove.', 'plan');
     return;
   }
   planSync();
   renderAll();
   saveSoon();
   setStatus('ok', `Removed ${removed} placed room(s) from the plan. Hand-drawn boxes were left alone; ` +
-    `the rooms and the load are unchanged.`);
+    `the rooms and the load are unchanged.`, 'plan');
 }
 
 /* ---- "Trace real outlines": the plan's OWN wall linework -> a real shape per room -----------------
@@ -1565,14 +1592,19 @@ function largestRing(rings, trace) {
   return best;
 }
 
-/** A plain-language bucket for a refusal, so the status line can count categories not rooms. */
-function traceReasonBucket(reason) {
-  const r = String(reason || '');
-  if (/far larger than any single room/i.test(r)) return 'had no enclosed space around the name (open plan or a gap in the walls)';
-  if (/no enclosed area/i.test(r)) return 'had their name on a wall line';
-  if (/shared with/i.test(r)) return 'share their area with another room';
-  if (/traced area/i.test(r)) return 'did not match their stated area';
-  return r || 'the tracer could not verify them';
+/** A plain-language bucket for a REFUSAL CODE from js/trace.js, so the status line can count
+ *  categories, not rooms. The code is a stable machine value the tracer returns alongside its human
+ *  sentence ('shared' | 'too-big' | 'no-region' | 'area-mismatch' | 'no-area'), so the app
+ *  categorises by code and never regex-parses the English `reason` any more. */
+function traceReasonBucket(code) {
+  switch (code) {
+    case 'too-big': return 'had no enclosed space around the name (open plan or a gap in the walls)';
+    case 'no-region': return 'had their name on a wall line';
+    case 'shared': return 'share their area with another room';
+    case 'area-mismatch': return 'did not match their stated area';
+    case 'no-area': return 'have no stated area to check the outline against';
+    default: return 'the tracer could not verify them';
+  }
 }
 
 function bump(map, key) {
@@ -1616,11 +1648,11 @@ function planTraceBusy(on) {
 async function planTraceOutlines() {
   if (state.ui.traceBusy) return;
   if (!state.rooms.length) {
-    setStatus('warn', 'There are no rooms to trace yet. Load a drawing or add rooms first.');
+    setStatus('warn', 'There are no rooms to trace yet. Load a drawing or add rooms first.', 'plan');
     return;
   }
   if (!plan.viewer || plan.unavailable) {
-    setStatus('warn', 'Open a drawing in the plan view first, then trace its outlines.');
+    setStatus('warn', 'Open a drawing in the plan view first, then trace its outlines.', 'plan');
     return;
   }
 
@@ -1634,24 +1666,25 @@ async function planTraceOutlines() {
   }
   if (!withPos.length) {
     setStatus('warn', 'No room carries both a position on the sheet and an area, so there is nothing to trace. ' +
-      'Upload the drawing again if the rooms have no position.');
+      'Upload the drawing again if the rooms have no position.', 'plan');
     return;
   }
   const noAt = state.rooms.filter((r) => !r.at || !Number.isFinite(r.at.x) || !Number.isFinite(r.at.y)).length;
 
   const denom = planScaleDenom();
   let trace;
-  try { trace = await loadTraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err)); return; }
+  try { trace = await loadTraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err), 'plan'); return; }
 
   planTraceBusy(true);
-  setStatus(null, "Tracing the plan's linework… this can take a second or two on a big sheet.");
+  planHideScaleFix();   // a stale one-click fix must not survive the trace that replaces it
+  setStatus(null, "Tracing the plan's linework… this can take a second or two on a big sheet.", 'plan');
   await nextFrame();
 
   try {
     const rec = await drawingBytesForTrace();
     if (!rec) {
       setStatus('warn', 'The drawing is not kept in this browser any more, so its linework cannot be read. ' +
-        'Upload it again and try.');
+        'Upload it again and try.', 'plan');
       return;
     }
 
@@ -1730,7 +1763,7 @@ async function planTraceOutlines() {
           } else {
             refused += 1;
             if (room.rect) refusedWithRect += 1;
-            bump(reasonCount, traceReasonBucket(res.reason));
+            bump(reasonCount, traceReasonBucket(res.code));
           }
         }
       }
@@ -1742,8 +1775,9 @@ async function planTraceOutlines() {
       // The implied scale only means something for a region that held exactly ONE label: a region that
       // merged several rooms, or one far larger than any single room, says nothing about the scale.
       // Filtering those out first is what makes the hint point at the real scale instead of at the junk.
+      // Categorised by the tracer's stable CODE, never by regex-matching its English sentence.
       const scaleSet = allResults.filter((r) => r
-        && !/shared with|no enclosed area|far larger than any single room/i.test(String(r.reason || '')));
+        && !['shared', 'no-region', 'too-big'].includes(r.code));
       const implied = trace.impliedDenom(scaleSet.length >= 5 ? scaleSet : allResults, denom);
       // a small debug handle (same spirit as the viewer's exposed canvas): what the last trace found
       plan.lastTrace = {
@@ -1756,6 +1790,10 @@ async function planTraceOutlines() {
         && Math.abs(implied.denom - denom) / denom > 0.15);
       // Offer the implied scale in the list, so fixing it is one click. Nothing is stored until chosen.
       const offered = scaleOff ? planOfferScale(implied.denom) : false;
+      // ...and put the fix ON the plan panel, next to the button that produced it: the scale list entry
+      // alone was easy to miss, and the explanation sat in the upload section (UX review, item 2).
+      if (offered) planShowScaleFix({ implied: implied.denom, denom, accepted, attempted: withPos.length });
+      else planHideScaleFix();
 
       let msg;
       const noLinework = byPage.size > 0 && emptyPages === byPage.size;
@@ -1780,10 +1818,14 @@ async function planTraceOutlines() {
           `imply a scale between about 1:${implied.p25} and 1:${implied.p75}, against the 1:${denom} in use. `;
       }
       if (refused) {
+        // Read forwards, always: "Of the 54 room(s) that got no outline, 0 kept their box (33 share
+        // their area with another room, 10 had their name on a wall line)." The old "0 of the 54 kept
+        // their box" read backwards and contradicted itself (UX review, item 4).
         const kept = refusedWithRect === refused
-          ? `${refused} kept ${refused === 1 ? 'its box' : 'their box'}`
-          : `${refusedWithRect} of the ${refused} kept their box`;
-        msg += `${kept}${parts.length ? ': ' + parts.join(', ') : ''}. `;
+          ? `all ${refused} kept their box`
+          : `${refusedWithRect} of ${refused} kept their box`;
+        msg += `Of the ${refused} room(s) that got no outline, ${kept}` +
+          `${parts.length ? ` (${parts.join(', ')})` : ''}. `;
       }
       if (noAt) msg += `${noAt} room(s) the sheet does not name ${noAt === 1 ? 'was' : 'were'} left alone. `;
       if (emptyPages) msg += `The drawing has no wall lines on ${emptyPages} page(s). `;
@@ -1795,17 +1837,54 @@ async function planTraceOutlines() {
       } else {
         msg += 'No outline was stored, so nothing on the plan changed and the load is unchanged.';
       }
-      setStatus(accepted ? 'ok' : 'warn', msg.replace(/\s+$/, ''));
+      setStatus(accepted ? 'ok' : 'warn', msg.replace(/\s+$/, ''), 'plan');
     } finally {
       try { await doc.destroy(); } catch (e) { /* ignore */ }
     }
   } catch (err) {
     console.warn('[trace] tracing failed:', (err && err.message) || err);
     setStatus('err', `Tracing the plan's linework failed (${(err && err.message) || err}). ` +
-      `The rooms and the load are unchanged.`);
+      `The rooms and the load are unchanged.`, 'plan');
   } finally {
     planTraceBusy(false);
   }
+}
+
+/** The one-click scale fix, shown ON the plan panel (in #planScaleFix, above the drawing) when a
+ *  trace reports the drawing scale is wrong. The offered list entry alone was easy to miss and the
+ *  explanation sat far up the page (UX review, item 2). The button sets #planScale and re-runs the
+ *  trace — for ANY offered scale, not only the sample's 1:101. */
+function planShowScaleFix(info) {
+  const box = el.planScaleFix;
+  if (!box || !info || !(Number(info.implied) > 0)) return;
+  const right = String(Math.round(info.implied));
+  const what = info.accepted === 0
+    ? 'finds no rooms'
+    : `finds only ${info.accepted} of ${info.attempted} room(s)`;
+  box.replaceChildren();
+  const text = document.createElement('span');
+  text.className = 'plan-scalefix-text';
+  text.textContent = `This scale ${what}: the outlines point to about 1:${right}, not 1:${info.denom}.`;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-small';
+  btn.id = 'planScaleFixBtn';
+  btn.textContent = `Use 1:${right} and trace again`;
+  btn.addEventListener('click', () => {
+    planOfferScale(info.implied);                       // make sure the option exists before selecting it
+    if (el.planScale) el.planScale.value = right;
+    planApplyScale(right);
+    planTraceOutlines();
+  });
+  box.append(text, btn);
+  box.classList.remove('hidden');
+}
+
+/** Hide the one-click scale fix (a new trace, or a manual scale change, supersedes it). */
+function planHideScaleFix() {
+  if (!el.planScaleFix) return;
+  el.planScaleFix.classList.add('hidden');
+  el.planScaleFix.replaceChildren();
 }
 
 /** Offer the scale the outlines imply, as "1:225 (from the drawing)", at the end of the drawing-scale
@@ -1843,12 +1922,13 @@ function planTraceClear() {
     removed += 1;
   }
   if (!removed) {
-    setStatus('warn', 'There are no traced outlines to remove.');
+    setStatus('warn', 'There are no traced outlines to remove.', 'plan');
     return;
   }
+  planHideScaleFix();
   renderAll();
   saveSoon();
-  setStatus('ok', `Removed ${removed} traced outline(s). Their boxes, if any, and the load are unchanged.`);
+  setStatus('ok', `Removed ${removed} traced outline(s). Their boxes, if any, and the load are unchanged.`, 'plan');
 }
 
 /** A level for a room drawn on page N: the levels the parser found, in the order it found them,
@@ -1879,7 +1959,7 @@ function planDrawRoom(rect, info) {
   saveSoon();
   if (res.added) {
     setStatus('ok', `${room.name} added — ${room.length} × ${room.width} m, ${room.area} m² at 1:${denom}. ` +
-      `Set its name, orientation and glazing below; the load already uses it.`);
+      `Set its name, orientation and glazing below; the load already uses it.`, 'plan');
     planSelectRoom(room);
   }
 }
@@ -1906,7 +1986,7 @@ function planApplyScale(denom) {
   saveSoon();
   setStatus('ok', changed
     ? `Drawing scale 1:${n} — ${changed} drawn room(s) re-measured from their rectangles.`
-    : `Drawing scale set to 1:${n}. Rooms you draw are measured at this scale.`);
+    : `Drawing scale set to 1:${n}. Rooms you draw are measured at this scale.`, 'plan');
 }
 
 /* ------------------------------------------------------------------ */
@@ -2030,7 +2110,7 @@ async function planGoTo(n) {
     await plan.viewer.showPage(target);
     if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
   } catch (err) {
-    setStatus('warn', `Could not show page ${target} (${(err && err.message) || err}).`);
+    setStatus('warn', `Could not show page ${target} (${(err && err.message) || err}).`, 'plan');
   }
   planSync();
 }
@@ -2059,7 +2139,7 @@ async function planZoomBy(factor) {
       planSync();
     }
   } catch (err) {
-    setStatus('warn', `Could not zoom (${(err && err.message) || err}).`);
+    setStatus('warn', `Could not zoom (${(err && err.message) || err}).`, 'plan');
   } finally {
     zoomBusy = false;
   }
@@ -2072,7 +2152,7 @@ async function planFitWidth() {
     if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
     planSync();
   } catch (err) {
-    setStatus('warn', `Could not fit the drawing (${(err && err.message) || err}).`);
+    setStatus('warn', `Could not fit the drawing (${(err && err.message) || err}).`, 'plan');
   }
 }
 
@@ -2095,8 +2175,9 @@ function planWire() {
       const fromDrawing = !!(opt && opt.dataset && opt.dataset.fromDrawing);
       planApplyScale(el.planScale.value);
       // Choosing the scale the outlines imply re-runs the trace straight away — that is the whole point
-      // of offering it. Any other scale change keeps its old behaviour exactly.
-      if (fromDrawing) planTraceOutlines();
+      // of offering it. Any other scale change keeps its old behaviour exactly. Either way the old
+      // one-click fix is stale now, so it goes.
+      if (fromDrawing) planTraceOutlines(); else planHideScaleFix();
     });
   }
   if (el.planPrev) el.planPrev.addEventListener('click', () => planGoTo(plan.page - 1));
@@ -2191,7 +2272,7 @@ async function openPlan(bytes, opts) {
     // the message was then overwritten by the next status update from the parse.
     console.warn('[plan] could not open the drawing:', (err && err.message) || err);
     setStatus('warn', `The drawing could not be shown in the plan view (${(err && err.message) || err}). ` +
-      `The rooms, the table and the load are unaffected.`);
+      `The rooms, the table and the load are unaffected.`, 'plan');
   }
 }
 

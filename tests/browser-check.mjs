@@ -813,6 +813,28 @@ if (!sampleMissing) {
     ok("Delete while typing in a table cell does not delete a room",
       (await rows2()) === rowsBeforeKey, `${rowsBeforeKey} -> ${await rows2()}`);
 
+    // ...and Delete must be ignored while the focus is on any OTHER table control too — the row's In
+    // checkbox, a row dropdown, the x button. Before this, Delete with the focus on a row checkbox
+    // removed the selected plan room with no warning (UX review, item 4). A room is selected first on
+    // purpose, so an unguarded Delete WOULD remove a row and the check cannot pass vacuously.
+    await page.evaluate(() => {
+      const tr = document.querySelector("#roomsBody tr");
+      const cell = tr && tr.querySelector(".v-total");
+      if (cell) cell.click();                 // open that room, so a stray Delete would act
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    await page.evaluate(() => {
+      const cb = document.querySelector('#roomsBody tr input[type="checkbox"]');
+      if (cb) cb.focus();
+    });
+    const cbFocus = await page.evaluate(() => (document.activeElement && document.activeElement.type) || "none");
+    const rowsBeforeCb = await rows2();
+    await page.keyboard.press("Delete");
+    await new Promise((r) => setTimeout(r, 400));
+    ok("Delete does not fire while a row checkbox holds the focus",
+      cbFocus === "checkbox" && (await rows2()) === rowsBeforeCb,
+      `focused ${cbFocus}, rows ${rowsBeforeCb} -> ${await rows2()}`);
+
     // ...but Delete must reach the drawing while a non-text control holds the focus. Clicking a room
     // does not blur the mode radio (the drag cancels the default that would move focus), so treating
     // every <input> as a text field made Delete silently do nothing right after switching mode.
@@ -864,6 +886,7 @@ if (!sampleMissing) {
         placed: rooms.filter((r) => r.rect && r.rect.placed === true).length,
         drawn: rooms.filter((r) => r.rect && r.rect.placed !== true).length,
         boxesOnPage: document.querySelectorAll(".plan-room").length,
+        markers: document.querySelectorAll('.plan-room[data-shape="marker"]').length,
         pageNow,
         onThisPage: rooms.filter((r) => r.at && (r.page || 1) === pageNow).length,
         areas: rooms.map((r) => `${r.id}:${r.area}:${r.length}:${r.width}`).join("|"),
@@ -889,6 +912,14 @@ if (!sampleMissing) {
       `${after.placed} placed of ${after.withAt} named on the sheet`);
     ok("placing shows them on the page you are looking at",
       after.boxesOnPage >= after.onThisPage, `${after.boxesOnPage} boxes on page ${after.pageNow}, ${after.onThisPage} rooms named on it`);
+    // A crowded page must not draw 50+ full-area boxes on top of each other: they covered the drawing's
+    // walls and labels and made the demo look broken. Past the crowding limit each placed locator is a
+    // small marker at the point that names the room, still the same clickable .plan-room (UX review, item 3).
+    ok("a crowded placed page draws locators as markers, not overlapping area boxes",
+      after.onThisPage >= 40
+        ? after.markers === after.onThisPage && after.markers > 0
+        : after.markers === 0,
+      `${after.markers} marker(s), ${after.boxesOnPage} placed shape(s) on page ${after.pageNow} (${after.onThisPage} rooms named there)`);
     ok("placing does not add or drop table rows", (await rows3()) === rowsBefore, `${rowsBefore} -> ${await rows3()}`);
     ok("PLACING DOES NOT CHANGE THE LOAD", totalAfter === totalBefore, `"${totalBefore}" -> "${totalAfter}"`);
     ok("placing leaves every room's area and dimensions exactly as they were",
@@ -963,6 +994,87 @@ if (!sampleMissing) {
     await new Promise((r) => setTimeout(r, 1200));
     ok("and the drawing is left as it was found",
       (await roomsNow()).placed === 0, "placed regions cleared again");
+  }
+
+  // ---- Plan-panel messages are visible where the buttons are (UX review items 1, 2) ---------------
+  // The upload status box lives far up the page, so a trace result shown only there was never seen.
+  // Every message a plan button produces is mirrored into #planStatus inside the plan panel, and when
+  // the drawing scale is wrong a one-click fix appears next to the buttons and re-runs the trace.
+  {
+    const readPlanStatus = () => page.evaluate(() => {
+      const s = document.getElementById("planStatus");
+      const r = s ? s.getBoundingClientRect() : null;
+      return { text: s ? s.textContent.replace(/\s+/g, " ").trim() : "",
+        hidden: !s || s.classList.contains("hidden"),
+        onScreen: !!r && r.top < window.innerHeight && r.bottom > 0 };
+    });
+    const rows4 = () => page.$$eval("#roomsBody tr", (t) => t.length);
+
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await page.click("#planFit");
+    await new Promise((r) => setTimeout(r, 1200));
+    const rowsBeforeTrace = await rows4();
+    await page.click("#planTraceOutlines");
+    await page.waitForFunction(() => {
+      const s = document.getElementById("planStatus");
+      return s && !s.classList.contains("hidden") && !/Tracing the plan/.test(s.textContent)
+        && /outline|point to|traced|trace/i.test(s.textContent);
+    }, { timeout: 120000, polling: 400 }).catch(() => {});
+    await page.evaluate(() => { const s = document.getElementById("planStatus"); if (s) s.scrollIntoView({ block: "center" }); });
+    await new Promise((r) => setTimeout(r, 400));
+    const traced = await readPlanStatus();
+    ok("a plan-button result is shown inside the plan panel, next to the buttons",
+      !traced.hidden && traced.onScreen && /outline|point to/i.test(traced.text),
+      `"${traced.text.slice(0, 90)}" — hidden ${traced.hidden}, on screen ${traced.onScreen}`);
+    ok("tracing does not add or drop table rows", (await rows4()) === rowsBeforeTrace,
+      `${rowsBeforeTrace} -> ${await rows4()}`);
+
+    // a WRONG scale finds ~0 rooms: the one-click fix must appear (next to the buttons, on screen) and work
+    await page.select("#planScale", "500");
+    await new Promise((r) => setTimeout(r, 400));
+    await page.click("#planTraceOutlines");
+    const fixAppeared = await page.waitForFunction(() => {
+      const b = document.getElementById("planScaleFix");
+      return b && !b.classList.contains("hidden") && !!document.getElementById("planScaleFixBtn");
+    }, { timeout: 120000, polling: 400 }).then(() => true).catch(() => false);
+    await page.evaluate(() => { const b = document.getElementById("planScaleFix"); if (b) b.scrollIntoView({ block: "center" }); });
+    await new Promise((r) => setTimeout(r, 300));
+    const fixInfo = await page.evaluate(() => {
+      const b = document.getElementById("planScaleFix");
+      const btn = document.getElementById("planScaleFixBtn");
+      const r = b ? b.getBoundingClientRect() : null;
+      return { text: b ? b.textContent.replace(/\s+/g, " ").trim() : "",
+        btn: btn ? btn.textContent.trim() : "",
+        onScreen: !!r && r.top < window.innerHeight && r.bottom > 0 };
+    });
+    ok("a wrong drawing scale offers a one-click fix on the plan panel",
+      fixAppeared && /Use 1:\d+ and trace again/.test(fixInfo.btn) && fixInfo.onScreen,
+      `"${fixInfo.btn}" — on screen ${fixInfo.onScreen}`);
+    const wanted = (fixInfo.btn.match(/1:(\d+)/) || [])[1];
+    if (wanted) {
+      await page.click("#planScaleFixBtn");
+      await page.waitForFunction(() => {
+        const s = document.getElementById("planStatus");
+        return s && /real outline/i.test(s.textContent);
+      }, { timeout: 120000, polling: 400 }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 400));
+      const afterFix = await page.evaluate(() => ({
+        scale: document.getElementById("planScale").value,
+        text: document.getElementById("planStatus").textContent.replace(/\s+/g, " ").trim(),
+        polys: document.querySelectorAll('.plan-room[data-shape="poly"]').length,
+        fixHidden: document.getElementById("planScaleFix").classList.contains("hidden"),
+      }));
+      ok("the one-click fix sets the offered scale and traces again",
+        afterFix.scale === wanted && afterFix.polys > 0 && afterFix.fixHidden,
+        `scale 1:${afterFix.scale} (wanted 1:${wanted}), ${afterFix.polys} outline(s) on this page, fix hidden ${afterFix.fixHidden}`);
+    } else {
+      ok("the one-click fix sets the offered scale and traces again", false, "no scale in the button label");
+    }
+
+    // leave the plan as it was found
+    await page.click("#planTraceClear");
+    await page.select("#planScale", "100");
+    await new Promise((r) => setTimeout(r, 900));
   }
 
   // ---- A project saved before the parser kept positions ---------------------------

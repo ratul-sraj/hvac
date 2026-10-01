@@ -157,7 +157,83 @@ export const DEFAULT_PROJECT = {
   wwr: 30,      // % glazing of exposed wall when glass area not given
 };
 
-export function num(v, d = 0) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
+// Number parsing for anything a schedule or a typed table cell can contain.
+// The rule (the same semantics as cleanNumber() in js/schedule.js — copied, not imported, so the
+// engine stays a standalone module with no parser coupling):
+//   "1249.3"  -> 1249.3   plain
+//   "1,249.3" -> 1249.3   comma is a thousands separator, dot is the decimal point
+//   "1.249,3" -> 1249.3   dot is a thousands separator, comma is the decimal point (European)
+//   "12,5"    -> 12.5     a comma followed by 1-2 digits is a decimal comma
+//   "1,249"   -> 1249     ambiguous (also 1.249 in Europe): a 3-digit group is read as thousands,
+//                         which is what a room-area schedule means
+// A comma AND a dot where the comma follows the dot means thousands; a lone comma with 1-2 digits
+// after it means a decimal comma. parseFloat alone stops at the comma and reads 1,249.3 as 1.
+export function num(v, d = 0) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : d;
+  let t = String(v == null ? "" : v).replace(/\s+/g, "");
+  if (!t) return d;
+  if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, "");
+  else if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, "").replace(",", ".");
+  else t = t.replace(/,/g, ".");
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? n : d;
+}
+
+// Keep a value inside a sane band. Used so no single typed cell can drive a room negative.
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// Project settings with every default filled in (older saved projects and partial test projects
+// must not produce NaN).
+function withDefaults(proj) { return { ...DEFAULT_PROJECT, ...(proj || {}) }; }
+
+// Design conditions reduced to physically possible values. The user's typed numbers are NOT
+// overwritten anywhere — projectWarnings() reports what was changed, and these safe values are what
+// the load arithmetic uses so the report can never show a 137 % outdoor RH or a negative conduction.
+function safeConditions(p) {
+  const db = num(p.outDb, DEFAULT_PROJECT.outDb);
+  const inDb = num(p.inDb, DEFAULT_PROJECT.inDb);
+  const rh = clamp(num(p.inRh, DEFAULT_PROJECT.inRh), 0, 100);   // humidity above saturation is impossible
+  const wb = Math.min(num(p.outWb, DEFAULT_PROJECT.outWb), db);  // wet bulb can never exceed dry bulb
+  const dT = Math.max(0, db - inDb);                             // no cooling load is negative
+  return { db, inDb, rh, wb, dT, wo: wFromDbWb(db, wb), wi: wFromDbRh(inDb, rh) };
+}
+
+// Plain-language notes for design conditions that are physically impossible. The app shows these
+// the same way it shows the parser notes; the numbers the user typed are left as typed.
+export function projectWarnings(proj = DEFAULT_PROJECT) {
+  const p = withDefaults(proj);
+  const n = (v) => (Number.isInteger(v) ? String(v) : String(+v.toFixed(2)));
+  const out = [];
+  if (num(p.outWb) > num(p.outDb))
+    out.push(`Outdoor wet bulb ${n(num(p.outWb))} \u00b0C is above dry bulb ${n(num(p.outDb))} \u00b0C \u2014 using saturated air (100% RH).`);
+  if (num(p.outDb) <= num(p.inDb))
+    out.push(`Outdoor dry bulb ${n(num(p.outDb))} \u00b0C is not above indoor ${n(num(p.inDb))} \u00b0C \u2014 conduction gain taken as zero.`);
+  if (num(p.inRh) > 100)
+    out.push(`Indoor RH ${n(num(p.inRh))}% is above 100% \u2014 using 100%.`);
+  return out;
+}
+
+// Per-room notes for geometry that had to be clamped so the room cannot subtract from a total.
+// `raw` is what the user typed; `room` is the normalised room (its area may have been derived from
+// length × width, so the area check must read the normalised value).
+function geometryWarnings(raw, room) {
+  const who = room.name || "Room";
+  const out = [];
+  const a = num(room.area);
+  if (a < 0) out.push(`${who}: area ${a} m\u00b2 is negative \u2014 counted as 0 m\u00b2 (no load).`);
+  else if (a === 0) out.push(`${who}: no area \u2014 counted as 0 m\u00b2 (no load).`);
+  const h = num(raw.height);
+  if (h !== 0 && (h < 0.5 || h > 10)) out.push(`${who}: height ${h} m is outside 0.5\u201310 m \u2014 using ${clamp(h, 0.5, 10)} m.`);
+  const neg = [];
+  if (num(raw.glass) < 0) neg.push("glass");
+  if (num(raw.extWall) < 0) neg.push("ext wall");
+  if (num(raw.partition) < 0) neg.push("partition");
+  if (num(raw.people) < 0) neg.push("people");
+  if (num(raw.light) < 0) neg.push("light");
+  if (num(raw.equip) < 0) neg.push("equip");
+  if (neg.length) out.push(`${who}: negative ${neg.join(", ")} ignored (using 0).`);
+  return out;
+}
 
 // Fill blank/derived room fields
 export function normalizeRoom(r, proj = DEFAULT_PROJECT) {
@@ -165,45 +241,56 @@ export function normalizeRoom(r, proj = DEFAULT_PROJECT) {
   room.type = room.type || guessSpaceType(room.name);
   const st = SPACE_TYPES[room.type] || SPACE_TYPES.general;
   if (!num(room.area) && num(room.length) && num(room.width)) room.area = +(num(room.length) * num(room.width)).toFixed(2);
-  room.height = num(room.height) || 3.0;
+  room.height = clamp(num(room.height) || 3.0, 0.5, 10);   // no negative or absurd room height
   if (room.people === undefined || room.people === "" || room.people === null)
-    room.people = Math.max(1, Math.ceil(num(room.area) / st.m2pp));
+    room.people = num(room.area) > 0 ? Math.max(1, Math.ceil(num(room.area) / st.m2pp)) : 0;
   if (room.light === undefined || room.light === "") room.light = st.light;
   if (room.equip === undefined || room.equip === "") room.equip = st.equip;
   room.orient = room.orient || "W";
   if (room.extWall === undefined || room.extWall === "") {
     // assume one side of the room is exposed: longer side length × height
-    const side = Math.max(num(room.length), num(room.width)) || Math.sqrt(num(room.area) || 0);
+    const side = Math.max(num(room.length), num(room.width)) || Math.sqrt(Math.max(0, num(room.area) || 0));
     room.extWall = +(side * room.height).toFixed(2);
   }
-  if (room.glass === undefined || room.glass === "") room.glass = +(num(room.extWall) * proj.wwr / 100).toFixed(2);
+  if (room.glass === undefined || room.glass === "") room.glass = +(num(room.extWall) * num((proj || {}).wwr, DEFAULT_PROJECT.wwr) / 100).toFixed(2);
   if (room.roof === undefined) room.roof = false;
   if (room.include === undefined) room.include = !NON_AC_WORDS.test(room.name || "");
   return room;
 }
 
 export function calcRoom(r, proj = DEFAULT_PROJECT) {
-  const room = normalizeRoom(r, proj);
+  const p = withDefaults(proj);
+  const room = normalizeRoom(r, p);
   const st = SPACE_TYPES[room.type] || SPACE_TYPES.general;
-  const A = num(room.area), H = num(room.height), vol = A * H;
-  const dT = proj.outDb - proj.inDb;
-  const wo = wFromDbWb(proj.outDb, proj.outWb), wi = wFromDbRh(proj.inDb, proj.inRh);
+  const warnings = geometryWarnings(r, room);
+  // Geometry is clamped to physically sensible numbers so one bad cell can never make a room
+  // SUBTRACT from the project total (a negative area, height or glass used to give a negative TR).
+  const A = Math.max(0, num(room.area));              // floor area is never negative
+  const H = clamp(num(room.height) || 3.0, 0.5, 10);  // sane room height, 0.5–10 m
+  const vol = A * H;
+  const areaOk = A > 0;                               // a room with no area carries no load at all
+  const c = safeConditions(p);
+  const dT = c.dT, wo = c.wo, wi = c.wi;              // dT >= 0: conduction never flows backwards
   const dW = Math.max(0, wo - wi);
-  const glass = Math.min(num(room.glass), num(room.extWall) || num(room.glass));
-  const wallNet = Math.max(0, num(room.extWall) - glass);
+  const ext = Math.max(0, num(room.extWall));
+  const rawGlass = Math.max(0, num(room.glass));
+  // glass can never exceed the wall it sits in, and neither may be negative: the old
+  // Math.min(glass, extWall || glass) clamp picked the MORE negative of two bad numbers
+  const glass = areaOk ? Math.min(rawGlass, Math.max(0, ext || rawGlass)) : 0;
+  const wallNet = areaOk ? Math.max(0, ext - glass) : 0;
   const o = ORIENTS.includes(room.orient) ? room.orient : "W";
 
   const s = {};
-  s.glassSolar = glass * SOLAR[o] * proj.sc;
-  s.glassCond = glass * proj.uGlass * dT;
-  s.wall = wallNet * proj.uWall * WALL_ETD[o];
-  s.roof = room.roof ? A * proj.uRoof * proj.roofEtd : 0;
-  s.partition = num(room.partition) * proj.uPart * Math.max(0, dT - 3);
-  const ppl = num(room.people);
+  s.glassSolar = glass * SOLAR[o] * p.sc;
+  s.glassCond = glass * p.uGlass * dT;
+  s.wall = wallNet * p.uWall * WALL_ETD[o];
+  s.roof = room.roof ? A * p.uRoof * p.roofEtd : 0;
+  s.partition = areaOk ? Math.max(0, num(room.partition)) * p.uPart * Math.max(0, dT - 3) : 0;
+  const ppl = areaOk ? Math.max(0, num(room.people)) : 0;
   s.people = ppl * st.ps;
-  s.lighting = A * num(room.light);
-  s.equipment = A * num(room.equip);
-  const infLs = proj.infilAch * vol * 1000 / 3600;
+  s.lighting = A * Math.max(0, num(room.light));
+  s.equipment = A * Math.max(0, num(room.equip));
+  const infLs = p.infilAch * vol * 1000 / 3600;
   s.infiltration = 1.23 * infLs * dT;
   const roomSensible = Object.values(s).reduce((a, b) => a + b, 0);
 
@@ -216,12 +303,13 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
   const oaSens = 1.23 * oaLs * dT;
   const oaLat = 3010 * oaLs * dW;
 
-  const sf = 1 + proj.safety / 100;
+  const sf = 1 + p.safety / 100;
   const rsh = roomSensible * sf, rlh = roomLatent * sf;
   const total = rsh + rlh + oaSens + oaLat;
-  const supplyLs = rsh / (1.23 * proj.supplyDt);
+  const supplyLs = rsh / (1.23 * p.supplyDt);
   return {
     room,
+    warnings,
     sensible: s, latent: l,
     rsh, rlh, oaSens, oaLat, oaLs,
     // what the safety factor ADDED to this room, so the summary can show the allowance as a number
@@ -236,21 +324,28 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
 }
 
 export function calcProject(rooms, proj = DEFAULT_PROJECT) {
-  const results = rooms.map((r) => calcRoom(r, proj));
+  const p = withDefaults(proj);
+  const c = safeConditions(p);
+  const results = (rooms || []).map((r) => calcRoom(r, p));
   const inc = results.filter((x) => x.room.include);
   const sum = (k) => inc.reduce((a, x) => a + x[k], 0);
-  const area = inc.reduce((a, x) => a + num(x.room.area), 0);
+  const area = inc.reduce((a, x) => a + Math.max(0, num(x.room.area)), 0);   // negative areas cannot shrink the area
   const tr = sum("tr");
+  // The same warnings channel the parser notes use: impossible design conditions first, then the
+  // rooms whose geometry had to be clamped.
+  const warnings = [...projectWarnings(p)];
+  for (const x of inc) for (const w of x.warnings) warnings.push(w);
   return {
     results,
+    warnings,
     totals: {
       rooms: inc.length, area, areaSqft: area * 10.7639,
       totalW: sum("totalW"), tr, ls: sum("supplyLs"), oaLs: sum("oaLs"), cfm: sum("cfm"), oaCfm: sum("oaCfm"),
       rsh: sum("rsh"), rlh: sum("rlh"),
-      safetyW: sum("safetyW"), safetyPct: num(proj.safety),
+      safetyW: sum("safetyW"), safetyPct: num(p.safety),
       sqftPerTr: tr ? (area * 10.7639) / tr : 0,
-      wOut: wFromDbWb(proj.outDb, proj.outWb), wIn: wFromDbRh(proj.inDb, proj.inRh),
-      outRh: rhFromDbW(proj.outDb, wFromDbWb(proj.outDb, proj.outWb)),
+      wOut: c.wo, wIn: c.wi,
+      outRh: rhFromDbW(c.db, c.wo),
     },
   };
 }

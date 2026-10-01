@@ -142,16 +142,23 @@ const OPS = {
 
 // ------------------------------------------------------------------ the accept decision
 {
-  ok('a traced area matching the stated one is accepted', judgeTrace(25, 25, 1).ok);
+  const yes = judgeTrace(25, 25, 1);
+  ok('a traced area matching the stated one is accepted', yes.ok);
+  ok('an accepted verdict carries no refusal code', yes.code === null, `code ${yes.code}`);
   ok('a trace 9% larger (wall centrelines) is accepted', judgeTrace(27.25, 25, 1).ok, `ratio ${judgeTrace(27.25, 25, 1).ratio.toFixed(2)}`);
   const low = judgeTrace(19, 25, 1);
   ok('a trace 24% smaller is refused', !low.ok, low.reason);
+  ok('a too-small trace is refused with the area-mismatch code', low.code === 'area-mismatch', `code ${low.code}`);
   const high = judgeTrace(40, 25, 1);
   ok('a trace 60% larger is refused', !high.ok, high.reason);
+  ok('a too-large trace is refused with the area-mismatch code', high.code === 'area-mismatch', `code ${high.code}`);
   const shared = judgeTrace(25, 25, 2);
   ok('a region shared with another room is refused outright', !shared.ok, shared.reason);
+  ok('a shared region is refused with the shared code', shared.code === 'shared', `code ${shared.code}`);
   ok('the band is an asymmetric window', TRACE_BAND.lo === 0.8 && TRACE_BAND.hi === 1.35);
-  ok('a room with no stated area is refused', !judgeTrace(25, 0, 1).ok);
+  const noArea = judgeTrace(25, 0, 1);
+  ok('a room with no stated area is refused', !noArea.ok);
+  ok('a room with no stated area is refused with the no-area code', noArea.code === 'no-area', `code ${noArea.code}`);
 }
 
 // ------------------------------------------------------------------ the whole job for one page
@@ -166,7 +173,10 @@ const OPS = {
   const by = Object.fromEntries(out.results.map((r) => [r.id, r]));
   ok('the one room the plan actually encloses is accepted', by.a.ok, `${by.a.tracedM2 && by.a.tracedM2.toFixed(2)} m², ratio ${by.a.ratio && by.a.ratio.toFixed(2)}`);
   ok('a room with no enclosed area is refused with a plain reason', !by.b.ok, by.b.reason);
+  ok('a label on empty paper is refused with the too-big code (an open area)', by.b.code === 'too-big', `code ${by.b.code}`);
   ok('a name sitting on a wall is refused', !by.c.ok, by.c.reason);
+  ok('a name on a wall line also carries the no-region code', by.c.code === 'no-region', `code ${by.c.code}`);
+  ok('an accepted room carries no refusal code', by.a.code === null, `code ${by.a.code}`);
   ok('an accepted room carries its outline', by.a.rings.length === 1 && by.a.rings[0].length >= 4);
   ok('a refused room carries no outline', by.b.rings.length === 0 && by.c.rings.length === 0);
   ok('the stats say what happened', out.stats.accepted === 1 && out.stats.labels === 3,
@@ -183,6 +193,8 @@ const OPS = {
   const accepted = out.results.filter((r) => r.ok);
   ok('two names inside one enclosed area are both refused', accepted.length === 0,
     out.results.map((r) => `${r.id}: ${r.reason}`).join(' | '));
+  ok('and both are refused with the shared code',
+    out.results.every((r) => r.code === 'shared'), out.results.map((r) => `${r.id}:${r.code}`).join(', '));
 }
 
 // ------------------------------------------------------------------ choosing the plan's lines, and the scale
@@ -223,6 +235,7 @@ const OPS = {
   ok('space far larger than any room is refused with a clear reason',
     out.stats.accepted === 0 && /far larger/.test(out.results[0].reason),
     `${out.results[0].reason} (${ms} ms)`);
+  ok('and it is refused with the too-big code', out.results[0].code === 'too-big', `code ${out.results[0].code}`);
   ok('and the flood fill does not run away across it', ms < 4000, `${ms} ms`);
 }
 

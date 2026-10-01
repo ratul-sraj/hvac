@@ -384,17 +384,21 @@ export function metresPerPt(denom) {
  * @param {number} statedArea the area the plan states for the room
  * @param {number} labelsInRegion how many room labels fell inside this region
  * @param {{lo:number,hi:number}} band
+ * @returns {{ok:boolean, code:string|null, ratio:number, reason:string}} `code` is a STABLE machine
+ *   code ('shared' | 'no-area' | 'area-mismatch', or null when accepted) so callers categorise a
+ *   refusal by code instead of regex-parsing the English `reason`.
  */
 export function judgeTrace(tracedM2, statedArea, labelsInRegion, band = TRACE_BAND) {
   if (labelsInRegion > 1) {
-    return { ok: false, ratio: statedArea ? tracedM2 / statedArea : NaN,
+    return { ok: false, code: 'shared', ratio: statedArea ? tracedM2 / statedArea : NaN,
       reason: `its area is shared with ${labelsInRegion - 1} other room(s)` };
   }
-  if (!statedArea || !(statedArea > 0)) return { ok: false, ratio: NaN, reason: 'the room has no stated area' };
+  if (!statedArea || !(statedArea > 0)) return { ok: false, code: 'no-area', ratio: NaN, reason: 'the room has no stated area' };
   const ratio = tracedM2 / statedArea;
-  if (ratio < band.lo) return { ok: false, ratio, reason: `traced area ${Math.round(ratio * 100)}% of the stated one` };
-  if (ratio > band.hi) return { ok: false, ratio, reason: `traced area ${Math.round(ratio * 100)}% of the stated one` };
-  return { ok: true, ratio, reason: '' };
+  if (ratio < band.lo || ratio > band.hi) {
+    return { ok: false, code: 'area-mismatch', ratio, reason: `traced area ${Math.round(ratio * 100)}% of the stated one` };
+  }
+  return { ok: true, code: null, ratio, reason: '' };
 }
 
 /**
@@ -464,9 +468,11 @@ export function traceRooms(p) {
     const region = regionByRoom.get(s.room);
     if (!region) {
       const index = s.cell < 0 ? -1 : regionOf[s.cell];
+      const tooBig = index === -2;
       results.push({
         id: s.room.id, ok: false, rings: [], statedM2: s.room.area,
-        reason: index === -2
+        code: tooBig ? 'too-big' : 'no-region',
+        reason: tooBig
           ? 'the space around its name is far larger than any single room (open plan or a leak)'
           : 'no enclosed area around its name',
       });
@@ -477,7 +483,7 @@ export function traceRooms(p) {
     const tracedM2 = pt2ToM2(outlineAreaPt2(rings), denom);
     const verdict = judgeTrace(tracedM2, s.room.area, labels, p.band);
     results.push({
-      id: s.room.id, ok: verdict.ok, reason: verdict.reason, ratio: verdict.ratio,
+      id: s.room.id, ok: verdict.ok, code: verdict.code || null, reason: verdict.reason, ratio: verdict.ratio,
       tracedM2, statedM2: s.room.area, rings: verdict.ok ? rings : [], cells: region.areaPx,
     });
   }

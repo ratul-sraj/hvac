@@ -321,12 +321,19 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .rooms-table th.th-del, .rooms-table td.c-del { width: 34px; text-align: center; border-right: none; }
 .rooms-table th.th-src, .rooms-table td.c-src {
   width: 76px;
+  min-width: 70px;
   text-align: center;
   color: var(--ink-soft);
   font-size: 11px;
 }
 .rooms-table .res { font-variant-numeric: tabular-nums; color: #23405c; }
 .rooms-table .res.hi { font-weight: 700; color: var(--accent-dark); }
+/* Readable result columns at 1366-1440 px. The table already scrolls sideways inside .table-rooms,
+   but the numeric result columns used to be squeezed until TR / L/s / ft²/TR were half cut and
+   Source / × sat outside the visible area (UX review, item 8). A minimum width keeps every number
+   whole; the scroll box handles the rest. */
+.rooms-table th.th-res, .rooms-table td.res { min-width: 58px; }
+.rooms-table th.th-del, .rooms-table td.c-del { min-width: 34px; }
 .rooms-table input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 
 .btn-del {
@@ -627,6 +634,18 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 }
 .plan-room.is-selected[data-shape="poly"] .plan-room-box { stroke: var(--danger); stroke-width: 2.5; }
 .plan-room.is-dragging[data-shape="poly"] .plan-room-box { stroke-width: 3; }
+/* A placed LOCATOR box at low zoom (data-shape="marker"): the plan names many rooms, and 50+ area
+   boxes centred on the names overlap into a grey wall-less mess that hides the drawn walls and labels
+   (UX review, item 3). When they crowd, js/overlay.js draws each as a small diamond at the point that
+   names the room instead — same .plan-room group, same data-room-id, same click-to-open behaviour. */
+.plan-room[data-shape="marker"] .plan-room-box {
+  fill: var(--accent); fill-opacity: .6; stroke: #fff; stroke-width: 1;
+}
+.plan-room.is-excluded[data-shape="marker"] .plan-room-box { fill: #8b95a1; fill-opacity: .55; }
+.plan-room.is-selected[data-shape="marker"] .plan-room-box { fill: var(--danger); stroke: #fff; stroke-width: 1.5; }
+/* A placed locator drawn as a full box (zoomed in) is lighter and dashed, so it reads as a locator
+   and not as a real traced boundary. */
+.plan-room[data-placed="true"][data-shape="rect"] .plan-room-box { fill-opacity: .10; stroke-width: 1.2; stroke-dasharray: 5 3; }
 .plan-room-handle {
   fill: #fff; stroke: var(--danger); stroke-width: 1.5; pointer-events: none;
 }
@@ -641,6 +660,22 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   paint-order: stroke; stroke: #fff; stroke-width: 3px;
 }
 .plan-hint { margin: 8px 0 0; }
+/* Answers to the plan-panel buttons, shown right here (js/app.js setStatus(…, 'plan')). The upload
+   status box is ~155 px up the page, so a plan result used to be invisible (UX review, item 1). */
+.plan-status {
+  margin: 0 0 10px; border-radius: 6px; padding: 8px 11px; font-size: 13px;
+  border: 1px solid var(--line); background: #f7f9fc; color: var(--ink);
+}
+.plan-status.ok { background: var(--ok-soft); border-color: #b7ddc6; color: #135c39; }
+.plan-status.warn { background: var(--warn-soft); border-color: #e8d7a6; color: var(--warn); }
+.plan-status.err { background: var(--danger-soft); border-color: #eec4c0; color: var(--danger); }
+/* The one-click wrong-scale fix, next to the plan buttons (UX review, item 2). */
+.plan-scalefix {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  margin: 0 0 10px; padding: 8px 11px; font-size: 13px;
+  border: 1px solid #e8d7a6; background: var(--warn-soft); color: var(--warn); border-radius: 6px;
+}
+.plan-scalefix .plan-scalefix-text { flex: 1 1 260px; }
 @media (max-width: 700px) {
   .plan-toolbar { gap: 6px 10px; padding: 7px 8px; }
   .plan-view { max-height: 58vh; }

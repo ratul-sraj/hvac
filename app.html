@@ -258,6 +258,12 @@
       </div>
     </div>
 
+    <!-- Answers to the plan buttons appear HERE, next to the buttons that produced them, not only in
+         the upload section ~155 px up the page (UX review, item 1). #planScaleFix carries the
+         one-click wrong-scale fix and stays hidden until a trace says the scale is wrong (item 2). -->
+    <div id="planScaleFix" class="plan-scalefix hidden" role="status" aria-live="polite"></div>
+    <div id="planStatus" class="plan-status hidden" role="status" aria-live="polite"></div>
+
     <div id="planView" class="plan-view"></div>
     <p id="planHint" class="muted small plan-hint" aria-live="polite"></p>
   </section>

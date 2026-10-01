@@ -47,7 +47,8 @@
  *     Stage-1 behaviour) and never onRoomMoveEnd. Beyond the slop it is a drag: it fires
  *     onRoomMoveEnd and never onSelect.
  *   • Delete/Backspace fires onDelete(selectedId) — but only when the focus is not in a text field
- *     (an <input>/<textarea>/<select> or contenteditable), so a table cell never loses a keystroke.
+ *     (an <input>/<textarea>/<select> or contenteditable) and not on ANY form control inside a data
+ *     table (a row checkbox, a row dropdown, the × button), so a table cell never loses a keystroke.
  *   • pan (BOTH modes): middle-button drag, or Space held + primary drag. Panning scrolls the
  *     scroll box (rootEl) itself and emits NO room callback and starts no draft.
  *   • Escape / pointercancel during a drag restores the rect the drag started from (one more
@@ -110,6 +111,7 @@ import {
   moveRect,            // PDF rect moved by a delta
   resizeRect,          // PDF rect with one corner dragged, opposite corner pinned
   clampRectToPage,     // keep a PDF rect on the sheet
+  isPlacedRoom,        // a locator box (sized back from stated area), not a hand-drawn room
 } from './planview.js';
 // Pure, planner-owned tracing maths. polygonAreaPt2 is the shoelace area in square points — the very
 // definition js/trace.js uses to accept a traced outline, so the overlay measures an outline the same
@@ -135,6 +137,15 @@ const HANDLE_DRAW_PX = 9;
 const MIN_LABEL_PX = 6;
 const MAX_LABEL_PX = 12;
 const HANDLE_NAMES = ['nw', 'ne', 'se', 'sw'];
+/** Placed LOCATOR boxes (isPlacedRoom): a page with this many of them (the 3-floor sample has 50+
+ *  per page) draws them as small diamonds at the point that names each room instead of full-area
+ *  rectangles, because 50 overlapping boxes hide the drawing's own walls and labels (UX review, item
+ *  3). A page below the limit keeps real boxes — lighter and dashed, see css/style.css. */
+const PLACED_MARKER_LIMIT = 40;
+/** A placed box smaller than this on screen is unreadable anyway: a diamond reads better. */
+const PLACED_MARKER_MIN_PX = 14;
+/** Diamond radius in view pixels — fixed, so a marker stays the same clickable size at every zoom. */
+const MARKER_PX = 9;
 
 /** Trim float dust and render a small, stable SVG number. */
 function num(n) {
@@ -398,6 +409,19 @@ export function createOverlay(rootEl, {
     const type = String(el.getAttribute('type') || 'text').toLowerCase();
     return TEXT_INPUT_TYPES.has(type);
   }
+  /** Is this element a control INSIDE a data table (the row's In checkbox, a dropdown, a sort header
+   *  or the × button)? Delete/Backspace must never be stolen from a table cell: pressing Delete with
+   *  the focus on a row checkbox used to remove the selected plan room with no warning (UX review,
+   *  item 4). A text entry is covered by isTextEntry already; this adds the OTHER form controls.
+   *  Deliberately scoped to tables: the plan panel's own controls (the mode radio, the toolbar
+   *  buttons) are not in a table, and Delete must still reach the drawing from there — clicking a room
+   *  does not blur them, so blocking every non-text control made Delete silently do nothing. */
+  function isTableControl(el) {
+    if (!el || el === document || typeof el.closest !== 'function') return false;
+    const tag = String(el.tagName || '').toUpperCase();
+    if (!['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(tag)) return false;
+    return !!el.closest('table');
+  }
   function isSpaceKey(e) {
     return e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
   }
@@ -421,6 +445,7 @@ export function createOverlay(rootEl, {
     g.setAttribute('data-include', excluded ? 'false' : 'true');
     // data-shape tells a traced outline from an ordinary rectangle (tests + CSS).
     g.setAttribute('data-shape', isPoly ? 'poly' : 'rect');
+    if (isPlacedRoom(room)) g.setAttribute('data-placed', 'true');
     if (selected) g.setAttribute('data-selected', 'true');
 
     const shape = document.createElementNS(SVG_NS, isPoly ? 'polygon' : 'rect');
@@ -488,6 +513,44 @@ export function createOverlay(rootEl, {
     return t;
   }
 
+  /** A PLACED locator whose page is crowded, drawn as a small fixed-size diamond at the room's own
+   *  `at` point (the place the sheet names it) instead of a full-area rectangle people mistake for a
+   *  real boundary. Same <g class="plan-room">, same data-room-id / include / selected state and the
+   *  same click-to-open behaviour; the name is shown only when the room is selected, because the
+   *  drawing's own text already names every room and 50 labels would clash. */
+  function markerShape(room, pt, selected, dragging) {
+    const g = document.createElementNS(SVG_NS, 'g');
+    const excluded = room.include === false;
+    g.setAttribute('class',
+      'plan-room' + (excluded ? ' is-excluded' : ' is-included')
+      + (selected ? ' is-selected' : '') + (dragging ? ' is-dragging' : ''));
+    g.setAttribute('data-room-id', room.id == null ? '' : String(room.id));
+    g.setAttribute('data-include', excluded ? 'false' : 'true');
+    g.setAttribute('data-shape', 'marker');
+    g.setAttribute('data-placed', 'true');
+    if (selected) g.setAttribute('data-selected', 'true');
+
+    const h = MARKER_PX;
+    const poly = document.createElementNS(SVG_NS, 'polygon');
+    poly.setAttribute('class', 'plan-room-box');
+    poly.setAttribute('points',
+      `${num(pt.x)},${num(pt.y - h)} ${num(pt.x + h)},${num(pt.y)} ${num(pt.x)},${num(pt.y + h)} ${num(pt.x - h)},${num(pt.y)}`);
+    poly.setAttribute('vector-effect', 'non-scaling-stroke');
+    g.appendChild(poly);
+
+    const name = String(room.name == null ? '' : room.name).trim();
+    if (selected && name) {
+      const t = document.createElementNS(SVG_NS, 'text');
+      t.setAttribute('class', 'plan-room-label');
+      t.setAttribute('x', num(pt.x));
+      t.setAttribute('y', num(pt.y - h - 3));
+      t.setAttribute('text-anchor', 'middle');
+      t.textContent = name;
+      g.appendChild(t);
+    }
+    return g;
+  }
+
   /** The rubber band + the live size/area readout. Only drawn while a drag is in progress. */
   function renderDraft(vp) {
     draftG.replaceChildren();
@@ -536,6 +599,11 @@ export function createOverlay(rootEl, {
     const page = safeCall(getPage) ?? 1;
     const shapes = shapesOnPage(safeCall(getRooms) || [], page);
     const selectedId = safeCall(getSelectedId) ?? null;
+    // How many PLACED locators share this page? Past the limit they pile up and hide the sheet, so
+    // they are drawn as small diamonds (see markerShape).
+    let placedOnPage = 0;
+    for (const s of shapes) if (!s.ring && isPlacedRoom(s.room)) placedOnPage += 1;
+    const crowded = placedOnPage >= PLACED_MARKER_LIMIT;
 
     for (const { room, ring } of shapes) {
       const dragging = !!drag && drag.dragged && String(drag.id) === String(room.id);
@@ -549,6 +617,14 @@ export function createOverlay(rootEl, {
       }
       const box = clampBox(rectToViewBox(vp, room.rect));
       if (box.w <= 0 || box.h <= 0) continue;        // wholly off-page: nothing visible to draw
+      const placed = isPlacedRoom(room);
+      if (placed && (crowded || Math.min(box.w, box.h) < PLACED_MARKER_MIN_PX)) {
+        // the room's `at` point in view space == its (unclamped) box centre
+        const full = rectToViewBox(vp, room.rect);
+        roomsG.appendChild(markerShape(room, { x: full.x + full.w / 2, y: full.y + full.h / 2 },
+          room.id === selectedId, dragging));
+        continue;
+      }
       roomsG.appendChild(roomShape(room, box, null, room.id === selectedId, dragging));
     }
     renderDraft(vp);
@@ -891,8 +967,11 @@ export function createOverlay(rootEl, {
       return;
     }
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-    // NEVER steal Delete from a text field or a contenteditable cell.
+    // NEVER steal Delete from a text field or a contenteditable cell... nor from any control inside a
+    // data table (the row's In checkbox, its dropdowns, the × button) — the guide promises the
+    // keystroke is ignored while the focus is in a table cell.
     if (isTextEntry(document.activeElement) || isTextEntry(e.target)) return;
+    if (isTableControl(document.activeElement) || isTableControl(e.target)) return;
     if (drag || pan) return;                    // mid-gesture: a stray Delete does nothing
     const id = safeCall(getSelectedId);
     if (id == null) return;

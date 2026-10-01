@@ -24,11 +24,11 @@ Numbers to remember before you speak (real and measured, from the synthetic samp
 | Pages / floors | 3 — Ground Floor, L1 Floor, L2 Floor |
 | Rooms read from the PDF | **159** |
 | Rooms air-conditioned (included in the load) | **120** |
-| Conditioned area | **7,006.8 m²** (75,413 ft²) |
+| Conditioned area | **7,006.8 m²** (75,420 ft²) |
 | Total cooling load | **363.86 TR** (1,279,702 W) |
 | Supply air | **52,157 L/s**; fresh air **6,995 L/s** |
 | Area per tonne | **207 ft²/TR** |
-| Load by floor | Ground 88.1 TR, L1 70.2 TR, L2 75.5 TR |
+| Load by floor | Ground **154.76 TR**, L1 **106.44 TR**, L2 **102.66 TR** (each includes that floor's fresh-air load) |
 | Biggest room | ATRIUM, Ground Floor, 1,249 m² → 34.6 TR, SHF 0.68 |
 | Safety factor / assumptions | 10 %; Kochi 35 °C DB / 28 °C WB; 24 °C / 50 % RH inside |
 
@@ -65,8 +65,9 @@ while it fills, then point at the summary cards.
 
 Then scroll a little, to the level-wise table, then into the room table:
 
-> "Under the cards is the floor-wise subtotal: Ground Floor 88 tonnes, Level One 70, Level Two 75.
-> And here is the room list — **159 rooms found, 120 air-conditioned**. The app decided by itself
+> "Under the cards is the floor-wise subtotal: Ground Floor 155 tonnes, Level One 106, Level Two 103
+> — and each floor's figure includes its own fresh-air load. And here is the room list — **159 rooms
+> found, 120 air-conditioned**. The app decided by itself
 > that the toilets, shafts, stores and stairs are not conditioned — they stay in the list but they
 > are out of the totals. Every row is editable: area, height, people, lighting, equipment,
 > orientation, wall and glass area, roof, partitions."
