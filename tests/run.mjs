@@ -3,6 +3,7 @@
 // Prints PASS/FAIL per test and exits 1 on the first failing run.
 import { writeSample } from "./make-sample.mjs";
 import { writeSamplePlan } from "../tools/make-sample-plan.mjs";
+import { spawnSync } from "node:child_process";
 import * as calc from "./test-calc.mjs";
 import * as samplePlan from "./test-sample-plan.mjs";
 import * as parseText from "./test-parseText.mjs";
@@ -41,6 +42,27 @@ for (const [label, mod] of suites) {
         "        " + String((err && err.message) || err).split("\n").join("\n        ")
       );
     }
+  }
+}
+
+// Suites that are self-contained scripts (they print their own PASS/FAIL and exit non-zero on
+// failure) rather than modules exporting test* functions. js/planview.js is the geometry behind
+// drawing rooms on the plan, so its 46 checks must gate CI like every other suite.
+const STANDALONE = [["plan/geometry", "tests/test-planview.mjs"]];
+
+for (const [label, file] of STANDALONE) {
+  if (only && !label.includes(only)) continue;
+  console.log(`\n${label}`);
+  const run = spawnSync(process.execPath, [file], { encoding: "utf8" });
+  const lines = String(run.stdout || "").split("\n").filter((l) => l.trim());
+  if (run.status === 0) {
+    pass += 1;
+    console.log(`  PASS  ${file}  — ${lines[lines.length - 1] || ""}`);
+  } else {
+    failures.push(`${label} :: ${file}`);
+    console.log(`  FAIL  ${file}`);
+    for (const l of lines.slice(-14)) console.log("        " + l);
+    if (run.stderr) console.log("        " + String(run.stderr).split("\n").join("\n        "));
   }
 }
 

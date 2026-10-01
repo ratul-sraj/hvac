@@ -4,6 +4,11 @@ LoadLens is a small cooling-load calculator: you give it a PDF floor plan, a sca
 OCR) or an Excel / CSV room schedule (or type the rooms yourself), it reads the rooms and estimates
 the cooling load (TR, W, L/s).
 
+Once a drawing is loaded, a **plan view** also renders the PDF page and lets you drag rooms straight
+onto it — each rectangle becomes a room whose area is measured at the drawing scale you set (1:20 to
+1:500), added to the load immediately. It reads nothing extra and uploads nothing: the drawing is
+rendered in the browser, like everything else.
+
 The app works **two ways**, and both keep working:
 
 | Mode | Who reads the PDF | Where it runs |

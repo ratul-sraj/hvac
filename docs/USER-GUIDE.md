@@ -28,7 +28,7 @@ npm start            # starts the server, default port 3000
 Then open **http://localhost:3000/** in your browser. Use `PORT=8080 npm start` if port 3000 is
 busy. Press `Ctrl + C` in the terminal to stop it.
 
-When the page is served by this server, the line under "2. Upload floor plan PDF" says
+When the page is served by this server, the line under "2. Upload a drawing or a room schedule" says
 **"Reading PDFs on the server (faster)"** and the PDF is parsed by Node instead of by your browser.
 If the server is not answering, the same page falls back to reading the PDF in the browser by
 itself and says so. You never have to choose.
@@ -53,7 +53,7 @@ For deploying to a real server (Docker, Render, Railway, Fly.io) see [the deploy
 Fill in the project name, then pick **Country** and **City / region**. The city fills the outdoor
 dry bulb (DB) and wet bulb (WB) from the built-in climate table (Kochi = 35 °C DB / 28 °C WB).
 Indoor conditions, the U values, the safety factor and the supply air ΔT sit in the same panel —
-see [section 4](#4-design-conditions-and-assumptions) for what each one does.
+see [section 5](#5-design-conditions-and-assumptions) for what each one does.
 **Reset to defaults** puts the whole panel back to the values shipped with the app.
 
 Everything recalculates as you type. You do not need to press any "calculate" button.
@@ -116,7 +116,7 @@ down the table and correct what is wrong:
 
 - **In** — untick a room to keep it in the list but leave it out of the totals. **Rooms included**
   in the summary tells you how many are counted.
-- **Space type** — changes the people, lighting, equipment and fresh-air rates (see section 3).
+- **Space type** — changes the people, lighting, equipment and fresh-air rates (see section 4).
 - **Area, height, people, light, equip, ext wall, glass, roof, partition** — type your own value
   to override. A grey placeholder means *the app is using the calculated default*, so trust the
   drawing and type over it where you know better.
@@ -124,6 +124,8 @@ down the table and correct what is wrong:
   **Apply orientation / Apply roof** work on the rows that are shown, so filter first and then
   apply in bulk.
 - The **×** at the end of a row deletes the room.
+- A **room the reader missed** can be drawn straight onto the drawing with the **plan view** — see
+  [section 3](#3-drawing-rooms-on-the-plan).
 
 Click any column heading to sort (click again to reverse, a third time to clear) — sorting by TR is
 the fastest way to find the rooms that drive the load.
@@ -159,7 +161,77 @@ opening the page again restores the last table. **Clear all rooms** empties it.
 
 ---
 
-## 3. Every editable column
+## 3. Drawing rooms on the plan
+
+As soon as a drawing is loaded — an uploaded PDF, or the **Try sample drawing** button — the
+calculator shows a plan view, **3. Draw rooms on the plan**. It renders the actual page of the
+drawing and lets you place rooms by dragging a rectangle on it. Use it to add a room the reader
+missed, or to measure a room straight off the sheet.
+
+The page is rendered **one page at a time, on demand** (a dense A1 CAD sheet takes roughly **0.3–0.5 s**
+to render on a normal PC). A room you draw is an ordinary room: it appears in the room table at once,
+is **already included in the cooling load**, and every column in [section 4](#4-every-editable-column)
+applies to it.
+
+### The controls
+
+| Control | What it does |
+|---|---|
+| **← Prev / Next →** with a **Page N of M** readout | Move between the pages of the loaded drawing |
+| **− / +** with a **%** readout | Zoom out / zoom in |
+| **Fit width** | Zoom the page to the width of the panel |
+| **Draw room** / **Select / edit** | Choose the mode: add a room, or click an existing box to open it |
+| **Drawing scale** | 1:20, 1:50, **1:100 (default)**, 1:200, 1:500 — the scale a drawn room is measured at |
+
+### Load a drawing and set the scale
+
+1. Load a drawing the normal way (**section 2** — upload a PDF, or click **Try sample drawing**). The
+   plan view appears with the drawing.
+2. Set **Drawing scale** to the scale printed on the sheet. The default is **1:100**. This is a real
+   input, not a label: the area of every room you draw is measured from its rectangle at this scale,
+   so a wrong scale gives a wrong area. The scale you pick is **remembered with the project**.
+
+### Draw a room
+
+1. Keep the mode on **Draw room**.
+2. Drag a rectangle over a room in the drawing. The drag has to be real — about **1 mm on paper**; a
+   tiny accidental click creates nothing.
+3. A room is created instantly, named **`Drawn room N`**. Its **area is measured from the rectangle at
+   the chosen drawing scale**, and its length and width are derived from the rectangle. It appears in
+   the room table immediately and is **already counted in the cooling load**.
+4. Its **load breakdown** opens so you can set the name, space type, orientation, glazing and the rest
+   — exactly like any other room.
+
+### Select and edit a drawn room
+
+Switch to **Select / edit** and click a room box. The selected box gets a **thicker red outline** and
+that room's **load breakdown** opens, ready to edit. Press `Esc` to close it.
+
+### Changing the scale re-measures the rooms you drew
+
+A drawn room's area is derived from its rectangle, so it keeps the scale it was measured at. **Change
+the drawing scale and every room you drew is re-measured** at the new scale. Set the scale before you
+draw a floor, and check the area in the table afterwards.
+
+### What the plan cannot do — the honest limit
+
+- Rooms **read from the PDF** — or imported from an Excel / CSV schedule — have **no position on the
+  sheet yet**, so the plan shows the boxes **you** place yourself. The rooms found by reading the PDF
+  stay in the room table; they are not drawn on the plan.
+- A drawn area is **only as accurate as the scale you set**. If the sheet is not 1:100, change the
+  scale first.
+- The plan view **uploads nothing**: the drawing is rendered inside your browser, like the rest of the
+  app.
+
+### Drawn rooms are saved
+
+A drawn room keeps its **rectangle and its scale**, and both are stored in the project — in the
+browser's local storage and in the **Save project (.json)** file — so your drawn rooms come back after
+a reload or on another computer. The drawing scale you picked is saved with the project too.
+
+---
+
+## 4. Every editable column
 
 Left-hand columns are inputs (you can change them); right-hand columns are results (the app
 fills them).
@@ -213,7 +285,7 @@ habit is to filter by level, fix that floor, then move to the next level.
 
 ---
 
-## 4. Design conditions and assumptions
+## 5. Design conditions and assumptions
 
 These are the values the calculation actually uses. They are **typical practice values**, not a
 code compliance table: for a real job replace them with the values from the current **ISHRAE**
@@ -277,7 +349,7 @@ SHF       = sensible ÷ (sensible + latent)
 
 ---
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 | What you see | What it usually is | What to do |
 |---|---|---|
@@ -296,7 +368,7 @@ SHF       = sensible ÷ (sensible + latent)
 
 ---
 
-## 6. What this tool is **not**
+## 7. What this tool is **not**
 
 Say this clearly, the same way the printed report does:
 
@@ -310,7 +382,7 @@ Say this clearly, the same way the printed report does:
   energy use, or which month the peak really happens.
 - **No radiant time series / heat storage over time** in the walls, slab or furniture — the
   storage effect is folded into a single factor, not computed hour by hour.
-- **No duct or pipe sizing.** The L/s figure is supply air quantity, not a duct size, not a duct size, and there is
+- **No duct or pipe sizing.** The L/s figure is supply air quantity, not a duct size, and there is
   no duct heat gain, no duct leakage, no fan heat, no chilled water or refrigerant pipe sizing, no
   diffuser selection.
 - **No psychrometric chart and no coil selection.** It reports SHF and the humidity ratios it
@@ -329,7 +401,7 @@ Say this clearly, the same way the printed report does:
 
 ---
 
-## 7. Screenshots
+## 8. Screenshots
 
 | File | What it shows |
 |---|---|
@@ -364,7 +436,7 @@ node tests/screenshots.mjs http://127.0.0.1:3000/ http://127.0.0.1:8230/   # doc
 
 ---
 
-## 8. Where to look next
+## 9. Where to look next
 
 - `DEMO-SCRIPT.md` — a 5-minute live demo of this app.
 - `INTERVIEW-NOTES.md` — how to present this project in a BIM MEP interview.

@@ -542,7 +542,7 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   background: var(--accent-soft); border: 1px solid var(--line-soft); border-radius: var(--radius);
 }
 .plan-group { display: flex; align-items: center; gap: 6px; }
-.plan-group > label { font-size: 13px; color: var(--ink-soft); }
+.plan-group > label { font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
 .plan-pos { min-width: 78px; text-align: center; }
 .plan-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
 .plan-mode input { margin: 0; }

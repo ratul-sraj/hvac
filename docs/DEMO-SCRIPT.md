@@ -44,8 +44,8 @@ Numbers to remember before you speak (real and measured, from the synthetic samp
 
 ### 0:30 – 1:00 — the settings (top of the page, scroll the panel)
 
-**What to do:** point at sections **1. Project and design conditions** and **2. Upload floor plan
-PDF**. Click nothing yet.
+**What to do:** point at sections **1. Project and design conditions** and **2. Upload a drawing or
+a room schedule**. Click nothing yet.
 
 > "First the design conditions — country, city, outdoor dry bulb and wet bulb. This is Kochi:
 > 35 degrees dry bulb, 28 wet bulb. That wet bulb is the important one in Kerala — the gap between
@@ -60,7 +60,7 @@ while it fills, then point at the summary cards.
 
 > "One click. It reads all three pages and here is the load summary: **363.9 tonnes of
 > refrigeration**, **52,157 L/s supply air**, **6,995 L/s fresh air**, **7,006.8 square metres
-> conditioned**, and **258 square feet per tonne**."
+> conditioned**, and **207 square feet per tonne**."
 
 Then scroll a little, to the level-wise table, then into the room table:
 
@@ -76,6 +76,19 @@ Chennai-like) and let them watch the total change. Say:
 > "All of this recalculates while I type — the design conditions are live."
 
 Put it back to 35 (or click **Reset to defaults**).
+
+**If you have 30 seconds more — the plan view (optional).** The drawing is loaded, so section
+**3. Draw rooms on the plan** is now showing. Set **Drawing scale** to **1:100**, keep the mode on
+**Draw room**, and drag a rectangle over one room on the plan (about 5 m by 4 m). Its breakdown opens.
+
+> "The reader is not a CAD engine, so it can miss a room. Here I just draw it — a 5 metre by 4 metre
+> room, and the app measures **20 square metres** straight off the rectangle at the scale I set, one
+> to a hundred. It is named, it is in the table, and it is already counted in the load — an extra
+> room on top of the 120 already conditioned, not instead of them. The only boxes on this plan are the
+> ones I place: the rooms it read from the PDF stay in the table. Change the scale and it re-measures
+> everything I drew."
+
+Leave the drawn room in place (or delete it with the row's **×** before moving on).
 
 ### 2:15 – 3:15 — where the number comes from
 
@@ -119,8 +132,8 @@ click the **ATRIUM** row → say the numbers → stop.
 
 > "This app reads a floor plan PDF and calculates the cooling load. It found **159 rooms in three
 > floors** and decided **120 of them are air-conditioned** — **7,006.8 square metres** — for a total of
-> **363.9 tonnes of refrigeration**, about **207 square feet per tonne**, with **52,200 L/s** of
-> supply air and **3,970 L/s** of fresh air at the Kochi design condition of 35 dry bulb and 28 wet
+> **363.9 tonnes of refrigeration**, about **207 square feet per tonne**, with **52,157 L/s** of
+> supply air and **6,995 L/s** of fresh air at the Kochi design condition of 35 dry bulb and 28 wet
 > bulb. This panel is one room's breakdown — solar, wall, roof, people, lighting, equipment,
 > infiltration, fresh air, sensible and latent, with percentages. Everything is editable, and the
 CSV or a printed report comes straight out. It is a handbook-level estimate for early sizing, not
@@ -169,8 +182,8 @@ the browser tab at all — the PDF engine is bundled inside the page. There is n
 account, no analytics, and the server keeps nothing after the response.
 
 **Can it be wrong about a room?**
-Yes, and it says so. It found 159 rooms here and flagged one parser note (a label with no area, a
-label with no area). A room called `TEL.C.` is a drafting abbreviation, not a real name; the area
+Yes, and it says so. It found 159 rooms here and flagged one parser note (a label with no area).
+A room called `TEL.C.` is a drafting abbreviation, not a real name; the area
 can be missing. That is exactly why the table is editable and why the report says the areas must be
 confirmed against the drawing and the room schedule.
 

@@ -173,6 +173,39 @@
         </details>
 
         <details>
+          <summary>How do I add a room that the PDF reader missed?</summary>
+          <p>
+            Use the <strong>plan view</strong>. Once a drawing is loaded &mdash; your own PDF, or the
+            <em>Try sample drawing</em> button &mdash; the calculator page shows the section
+            <strong>3. Draw rooms on the plan</strong>. It renders the actual page of the drawing and
+            lets you draw a room straight onto it.
+          </p>
+          <ol>
+            <li>Set <strong>Drawing scale</strong> to the scale printed on the sheet &mdash;
+              <strong>1:100</strong> is the default, and 1:20, 1:50, 1:200 and 1:500 are also there.</li>
+            <li>Stay in <strong>Draw room</strong> mode and drag a rectangle over the room. A new room is
+              created as <em>Drawn room N</em>, its area is measured from the rectangle at that scale, and
+              it is already counted in the cooling load. A stray click does nothing &mdash; the drag has
+              to be big enough.</li>
+            <li>The room's <strong>load breakdown</strong> opens so you can set its name, space type,
+              orientation and glazing. Switch to <strong>Select / edit</strong> and click a box to reopen
+              it later.</li>
+          </ol>
+          <p>
+            <strong>The scale has to be right for the area to be right:</strong> the area is measured
+            from the rectangle at the scale you pick, so a wrong scale gives a wrong area, and changing
+            the scale re-measures every room you drew. Rooms read from the PDF have no position on the
+            sheet yet, so the plan shows only the boxes you place yourself &mdash; the rooms found by
+            reading the PDF stay in the table.
+          </p>
+          <p class="muted small">
+            Drawn rooms (their rectangle and scale) are saved with the project &mdash; in the browser and
+            in the <em>Save project (.json)</em> file &mdash; so they come back after a reload. The plan
+            view uploads nothing: the drawing is rendered in your browser.
+          </p>
+        </details>
+
+        <details>
           <summary>What does the "In" (Include) tick do, and why are toilets and stairs excluded?</summary>
           <p>
             The <em>In</em> column decides whether a row is counted in the load. A ticked room is added up

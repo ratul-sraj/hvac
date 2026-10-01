@@ -202,6 +202,24 @@ Be straight about it: say which parts you wrote, which parts you specified and r
 tested it. Over-claiming is the fastest way to lose the room; showing that you can review someone
 else's engineering numbers against your own understanding is exactly what a coordinator does.
 
+**12. "How does the plan view know how big a room is — and why is there a drawing-scale dropdown?"**
+"Because a PDF sheet is a picture, not a model: the only thing I can measure is geometry on the page,
+so the scale has to be an input, not a label. You set it from the dropdown — 1:20, 1:50, 1:100
+(the default), 1:200 or 1:500 — and then drag a rectangle over a room. The area is measured from that
+rectangle at that scale, and the length and width come from the same rectangle. The room is created
+instantly as `Drawn room N`, it goes straight into the room table and is already counted in the
+cooling load, and its load breakdown opens so you can set the name, orientation and glazing. Because
+the area is derived rather than typed, changing the drawing scale re-measures every room you drew,
+and each drawn room keeps the scale it was measured at."
+
+**13. "What happens if the sheet is rotated?"**
+"The plan view renders the PDF page through pdf.js, so the room geometry is carried through the
+viewer's own page matrices — a rotated sheet is designed for, and the rectangle the user drags and
+the rectangle stored with the room go through the same transform. The geometry maths is covered by
+the automated checks. The honest line, though, is that a rotated sheet has not been demoed with a
+real rotated drawing yet, so I would confirm that on an actual rotated sheet before relying on it on
+a live job."
+
 ---
 
 ## 7. Demo in the interview (if they ask you to show it)

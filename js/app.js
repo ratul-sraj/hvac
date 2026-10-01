@@ -1431,6 +1431,12 @@ async function openPlan(bytes) {
     plan.page = (typeof plan.viewer.getCurrentPage === 'function') ? plan.viewer.getCurrentPage() : 1;
     if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
     planSync();
+    // bring the drawing into view the first time one loads: the panel is below the upload box, and
+    // 'nearest' only scrolls when it is actually off-screen, so it never yanks a visible page around.
+    if (!plan.revealed) {
+      plan.revealed = true;
+      try { el.planCard.scrollIntoView({ block: 'nearest' }); } catch (err) { /* older browsers */ }
+    }
   } catch (err) {
     // Say it out loud as well as on screen: a silent catch here once hid a broken plan view, and
     // the message was then overwritten by the next status update from the parse.

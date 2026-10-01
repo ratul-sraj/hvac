@@ -224,6 +224,110 @@ if (!sampleMissing) {
   ok("no failed network requests", failedRequests.length === 0, failedRequests.slice(0, 3).join(" | ") || "none");
   ok("no console errors during the whole flow", consoleErrors.length === 0, consoleErrors.slice(0, 4).join(" | ") || "none");
 
+
+  // 13. the plan view: draw a room straight onto the drawing
+  //     NOTE the panel sits BELOW the upload box, so it must be scrolled into view first: mouse
+  //     coordinates are viewport-relative and a drag at an off-screen y delivers no pointer event at
+  //     all (that mistake looks exactly like a broken feature).
+  // The suite may have reloaded the page since the sample was first opened, and a reload has no
+  // drawing in memory — so make this block stand on its own: be on the calculator, load the sample.
+  if (!/app\.html/.test(page.url())) {
+    await page.goto(BASE + "app.html", { waitUntil: "load", timeout: 90000 });
+  }
+  if (!(await page.$("#planCanvas"))) {
+    await page.click("#btnSample").catch(() => {});
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  // the panel sits BELOW the upload box, so it must be scrolled into view: mouse coordinates are
+  // viewport-relative and a drag at an off-screen y delivers no pointer event at all (that mistake
+  // looks exactly like a broken feature).
+  await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+  await new Promise((r) => setTimeout(r, 400));
+
+  const planPainted = await page.waitForFunction(() => {
+    const c = document.getElementById("planCanvas");
+    return c && c.width > 400;
+  }, { timeout: 60000, polling: 400 }).then(() => true).catch(() => false);
+  const planGeom = await page.evaluate(() => {
+    const c = document.getElementById("planCanvas");
+    const pages = document.getElementById("planPages");
+    return c ? { w: c.width, h: c.height, pages: pages ? pages.textContent : "?" } : null;
+  });
+  ok("the drawing is rendered on the page", planPainted && !!planGeom, JSON.stringify(planGeom));
+  ok("the plan knows how many pages the PDF has", !!planGeom && planGeom.pages === "3",
+      "pages=" + (planGeom && planGeom.pages));
+
+  const planZoom = Number(await page.$eval("#planZoomPct", (e) => e.textContent)) / 100;
+  ok("the drawing is fitted to the panel width", planZoom > 0.1 && planZoom < 3, `scale ${planZoom}`);
+
+  const rowsBeforePlan = await page.$$eval("#roomsBody tr", (r) => r.length);
+  const planBox = await page.$eval("#planView", (e) => {
+    const r = e.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  const dx = 300, dy = 210;
+  const px1 = planBox.x + 120, py1 = planBox.y + 120;
+  await page.mouse.move(px1, py1);
+  await page.mouse.down();
+  await page.mouse.move(px1 + dx / 2, py1 + dy / 2, { steps: 5 });
+  await page.mouse.move(px1 + dx, py1 + dy, { steps: 8 });
+  await page.mouse.up();
+  await new Promise((r) => setTimeout(r, 900));
+
+  const rowsAfterPlan = await page.$$eval("#roomsBody tr", (r) => r.length);
+  ok("dragging on the drawing adds exactly one room", rowsAfterPlan === rowsBeforePlan + 1,
+      `${rowsBeforePlan} -> ${rowsAfterPlan}`);
+  const planShapes = await page.$$eval(".plan-room", (n) => n.length);
+  ok("the overlay draws a box for the new room", planShapes === 1, `${planShapes} box(es)`);
+  const planLabel = await page.$eval(".plan-room-label", (e) => e.textContent).catch(() => "");
+  ok("the box is labelled", /Drawn room/.test(planLabel), JSON.stringify(planLabel));
+
+  // the name and the numbers are <input>s, so read .value — row.textContent never contains them
+  const readDrawn = () => page.evaluate(() => {
+    const tr = [...document.querySelectorAll("#roomsBody tr")]
+      .find((t) => { const i = t.querySelector('input[data-field="name"]'); return i && /Drawn room/.test(i.value); });
+    if (!tr) return null;
+    const i = tr.querySelector('input[data-field="area"]');
+    return { name: tr.querySelector('input[data-field="name"]').value, area: i ? Number(i.value) : null };
+  });
+  const drawn = await readDrawn();
+  const PT_PER_IN = 72, M_PER_IN = 0.0254;
+  const areaOf = (wPt, hPt, denom) => ((wPt / PT_PER_IN * denom) * (hPt / PT_PER_IN * denom)) / ((1 / M_PER_IN) ** 2);
+  const expectedArea = areaOf(dx / planZoom, dy / planZoom, 100);
+  ok("the drawn room reaches the room table with an area", !!drawn && drawn.area > 0,
+      drawn ? JSON.stringify(drawn) : "not found");
+  ok("its area matches the rectangle at 1:100",
+      !!drawn && Math.abs(drawn.area - expectedArea) <= Math.max(1, expectedArea * 0.04),
+      `table ${drawn && drawn.area} m² vs geometry ${expectedArea.toFixed(2)} m²`);
+
+  // the drawing scale is a real input: 1:200 must re-measure the room to 4x the area
+  await page.select("#planScale", "200");
+  await new Promise((r) => setTimeout(r, 800));
+  const drawn200 = await readDrawn();
+  ok("changing the drawing scale re-measures the drawn room",
+      !!drawn200 && Math.abs(drawn200.area - expectedArea * 4) <= Math.max(2, expectedArea * 4 * 0.04),
+      `1:200 gives ${drawn200 && drawn200.area} m² (expected ~${(expectedArea * 4).toFixed(1)})`);
+  await page.select("#planScale", "100");
+  await new Promise((r) => setTimeout(r, 500));
+
+  // select mode: click the box, expect the load breakdown for that room
+  await page.click("#planModeSelect");
+  await page.mouse.click(px1 + 60, py1 + 40);
+  await new Promise((r) => setTimeout(r, 700));
+  const selectedBoxes = await page.$$eval(".plan-room.is-selected", (n) => n.length);
+  const detailShown = await page.evaluate(() => !document.getElementById("detailPanel").classList.contains("hidden"));
+  ok("clicking a box in select mode opens that room's breakdown", selectedBoxes === 1 && detailShown,
+      `${selectedBoxes} selected, breakdown open: ${detailShown}`);
+  await page.click("#planModeDraw");
+
+  // the drawn room is part of the load, not just the table
+  const trWithPlan = await page.$eval("#summaryCards", (e) => {
+    const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+    return m ? parseFloat(m[1]) : NaN;
+  });
+  ok("the drawn room is included in the total cooling load", trWithPlan > tr,
+      `${tr} TR -> ${trWithPlan} TR`);
+  await page.screenshot({ path: `${OUT}/live-plan.png` });
 } // end of the checks that need the sample drawing
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample
