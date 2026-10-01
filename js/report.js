@@ -324,6 +324,8 @@ ${skippedNote}
         <td class="l">${fmt(totals.totalW, 0)} W = ${fmt((totals.totalW || 0) / 1000, 1)} kW</td></tr>
     <tr><th class="l">Room sensible heat (incl. safety)</th><td>${fmt(totals.rsh, 0)} W</td>
         <td class="l">Room latent heat (incl. safety) ${fmt(totals.rlh, 0)} W</td></tr>
+    <tr><th class="l">Safety allowance (${fmt(totals.safetyPct, 0)}%)</th><td>+${fmt(totals.safetyW, 0)} W</td>
+        <td class="l">inside the room heat above; fresh air is added afterwards</td></tr>
     <tr><th class="l">Supply air quantity</th><td>${fmt(totals.cfm, 0)} CFM</td>
         <td class="l">${fmt((totals.cfm || 0) * 0.000471947, 3)} m&sup3;/s</td></tr>
     <tr><th class="l">Fresh / outdoor air</th><td>${fmt(totals.oaCfm, 0)} CFM</td>

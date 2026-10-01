@@ -542,6 +542,9 @@ function renderSummary(calc) {
     card('Rooms included', String(t.rooms), ''),
     card('Room sensible heat', fmt(t.rsh, 0), 'W'),
     card('Room latent heat', fmt(t.rlh, 0), 'W'),
+    // the safety factor has always been applied to the room heat; this shows what it is worth, so it
+    // is visible at a glance instead of only living in the project settings
+    card(`Safety allowance (+${fmt(t.safetyPct, 0)}%)`, fmt(t.safetyW, 0), 'W'),
   ].join('');
 
   const levels = groupByLevel(calc.results);
@@ -1408,14 +1411,33 @@ async function planGoTo(n) {
   planSync();
 }
 
+let zoomBusy = false;
+let zoomFactor = 1;
+
+/** Zoom by a factor, coalescing clicks that land faster than a repaint — without losing any of them.
+ *  Each setScale cancels the render in flight and paints the page again (half a second on a real CAD
+ *  sheet), so one repaint per click queues work that is immediately thrown away and leaves the drawing
+ *  showing an intermediate state. Here the counts are accumulated instead: every click multiplies
+ *  zoomFactor, and the accumulated factor is applied once to the scale actually in effect. Reading the
+ *  factor rather than a target scale is deliberate — several clicks can arrive in the same tick, when
+ *  they would all read the same committed scale and the extra steps would be silently lost. */
 async function planZoomBy(factor) {
   if (!plan.viewer || plan.unavailable) return;
+  zoomFactor *= factor;
+  if (zoomBusy) return;
+  zoomBusy = true;
   try {
-    await plan.viewer.setScale((plan.viewer.getScale() || 1) * factor);
-    if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
-    planSync();
+    while (zoomFactor !== 1) {
+      const f = zoomFactor;
+      zoomFactor = 1;
+      await plan.viewer.setScale((plan.viewer.getScale() || 1) * f);
+      if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
+      planSync();
+    }
   } catch (err) {
     setStatus('warn', `Could not zoom (${(err && err.message) || err}).`);
+  } finally {
+    zoomBusy = false;
   }
 }
 

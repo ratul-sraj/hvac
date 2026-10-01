@@ -27,6 +27,11 @@ js/overlay.js         OVERLAY agent — SVG layer over the canvas: draws rooms, 
                       the file); it ships no stylesheet, so css/style.css must define them.
                       Size the layer from the CANVAS box, never from the container: the panel is a
                       scroll box, and a window-sized layer cannot reach the rest of the sheet.
+                      It FOLLOWS the canvas with its own ResizeObserver — do not rely on callers to
+                      resize it after a zoom. Zooming re-sizes the canvas asynchronously (it paints
+                      first, ~0.5 s on a real CAD sheet), so a caller measuring straight after asking
+                      for a zoom sees the PREVIOUS size and leaves the layer stale: rooms bunch toward
+                      the top-left corner and the scroll extents are wrong.
 js/drawstore.js       PLANNER — the uploaded drawing, kept in this browser's IndexedDB so a refresh
                       does not lose it. putDrawing/getDrawing/clearDrawing never throw: a browser
                       without IndexedDB, or a full quota, must cost the user only the drawing.

@@ -244,6 +244,9 @@ export function createOverlay(rootEl, {
     renderDraft(vp);
   }
 
+  let observed = null;
+  let observer = null;
+
   function resize() {
     // Measure the DRAWING, not the window. rootEl is a scroll container as soon as the sheet is
     // zoomed past fit-width, and a layer sized to the visible box scrolls away with the content:
@@ -252,14 +255,33 @@ export function createOverlay(rootEl, {
     // The canvas box IS the scrollable content; rootEl is only the fallback.
     const canvas = rootEl.querySelector('canvas');
     const box = canvas && canvas.clientWidth ? canvas : rootEl;
-    size = {
-      w: Math.max(0, Math.round(box.clientWidth || 0)),
-      h: Math.max(0, Math.round(box.clientHeight || 0)),
-    };
+    const w = Math.max(0, Math.round(box.clientWidth || 0));
+    const h = Math.max(0, Math.round(box.clientHeight || 0));
+    watch(box);
+    if (w === size.w && h === size.h) return;   // nothing changed: leave the DOM alone
+    size = { w, h };
     svg.setAttribute('width', String(size.w));
     svg.setAttribute('height', String(size.h));
     svg.setAttribute('viewBox', `0 0 ${size.w} ${size.h}`);
     render();
+  }
+
+  /** Follow the drawing's own size instead of waiting to be told about it.
+   *  Zooming re-sizes the canvas asynchronously (it has to paint first), so a caller that resizes this
+   *  layer right after asking for a zoom can measure the PREVIOUS canvas and leave the layer stale
+   *  while the drawing has already grown — the rooms then sit bunched toward the top-left corner and
+   *  the scroll extents are wrong. That is what a fast double-click on zoom produced: four clicks
+   *  landing in one tick each re-sized the canvas, and the layer was left at the old size until the
+   *  final paint happened to fix it ("if I give it a moment it behaves normally afterwards").
+   *  Watching the element removes the whole class of bug, whatever re-sizes it — zoom, fit, a page
+   *  change, or the window. */
+  function watch(el) {
+    if (el === observed) return;
+    if (observer) { try { observer.disconnect(); } catch { /* nothing to do */ } observer = null; }
+    observed = el;
+    if (typeof ResizeObserver !== 'function' || !el || typeof el.addEventListener !== 'function') return;
+    observer = new ResizeObserver(() => { resize(); });
+    try { observer.observe(el); } catch { observer = null; }
   }
 
   /* ------------------------------------------------------------- cursor */
@@ -393,6 +415,8 @@ export function createOverlay(rootEl, {
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    if (observer) { try { observer.disconnect(); } catch { /* nothing to do */ } observer = null; }
+    observed = null;
     window.removeEventListener('keydown', onKeyDown);
     svg.removeEventListener('pointerdown', onPointerDown);
     svg.removeEventListener('pointermove', onPointerMove);

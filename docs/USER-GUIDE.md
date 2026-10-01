@@ -354,6 +354,11 @@ TOTAL     = ROOM + FRESH AIR            TR = TOTAL / 3517            airflow is 
 SHF       = sensible ÷ (sensible + latent)
 ```
 
+The **safety factor** above is applied to every room's sensible and latent heat, and the
+**Load summary** shows what it is worth as a **Safety allowance** card — in watts, next to the
+percentage it comes from. Change the percentage here and the card, the cooling load and the report
+all follow. Fresh air is added *after* the safety factor, so it is not part of that allowance.
+
 ---
 
 ## 6. Troubleshooting

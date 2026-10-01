@@ -578,6 +578,113 @@ if (!sampleMissing) {
         renameResult.after.detail.includes(renamedTo),
       JSON.stringify(renameResult.after && renameResult.after.detail));
 
+
+  // 17. the safety allowance on the load summary. The 10% factor has always been applied to the room
+  //     heat; this guards the card that now shows what it is worth, against the engine it comes from.
+  const readSafety = () => page.evaluate(() => {
+    const cards = [...document.querySelectorAll("#summaryCards .scard")];
+    const card = cards.find((c) => /Safety allowance/.test(c.textContent));
+    const calc = window.webhvac && window.webhvac.currentCalc ? window.webhvac.currentCalc() : null;
+    const t = calc ? calc.totals : null;
+    return {
+      label: card ? card.textContent.replace(/\s+/g, " ").trim() : null,
+      shownW: card ? Number((card.textContent.replace(/,/g, "").match(/([0-9.]+)\s*W/) || [])[1]) : null,
+      engineW: t ? Math.round(t.safetyW) : null,
+      pct: t ? t.safetyPct : null,
+      roomHeat: t ? t.rsh + t.rlh : null,
+      tr: t ? t.tr : null,
+    };
+  });
+
+  const safety10 = await readSafety();
+  ok("the load summary shows the safety allowance", !!safety10.label, String(safety10.label));
+  ok("the card names the percentage in the project settings",
+      !!safety10.label && safety10.label.includes("10%"), String(safety10.label));
+  ok("the allowance shown is the engine's own number",
+      safety10.shownW === safety10.engineW && safety10.engineW > 0,
+      `card ${safety10.shownW} W vs engine ${safety10.engineW} W`);
+  // identity: the allowance is the room heat's share for a pct% uplift, i.e. roomHeat * pct/(100+pct)
+  ok("the allowance is the room heat's own percentage share",
+      Math.abs(safety10.engineW - safety10.roomHeat * (safety10.pct / (100 + safety10.pct))) <= 1,
+      `${safety10.engineW} W vs ${(safety10.roomHeat * (safety10.pct / (100 + safety10.pct))).toFixed(1)} W of ${Math.round(safety10.roomHeat)} W`);
+
+  // changing the setting must move BOTH the card and the cooling load, and doubling it must double the
+  // allowance; then put it back so later steps see the project as the user left it
+  await page.$eval("#proj-safety", (el) => { el.value = "20"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+  await new Promise((r) => setTimeout(r, 800));
+  const safety20 = await readSafety();
+  ok("raising the safety factor to 20% moves the cooling load",
+      safety20.tr > safety10.tr, `${safety10.tr.toFixed(2)} TR -> ${safety20.tr.toFixed(2)} TR`);
+  ok("the allowance doubles with the percentage",
+      Math.abs(safety20.engineW - safety10.engineW * 2) <= 2,
+      `${safety10.engineW} W at 10% -> ${safety20.engineW} W at 20%`);
+  ok("the card follows the new percentage",
+      !!safety20.label && safety20.label.includes("20%") && safety20.shownW === safety20.engineW,
+      String(safety20.label));
+  await page.$eval("#proj-safety", (el) => { el.value = "10"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+  await new Promise((r) => setTimeout(r, 800));
+  const safetyBack = await readSafety();
+  ok("setting it back to 10% restores the original load",
+      Math.abs(safetyBack.tr - safety10.tr) <= 0.02, `${safety10.tr.toFixed(2)} -> ${safetyBack.tr.toFixed(2)} TR`);
+
+  // 18. clicking zoom faster than the drawing repaints must not leave the layer behind.
+  //     Each zoom re-sizes the canvas asynchronously (it has to paint first — half a second on a real
+  //     CAD sheet), and the room layer has to follow it. It did not: the layer stayed at the old size
+  //     while the drawing had already grown, so the rooms bunched toward the top-left corner and the
+  //     scroll extents were wrong, until a later paint happened to fix it. Reported from use as
+  //     "click the zoom button quickly ... the drawn area gets reset to the corners ... if I give a
+  //     moment it behaves normally afterwards".
+  //     CPU throttling widens that window on this small synthetic sheet (a real CAD sheet is slow
+  //     enough on its own), so the guard is deterministic instead of a race that usually passes.
+  const cdp = await page.createCDPSession();
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 24 });
+  try {
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 500));
+    const shape = () => page.evaluate(() => {
+      const svg = document.querySelector(".plan-overlay");
+      const canvas = document.getElementById("planCanvas");
+      const sr = svg.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+      const vb = (svg.getAttribute("viewBox") || "").split(/[ ,]+/).map(Number);
+      const box = document.querySelector(".plan-room-box");
+      return {
+        canvas: [canvas.clientWidth, canvas.clientHeight],
+        layer: [Math.round(sr.width), Math.round(sr.height)],
+        sized: Math.abs(sr.width - canvas.clientWidth) < 2 && Math.abs(sr.height - canvas.clientHeight) < 2,
+        placed: Math.abs(sr.left - cr.left) < 2 && Math.abs(sr.top - cr.top) < 2,
+        viewBox: vb,
+        boxFrac: box && vb[2] ? +((+box.getAttribute("x")) / vb[2]).toFixed(3) : null,
+      };
+    });
+    const before = await shape();
+    // four clicks inside one tick, as fast as a hand can land them
+    await page.evaluate(() => {
+      const btn = document.getElementById("planZoomIn");
+      for (let i = 0; i < 4; i += 1) btn.click();
+    });
+    const immediately = await shape();
+    await new Promise((r) => setTimeout(r, 400));
+    const shortly = await shape();
+    await new Promise((r) => setTimeout(r, 4000));
+    const settled = await shape();
+
+    ok("the room layer never lags behind the drawing when zooming fast",
+        immediately.sized && shortly.sized, JSON.stringify({ immediately, shortly }));
+    ok("the layer stays on the drawing while zooming fast",
+        immediately.placed && shortly.placed, JSON.stringify({ placedNow: [immediately.placed, shortly.placed] }));
+    ok("the layer ends up the size of the drawing once the clicks stop",
+        settled.sized && settled.placed, JSON.stringify(settled));
+    ok("the rooms keep their place on the sheet through the zoom",
+        before.boxFrac != null && settled.boxFrac != null && Math.abs(settled.boxFrac - before.boxFrac) <= 0.01,
+        `room was ${before.boxFrac} across the sheet, now ${settled.boxFrac}`);
+    ok("four fast clicks still zoom four steps' worth",
+        settled.viewBox[2] > before.viewBox[2] * 1.8,
+        `layer width ${before.viewBox[2]} -> ${settled.viewBox[2]}`);
+  } finally {
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await cdp.detach().catch(() => {});
+  }
+  await new Promise((r) => setTimeout(r, 300));
 } // end of the checks that need the sample drawing
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample

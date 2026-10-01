@@ -224,6 +224,9 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
     room,
     sensible: s, latent: l,
     rsh, rlh, oaSens, oaLat, oaLs,
+    // what the safety factor ADDED to this room, so the summary can show the allowance as a number
+    // rather than only as a percentage in the settings
+    safetyW: (roomSensible + roomLatent) * (sf - 1),
     totalW: total,
     tr: total / 3517,
     shf: rsh / (rsh + rlh || 1),
@@ -244,6 +247,7 @@ export function calcProject(rooms, proj = DEFAULT_PROJECT) {
       rooms: inc.length, area, areaSqft: area * 10.7639,
       totalW: sum("totalW"), tr, ls: sum("supplyLs"), oaLs: sum("oaLs"), cfm: sum("cfm"), oaCfm: sum("oaCfm"),
       rsh: sum("rsh"), rlh: sum("rlh"),
+      safetyW: sum("safetyW"), safetyPct: num(proj.safety),
       sqftPerTr: tr ? (area * 10.7639) / tr : 0,
       wOut: wFromDbWb(proj.outDb, proj.outWb), wIn: wFromDbRh(proj.inDb, proj.inRh),
       outRh: rhFromDbW(proj.outDb, wFromDbWb(proj.outDb, proj.outWb)),

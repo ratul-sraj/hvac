@@ -92,3 +92,43 @@ export function testLevelTotalsAndClimates() {
   const withRoof = calcRoom({ name: "Office", area: 100, orient: "W", roof: true }, DEFAULT_PROJECT);
   assert.ok(withRoof.tr > calcRoom({ name: "Office", area: 100, orient: "W" }, DEFAULT_PROJECT).tr);
 }
+// ---- the safety allowance the summary card shows ------------------------------------------------
+/** The safety factor is applied to the room sensible and latent heat, and to nothing else, and the
+ *  summary now shows what it is worth in watts. This pins the card's number to the engine's number:
+ *  a card that disagrees with the settings it comes from is worse than no card. */
+export function testSafetyAllowanceMatchesTheSettingAndSitsInsideTheRoomHeat() {
+  const near = (a, b, tol = 0.5) => Math.abs(a - b) <= tol;
+  const rooms = [
+    normalizeRoom({ name: "OFFICE", area: 100, height: 3, people: 10, orient: "W" }),
+    normalizeRoom({ name: "MEETING RM.", area: 40, height: 3, people: 8, orient: "N" }),
+  ];
+  const at = (safety, list = rooms) => calcProject(list, { ...DEFAULT_PROJECT, safety });
+  const none = at(0), ten = at(10), twenty = at(20);
+
+  assert.equal(none.totals.safetyW, 0, "no safety factor must mean no allowance");
+  // with the factor at 0 the room heat IS the raw room heat, so it is the right baseline (10.4 % off
+  // is a real bug, not a rounding difference — the tolerance is far tighter than that)
+  const raw = none.totals.rsh + none.totals.rlh;
+  assert.equal(near(ten.totals.safetyW, raw * 0.10), true,
+    `10% of ${raw.toFixed(0)} W should be ${(raw * 0.10).toFixed(0)} W, got ${ten.totals.safetyW.toFixed(0)} W`);
+  assert.equal(near(twenty.totals.safetyW, raw * 0.20), true, "20% must be twice the 10% allowance");
+  assert.equal(ten.totals.safetyPct, 10, "the percentage is reported for the card label");
+
+  // the allowance is INSIDE the room heat, not added a second time on top of it
+  assert.equal(near(ten.totals.rsh + ten.totals.rlh, raw + ten.totals.safetyW), true,
+    "room heat (with safety) must equal raw room heat + the allowance");
+
+  // and it really moves the load the user reads: by exactly the allowance / 3517 W per TR
+  assert.equal(ten.totals.tr > none.totals.tr, true, "10% safety must raise the total cooling load");
+  assert.equal(near(ten.totals.tr - none.totals.tr, ten.totals.safetyW / 3517, 0.005), true,
+    "the rise in TR must be the allowance converted at 3517 W/TR");
+
+  // fresh air is not part of the allowance
+  assert.equal(near(ten.totals.safetyW, (ten.totals.rsh + ten.totals.rlh) - raw), true,
+    "the allowance covers the room heat only, fresh air is added afterwards");
+
+  // an excluded room contributes nothing
+  const withExcluded = at(10, [...rooms, normalizeRoom({ name: "STORE 01", area: 500, include: false })]);
+  assert.equal(near(withExcluded.totals.safetyW, ten.totals.safetyW), true,
+    "an excluded room must not add a safety allowance");
+}
