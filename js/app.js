@@ -1400,14 +1400,24 @@ function planPlaceAllRooms() {
     placed += 1;
   }
 
+  const notes = [];
+  if (noAt) notes.push(`${noAt} ${noAt === 1 ? 'is' : 'are'} not named on the sheet, so ${noAt === 1 ? 'it stays' : 'they stay'} in the table only`);
+  if (noArea) notes.push(`${noArea} ${noArea === 1 ? 'has' : 'have'} no usable area to size a box from, so ${noArea === 1 ? 'it stays' : 'they stay'} in the table only`);
+  if (handDrawn) notes.push(`${handDrawn} hand-drawn box(es) were left where you traced them`);
+  if (already) notes.push(`${already} ${already === 1 ? 'is' : 'are'} already on the plan`);
+
   if (!placed) {
-    if (already) {
+    if (!notes.length) {
+      setStatus('warn', 'No room to place — none of the rooms carries a usable area to size a box from.');
+      return;
+    }
+    // nothing new, but say WHY rather than a flat "done": rooms already placed, and rooms that have
+    // nowhere to sit (the sheet does not name them) or nothing to size a box from.
+    if (already && notes.length === 1) {
       setStatus('ok', `All ${already} room(s) the drawing names are already on the plan.`);
       return;
     }
-    setStatus('warn', noAt
-      ? `No room to place: ${noAt} room(s) are not named on the sheet, so they stay in the table only.`
-      : 'No room to place — none of the rooms carries a usable area to size a box from.');
+    setStatus('warn', `No room to place: ${notes.join('; ')}.`);
     return;
   }
 
@@ -1416,11 +1426,6 @@ function planPlaceAllRooms() {
   saveSoon();
 
   let msg = `Placed ${placed} room(s) on the plan. `;
-  const notes = [];
-  if (noAt) notes.push(`${noAt} ${noAt === 1 ? 'is' : 'are'} not named on the sheet, so ${noAt === 1 ? 'it stays' : 'they stay'} in the table only`);
-  if (noArea) notes.push(`${noArea} ${noArea === 1 ? 'has' : 'have'} no usable area to size a box from, so ${noArea === 1 ? 'it stays' : 'they stay'} in the table only`);
-  if (handDrawn) notes.push(`${handDrawn} hand-drawn box(es) were left where you traced them`);
-  if (already) notes.push(`${already} were already on the plan`);
   msg += notes.length ? `${notes.join('; ')}.` : 'Each box is a locator centred on the point that names the room, sized back from its own area — the load has not changed.';
   setStatus('ok', msg);
 }

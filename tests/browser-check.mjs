@@ -844,6 +844,126 @@ if (!sampleMissing) {
       `focused ${radioState.active}, selected ${radioState.selected}, rows ${rowsStart} at the start -> ${await rows2()} after deleting the drawn room`);
   }
 
+
+  // ---- Placing every room of the table on the drawing ------------------------------------------------
+  // The rooms the reader finds from name+area labels carry `at` (where the plan names them, PDF space).
+  // Placing puts a region there, sized BACK from the room's own area — so it can never change a load,
+  // which is the one thing that must be true for an HVAC figure to stay trustworthy.
+  {
+    const rows3 = () => page.$$eval("#roomsBody tr", (t) => t.length);
+    const totalOf = () => page.evaluate(() => {
+      const c = [...document.querySelectorAll("#summaryCards .scard")].find((x) => /Total cooling load/i.test(x.textContent));
+      return c ? c.textContent.replace(/\s+/g, " ").trim() : "";
+    });
+    const roomsNow = () => page.evaluate(() => {
+      const rooms = window.webhvac.state.rooms;
+      const pageNow = +(document.getElementById("planPage").textContent.trim());
+      return {
+        total: rooms.length,
+        withAt: rooms.filter((r) => r.at && Number.isFinite(r.at.x)).length,
+        placed: rooms.filter((r) => r.rect && r.rect.placed === true).length,
+        drawn: rooms.filter((r) => r.rect && r.rect.placed !== true).length,
+        boxesOnPage: document.querySelectorAll(".plan-room").length,
+        pageNow,
+        onThisPage: rooms.filter((r) => r.at && (r.page || 1) === pageNow).length,
+        areas: rooms.map((r) => `${r.id}:${r.area}:${r.length}:${r.width}`).join("|"),
+      };
+    });
+
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await page.click("#planModeDraw");
+    await new Promise((r) => setTimeout(r, 250));
+    const before = await roomsNow();
+    const totalBefore = await totalOf();
+    const rowsBefore = await rows3();
+
+    ok("no region is on the drawing before placing", before.placed === 0, `${before.placed} placed, ${before.drawn} drawn`);
+
+    await page.click("#planPlaceAll");
+    await new Promise((r) => setTimeout(r, 1500));
+    const after = await roomsNow();
+    const totalAfter = await totalOf();
+
+    ok("placing puts every room the plan names on the drawing",
+      after.placed === after.withAt && after.placed > 0,
+      `${after.placed} placed of ${after.withAt} named on the sheet`);
+    ok("placing shows them on the page you are looking at",
+      after.boxesOnPage >= after.onThisPage, `${after.boxesOnPage} boxes on page ${after.pageNow}, ${after.onThisPage} rooms named on it`);
+    ok("placing does not add or drop table rows", (await rows3()) === rowsBefore, `${rowsBefore} -> ${await rows3()}`);
+    ok("PLACING DOES NOT CHANGE THE LOAD", totalAfter === totalBefore, `"${totalBefore}" -> "${totalAfter}"`);
+    ok("placing leaves every room's area and dimensions exactly as they were",
+      after.areas === before.areas, `${before.total} rooms compared field by field`);
+
+    const geom = await page.evaluate(() => {
+      const rooms = window.webhvac.state.rooms.filter((r) => r.rect && r.rect.placed === true);
+      const denom = +(document.getElementById("planScale").value || 100) || 100;
+      const mPerPt = (denom * 0.0254) / 72;
+      let worst = 0, worstName = "-", areaOff = 0;
+      for (const r of rooms) {
+        const cx = r.rect.x + r.rect.w / 2, cy = r.rect.y + r.rect.h / 2;
+        const off = Math.abs(cx - r.at.x) + Math.abs(cy - r.at.y);
+        if (off > worst) { worst = off; worstName = r.name; }
+        const boxArea = (r.rect.w * mPerPt) * (r.rect.h * mPerPt);
+        if (r.area > 0 && Math.abs(boxArea - r.area) / r.area > 0.02) areaOff += 1;
+      }
+      return { count: rooms.length, worst: +worst.toFixed(2), worstName, areaOff, denom };
+    });
+    ok("every placed region is centred on the point that names the room",
+      geom.count > 0 && geom.worst < 0.5, `worst off-centre ${geom.worst} pt (${geom.worstName})`);
+    ok("every placed region measures that room's own area",
+      geom.areaOff === 0, `${geom.areaOff} of ${geom.count} disagree at 1:${geom.denom}`);
+
+    // clicking one opens ITS breakdown: the smallest region under the pointer wins, so a big region
+    // cannot steal a click from a room inside it
+    const pick = await page.evaluate(() => {
+      const pageNow = +(document.getElementById("planPage").textContent.trim());
+      const rooms = window.webhvac.state.rooms
+        .filter((r) => r.rect && r.rect.placed === true && (r.page || 1) === pageNow)
+        .sort((a, b) => a.area - b.area);
+      return rooms[0] ? { id: rooms[0].id, name: rooms[0].name } : null;
+    });
+    await page.click("#planModeSelect");
+    await new Promise((r) => setTimeout(r, 300));
+    const boxClient = await page.evaluate((rid) => {
+      const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+      if (!g) return null;
+      if (g.scrollIntoView) g.scrollIntoView({ block: "center" });
+      const r = g.querySelector(".plan-room-box").getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    }, pick.id);
+    await new Promise((r) => setTimeout(r, 400));
+    if (boxClient) await page.mouse.click(boxClient.x + boxClient.w / 2, boxClient.y + boxClient.h / 2);
+    await new Promise((r) => setTimeout(r, 500));
+    const shown = await page.$eval("#detailPanel", (e) => e.textContent.replace(/\s+/g, " ").trim().slice(0, 80));
+    ok("clicking a placed room opens its own breakdown", !!pick && shown.includes(pick.name),
+      `${pick && pick.name} -> "${shown.slice(0, 60)}"`);
+
+    // clearing takes away only what was placed
+    const totalBeforeClear = await totalOf();
+    await page.click("#planPlaceClear");
+    await new Promise((r) => setTimeout(r, 1200));
+    const cleared = await roomsNow();
+    ok("removing placed rooms removes exactly those",
+      cleared.placed === 0 && cleared.drawn === before.drawn,
+      `${after.placed} placed -> ${cleared.placed}, hand-drawn ${before.drawn} -> ${cleared.drawn}`);
+    ok("removing placed rooms does not change the load either",
+      (await totalOf()) === totalBeforeClear, `"${totalBeforeClear}" -> "${await totalOf()}"`);
+
+    // and they come back after a refresh: the regions are part of the saved project
+    await page.click("#planPlaceAll");
+    await new Promise((r) => setTimeout(r, 1200));
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 50,
+      { timeout: 120000, polling: 400 });
+    await new Promise((r) => setTimeout(r, 1500));
+    const persisted = await roomsNow();
+    ok("the placed regions are still there after a refresh",
+      persisted.placed === before.withAt, `${persisted.placed} of ${before.withAt} after the reload`);
+    await page.click("#planPlaceClear");
+    await new Promise((r) => setTimeout(r, 1200));
+    ok("and the drawing is left as it was found",
+      (await roomsNow()).placed === 0, "placed regions cleared again");
+  }
 } // end of the checks that need the sample drawing
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample
