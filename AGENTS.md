@@ -17,6 +17,12 @@ tools/check-nav.mjs   PLANNER — browser check for the nav on every page
 tools/keepalive.sh    PLANNER — git backup + server keepalive (run by a Hermes cron job)
 css/style.css         calculator page styles            css/landing.css   landing pages
 js/calc.js            PLANNER — load engine (read-only for workers)
+js/planview.js        PLANNER — plan geometry (pure: rects, drawing scale, area, hit-testing)
+                      CONTRACT: a drawn room adds `rect:{page,x,y,w,h}` (PDF points, y-up),
+                      `scaleDenom` and `source:'manual'`. Screen coords are NEVER stored; the
+                      overlay converts per render through the pdf.js viewport (see planview.js).
+js/viewer.js          VIEWER agent — renders a PDF page to a canvas, page nav, zoom/fit
+js/overlay.js         OVERLAY agent — SVG layer over the canvas: draws rooms, drag to create
 js/pdfparse.js        PDF agent — PDF -> rooms[] (also runs server-side in Node)
 js/app.js             UI agent  — calculator behaviour; uses the Express API when present
 js/report.js          UI agent  — printable report + CSV builders

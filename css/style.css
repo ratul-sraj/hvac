@@ -526,3 +526,59 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   }
   nav.app-nav.js-nav.nav-open .app-nav-links a { padding: 10px 12px; font-size: 15px; }
 }
+
+/* ---------------- plan view: draw rooms on the drawing ----------------
+   js/viewer.js owns the canvas inside .viewer-wrap; js/overlay.js owns the SVG. Both live in
+   #planView, which is BOTH the positioning context and the scroll box: the SVG is an absolutely
+   positioned child of the scroller, so it moves with the canvas when the drawing is scrolled.
+   The room-box class names below are exactly the ones js/overlay.js documents at the top of that
+   file (it adds no stylesheet of its own), styled here in the app's own palette. Presentation
+   attributes the overlay sets itself — text-anchor, dominant-baseline, label font-size — are
+   deliberately NOT repeated here: a CSS rule would override them. */
+.plan-intro { margin: 4px 0 12px; max-width: 80ch; }
+.plan-toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+  padding: 8px 10px; margin-bottom: 10px;
+  background: var(--accent-soft); border: 1px solid var(--line-soft); border-radius: var(--radius);
+}
+.plan-group { display: flex; align-items: center; gap: 6px; }
+.plan-group > label { font-size: 13px; color: var(--ink-soft); }
+.plan-pos { min-width: 78px; text-align: center; }
+.plan-mode { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+.plan-mode input { margin: 0; }
+#planScale {
+  padding: 4px 6px; font-size: 13px; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; background: #fff;
+}
+.plan-view {
+  position: relative; overflow: auto; max-height: 72vh;
+  border: 1px solid var(--line); border-radius: var(--radius); background: #fff;
+}
+.viewer-wrap { position: relative; line-height: 0; }
+#planCanvas { display: block; max-width: none; }
+/* --- the overlay (js/overlay.js) --- */
+.plan-overlay { position: absolute; inset: 0; touch-action: none; overflow: visible; }
+.plan-overlay.is-draw { cursor: crosshair; }
+.plan-overlay.is-select { cursor: default; }
+.plan-room { cursor: pointer; }
+/* Only rooms that HAVE geometry are drawn, i.e. the ones placed on the plan: parsed and scheduled
+   rooms have no position on the sheet, so they appear in the table but never here. */
+.plan-room-box { fill: var(--accent); fill-opacity: .26; stroke: var(--accent); stroke-width: 2; }
+.plan-room.is-excluded .plan-room-box { fill: #8b95a1; fill-opacity: .18; stroke: #6b7480; }
+.plan-room.is-selected .plan-room-box { stroke: var(--danger); stroke-width: 2.5; }
+.plan-room-label {
+  font-size: 11px; fill: var(--ink); pointer-events: none;
+  paint-order: stroke; stroke: rgba(255, 255, 255, .88); stroke-width: 3px;
+}
+.plan-draft-box { fill: var(--accent); fill-opacity: .2; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
+.plan-overlay-readout {
+  font-size: 12px; fill: var(--ink); pointer-events: none;
+  paint-order: stroke; stroke: #fff; stroke-width: 3px;
+}
+.plan-hint { margin: 8px 0 0; }
+@media (max-width: 700px) {
+  .plan-toolbar { gap: 6px 10px; padding: 7px 8px; }
+  .plan-view { max-height: 58vh; }
+  .plan-pos { min-width: 0; }
+  .plan-room-label { font-size: 13px; }
+}

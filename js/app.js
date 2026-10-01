@@ -8,6 +8,10 @@ import {
 import { buildReportHtml, toCsv, fmt, groupByLevel, breakdown, esc, typeLabel } from './report.js';
 import { parsePdf } from './pdfparse.js';
 import * as pdfjs from '../vendor/pdf.min.mjs';
+import {
+  roomFromRect, areaFromRect, dimsFromRect, round2, isDrawnRoom,
+  DRAWING_SCALES, DEFAULT_SCALE_DENOM,
+} from './planview.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -102,6 +106,20 @@ const el = {
   jsonInput: $('#jsonInput'),
   ocrCheck: $('#chkOcr'),
   ocrOption: $('#ocrOption'),
+  planCard: $('#planCard'),
+  planView: $('#planView'),
+  planPage: $('#planPage'),
+  planPages: $('#planPages'),
+  planPrev: $('#planPrev'),
+  planNext: $('#planNext'),
+  planZoomIn: $('#planZoomIn'),
+  planZoomOut: $('#planZoomOut'),
+  planZoomPct: $('#planZoomPct'),
+  planFit: $('#planFit'),
+  planScale: $('#planScale'),
+  planModeDraw: $('#planModeDraw'),
+  planModeSelect: $('#planModeSelect'),
+  planHint: $('#planHint'),
 };
 
 const PROJ_FIELDS = [
@@ -694,10 +712,13 @@ function onHeaderClick(ev) {
 /* ------------------------------------------------------------------ */
 
 function renderAll() {
+  // the plan overlay draws straight from state.rooms, so refresh it with every re-render
   renderFilters();
   renderTable();
   renderSortHeaders();
   renderSummary(currentCalc());
+  if (state.ui.openId) renderDetail(currentCalc());
+  if (plan.overlay) plan.overlay.render();
 }
 
 // Everything that must be refreshed after a project setting changed.
@@ -1053,6 +1074,10 @@ async function handleFiles(fileList) {
     // the server reads the whole file at once and answers in one piece,
     // so after the upload we only have one line left to show
     const readingTimer = setTimeout(() => setProgress('Reading PDF on the server …', 60), 500);
+    // the plan panel needs the bytes too; the parse below reads the File itself
+    if (pdfs[0] && pdfs[0].size <= 25 * 1024 * 1024) {
+      pdfs[0].arrayBuffer().then(openPlan).catch(() => {});
+    }
     try {
       const out = await parseFilesOnServer(pdfs);
       clearTimeout(readingTimer);
@@ -1090,6 +1115,7 @@ async function handleFiles(fileList) {
     setProgress(`File ${i + 1} of ${pdfs.length}: ${f.name} — ${useOcr ? 'preparing OCR' : 'opening'}`, 3);
     try {
       const buf = await f.arrayBuffer();
+      if (i === 0) openPlan(buf);   // show the drawing while it is being read
       const out = useOcr
         ? await parseOneWithOcr(buf, f.name, i, pdfs.length)
         : await parseOne(buf, f.name, i, pdfs.length);
@@ -1158,6 +1184,7 @@ async function loadSample() {
     return;
   }
   try {
+    openPlan(buf);   // show the sample drawing straight away
     setProgress(`Reading ${used} ...`, 15);
     const out = await parseOne(buf, used, 0, 1);
     const r = addRooms(out.rooms);
@@ -1173,6 +1200,243 @@ async function loadSample() {
     setStatus('err', `The sample drawing could not be read (${(err && err.message) || err}).`);
   } finally {
     state.ui.busy = false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* plan view — draw rooms straight onto the drawing                    */
+/* ------------------------------------------------------------------ */
+/* js/viewer.js paints the PDF page into a canvas and js/overlay.js draws the coloured room boxes on
+ * top of it. Both are imported on demand: the panel only appears once a drawing is open, and if
+ * either module is unavailable the calculator behaves exactly as it did before (the static build must
+ * never break because an enhancement is missing).
+ *
+ * The geometry lives in the planner-owned js/planview.js — a drawn room stores its rectangle in PDF
+ * points plus the drawing scale it was measured at, never screen pixels, so zoom and page rotation
+ * cannot corrupt it. */
+const plan = {
+  mods: null, viewer: null, overlay: null, bytes: null,
+  page: 1, pages: 1, wired: false, unavailable: false,
+};
+
+async function ensurePlanModules() {
+  if (plan.mods || plan.unavailable) return plan.mods;
+  try {
+    const [viewerMod, overlayMod] = await Promise.all([import('./viewer.js'), import('./overlay.js')]);
+    if (typeof viewerMod.createViewer !== 'function' || typeof overlayMod.createOverlay !== 'function') {
+      throw new Error('createViewer/createOverlay missing');
+    }
+    plan.mods = { createViewer: viewerMod.createViewer, createOverlay: overlayMod.createOverlay };
+  } catch (err) {
+    // enhancement only — say nothing to the user, keep the calculator working
+    plan.unavailable = true;
+    return null;
+  }
+  return plan.mods;
+}
+
+function planScaleDenom() {
+  const n = Number(state.project.planScale);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_SCALE_DENOM;
+}
+
+function planHintText() {
+  const drawn = state.rooms.filter(isDrawnRoom).length;
+  if (state.ui.planMode === 'select') {
+    return `Click a room box to open its load breakdown. ${drawn} room(s) placed on the plan so far.`;
+  }
+  return `Drag a rectangle over a room in the drawing to add it as a room. ` +
+    `Areas are measured at 1:${planScaleDenom()} — change the drawing scale above if the sheet differs. ` +
+    `${drawn} room(s) drawn so far.`;
+}
+
+function planSync() {
+  if (!el.planCard) return;
+  el.planPage.textContent = String(plan.page);
+  el.planPages.textContent = String(plan.pages);
+  if (el.planZoomPct && plan.viewer && typeof plan.viewer.getScale === 'function') {
+    el.planZoomPct.textContent = String(Math.round((plan.viewer.getScale() || 1) * 100));
+  }
+  if (el.planPrev) el.planPrev.disabled = plan.page <= 1;
+  if (el.planNext) el.planNext.disabled = plan.page >= plan.pages;
+  if (el.planHint) el.planHint.textContent = planHintText();
+}
+
+function planSelectRoom(room) {
+  if (room) openDetail(room.id); else closeDetail();
+  if (plan.overlay) plan.overlay.render();
+}
+
+/** A level for a room drawn on page N: the levels the parser found, in the order it found them,
+ *  usually correspond to the pages in order. Best effort — the user can retype it in the editor. */
+function planLevelForPage(page) {
+  const seen = [];
+  for (const r of state.rooms) {
+    const lv = (r.level || '').trim();
+    if (lv && !seen.includes(lv)) seen.push(lv);
+  }
+  return seen[page - 1] || (seen.length ? seen[seen.length - 1] : '');
+}
+
+function planDrawRoom(rect, info) {
+  const page = (info && info.page) || plan.page || 1;
+  const denom = planScaleDenom();
+  const n = state.rooms.filter(isDrawnRoom).length + 1;
+  const room = roomFromRect(rect, {
+    id: newId(),
+    name: `Drawn room ${n}`,
+    level: planLevelForPage(page),
+    page,
+    denom,
+    include: true,
+  });
+  const res = addRooms([room]);
+  renderAll();
+  saveSoon();
+  if (res.added) {
+    setStatus('ok', `${room.name} added — ${room.length} × ${room.width} m, ${room.area} m² at 1:${denom}. ` +
+      `Set its name, orientation and glazing below; the load already uses it.`);
+    planSelectRoom(room);
+  }
+}
+
+/** The drawing scale is the one input the whole panel depends on, so changing it re-measures every
+ *  room that was drawn (their areas are derived from the rectangle, not typed). */
+function planApplyScale(denom) {
+  const n = Number(denom) || DEFAULT_SCALE_DENOM;
+  state.project.planScale = n;
+  let changed = 0;
+  for (const r of state.rooms) {
+    if (!isDrawnRoom(r)) continue;
+    const dims = dimsFromRect(r.rect, n);
+    r.scaleDenom = n;
+    r.area = round2(areaFromRect(r.rect, n));
+    r.length = round2(dims.length);
+    r.width = round2(dims.width);
+    changed += 1;
+  }
+  renderAll();
+  saveSoon();
+  setStatus('ok', changed
+    ? `Drawing scale 1:${n} — ${changed} drawn room(s) re-measured from their rectangles.`
+    : `Drawing scale set to 1:${n}. Rooms you draw are measured at this scale.`);
+}
+
+async function planGoTo(n) {
+  if (!plan.viewer || plan.unavailable) return;
+  const target = Math.max(1, Math.min(plan.pages, n));
+  if (target === plan.page) return;
+  plan.page = target;
+  planSync();
+  try {
+    await plan.viewer.showPage(target);
+    if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
+  } catch (err) {
+    setStatus('warn', `Could not show page ${target} (${(err && err.message) || err}).`);
+  }
+  planSync();
+}
+
+async function planZoomBy(factor) {
+  if (!plan.viewer || plan.unavailable) return;
+  try {
+    await plan.viewer.setScale((plan.viewer.getScale() || 1) * factor);
+    if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
+    planSync();
+  } catch (err) {
+    setStatus('warn', `Could not zoom (${(err && err.message) || err}).`);
+  }
+}
+
+async function planFitWidth() {
+  if (!plan.viewer || plan.unavailable) return;
+  try {
+    await plan.viewer.fitWidth();
+    if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
+    planSync();
+  } catch (err) {
+    setStatus('warn', `Could not fit the drawing (${(err && err.message) || err}).`);
+  }
+}
+
+function planSetMode(mode) {
+  state.ui.planMode = mode === 'select' ? 'select' : 'draw';
+  if (plan.overlay) { plan.overlay.setMode(state.ui.planMode); plan.overlay.render(); }
+  planSync();
+  saveSoon();
+}
+
+function planWire() {
+  if (plan.wired) return;
+  plan.wired = true;
+  if (el.planScale) {
+    el.planScale.innerHTML = DRAWING_SCALES
+      .map((s) => `<option value="${s.denom}">${s.label}</option>`).join('');
+    el.planScale.value = String(planScaleDenom());
+    el.planScale.addEventListener('change', () => planApplyScale(el.planScale.value));
+  }
+  if (el.planPrev) el.planPrev.addEventListener('click', () => planGoTo(plan.page - 1));
+  if (el.planNext) el.planNext.addEventListener('click', () => planGoTo(plan.page + 1));
+  if (el.planZoomIn) el.planZoomIn.addEventListener('click', () => planZoomBy(1.25));
+  if (el.planZoomOut) el.planZoomOut.addEventListener('click', () => planZoomBy(1 / 1.25));
+  if (el.planFit) el.planFit.addEventListener('click', planFitWidth);
+  if (el.planModeDraw) el.planModeDraw.addEventListener('change', () => planSetMode('draw'));
+  if (el.planModeSelect) el.planModeSelect.addEventListener('change', () => planSetMode('select'));
+}
+
+/** Open a drawing in the plan panel. Safe to call for every upload: the panel is an enhancement. */
+async function openPlan(bytes) {
+  if (!bytes || !el.planCard) return;
+  // pdf.js DETACHES the ArrayBuffer it is handed — it transfers it to its worker — so a buffer shared
+  // with the parser is already dead for whoever asks second ("ArrayBuffer at index 0 is already
+  // detached"). The plan view therefore gets its own copy, taken synchronously here, before any await,
+  // because the parse is running concurrently and may detach the original at any moment.
+  const own = (bytes instanceof Uint8Array) ? bytes.slice().buffer : bytes.slice(0);
+  const mods = await ensurePlanModules();
+  if (!mods) return;
+  plan.bytes = own;
+  el.planCard.classList.remove('hidden');
+  try {
+    if (!plan.viewer) {
+      plan.viewer = mods.createViewer(el.planView, {
+        pdfjsUrl: new URL('../vendor/pdf.min.mjs', import.meta.url).href,
+        workerUrl: pdfjs.GlobalWorkerOptions.workerSrc,
+      });
+      if (typeof plan.viewer.on === 'function') {
+        plan.viewer.on('pagechange', (e) => { if (e && e.page) { plan.page = e.page; planSync(); } });
+        plan.viewer.on('rendered', () => {
+          plan.page = (typeof plan.viewer.getCurrentPage === 'function') ? plan.viewer.getCurrentPage() : plan.page;
+          if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
+          planSync();
+        });
+      }
+      plan.overlay = mods.createOverlay(el.planView, {
+        getViewport: () => plan.viewer.getViewport(),
+        getRooms: () => state.rooms,
+        getPage: () => plan.page,
+        getSelectedId: () => state.ui.openId || null,
+        getScaleDenom: planScaleDenom,
+        getMode: () => (state.ui.planMode === 'select' ? 'select' : 'draw'),
+        onDraw: planDrawRoom,
+        onSelect: planSelectRoom,
+      });
+      if (plan.overlay.setMode) plan.overlay.setMode(state.ui.planMode === 'select' ? 'select' : 'draw');
+      planWire();
+    }
+    const info = await plan.viewer.load(own);
+    plan.pages = (info && info.pages) || 1;
+    plan.page = 1;
+    if (typeof plan.viewer.fitWidth === 'function') await plan.viewer.fitWidth();
+    else await plan.viewer.showPage(1);
+    plan.page = (typeof plan.viewer.getCurrentPage === 'function') ? plan.viewer.getCurrentPage() : 1;
+    if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
+    planSync();
+  } catch (err) {
+    // Say it out loud as well as on screen: a silent catch here once hid a broken plan view, and
+    // the message was then overwritten by the next status update from the parse.
+    console.warn('[plan] could not open the drawing:', (err && err.message) || err);
+    setStatus('warn', `The drawing could not be shown in the plan view (${(err && err.message) || err}). ` +
+      `The rooms, the table and the load are unaffected.`);
   }
 }
 
