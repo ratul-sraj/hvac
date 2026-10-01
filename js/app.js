@@ -1263,11 +1263,13 @@ function planScaleDenom() {
 function planHintText() {
   const drawn = state.rooms.filter(isDrawnRoom).length;
   if (state.ui.planMode === 'select') {
-    return `Click a room box to open its load breakdown. ${drawn} room(s) placed on the plan so far.`;
+    return `Click a room box to open its load breakdown. Drag a room to move it, drag a corner to ` +
+      `resize, Delete to remove, middle-drag or hold Space to pan. ` +
+      `${drawn} room(s) placed on the plan so far.`;
   }
   return `Drag a rectangle over a room in the drawing to add it as a room. ` +
     `Areas are measured at 1:${planScaleDenom()} — change the drawing scale above if the sheet differs. ` +
-    `${drawn} room(s) drawn so far.`;
+    `${drawn} room(s) drawn so far. Switch to Select / edit to move, resize or delete a box.`;
 }
 
 function planSync() {
@@ -1285,6 +1287,80 @@ function planSync() {
 function planSelectRoom(room) {
   if (room) openDetail(room.id, { keepView: true }); else closeDetail();
   if (plan.overlay) plan.overlay.render();
+}
+
+/* ---- Stage 2: the overlay reports, the app owns the state (see AGENTS.md) --------------------
+ * The overlay moves/resizes the box and reports the new rectangle in PDF points. It never writes a
+ * room. Each callback here puts the room back in step: the rectangle is the source of truth for a
+ * drawn room, so its area and length/width are re-derived from THAT rectangle with the room's own
+ * drawing scale (never the screen). Nothing is re-derived in the overlay. */
+
+/** The drawing scale a room was measured at — its own `scaleDenom`, falling back to the panel's. */
+function roomDenom(room) {
+  const n = Number(room && room.scaleDenom);
+  return Number.isFinite(n) && n > 0 ? n : planScaleDenom();
+}
+
+/** A room in state by id (the overlay reports ids, never the room object). */
+function roomById(id) {
+  const want = id && typeof id === 'object' ? id.id : id;
+  return state.rooms.find((r) => r.id === want) || null;
+}
+
+/** Live, on every pointermove of a move/resize drag: write the reported rectangle into the room and
+ *  redraw the boxes only. Deliberately NO recalculation and NO table rebuild here — this runs dozens
+ *  of times a second, and the full project calc over a large table (159 sample rooms) is far too
+ *  heavy to repeat per move. The row's area cell, the totals and the summary are refreshed once, in
+ *  planRoomMoveEnd(). Keeping the live path this small is what makes the box follow the pointer. */
+function planRoomMoved(id, rect) {
+  const room = roomById(id);
+  if (!room || !rect) return;
+  room.rect = {
+    page: rect.page != null ? rect.page : (room.rect && room.rect.page) || plan.page || 1,
+    x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+  };
+  if (plan.overlay) plan.overlay.render();
+}
+
+/** On release: the real update. Write the new rectangle into the room, re-derive its area and
+ *  length/width from THAT rectangle at its own scale, refresh its row (the area cell the table still
+ *  shows), recalculate, refresh the summary and the open description, redraw the map and persist.
+ *  updateLive() is the same no-table-rebuild refresh the in-table edits use, so the table keeps the
+ *  room's row and the user's focus instead of being thrown away and rebuilt. */
+function planRoomMoveEnd(id, rect) {
+  const room = roomById(id);
+  if (!room || !rect) return;
+  const denom = roomDenom(room);
+  // store the rectangle the same rounded way roomFromRect() does, so a move matches a fresh draw
+  const next = {
+    page: rect.page != null ? rect.page : (room.rect && room.rect.page) || plan.page || 1,
+    x: round2(rect.x), y: round2(rect.y), w: round2(rect.w), h: round2(rect.h),
+  };
+  room.rect = next;
+  room.scaleDenom = denom;
+  if (!room.source) room.source = 'manual';
+  const dims = dimsFromRect(next, denom);
+  room.area = round2(areaFromRect(next, denom));
+  room.length = round2(dims.length);
+  room.width = round2(dims.width);
+
+  // the area cell shows room.area, so it has to be re-typed into the input as well (updateLive()
+  // refreshes the computed cells and placeholders, but never overwrites a field's value)
+  const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
+  if (inp) inp.value = String(room.area);
+
+  updateLive();   // recalculates, refreshes computed cells, summary, description and the boxes
+  saveSoon();
+}
+
+/** Delete/Backspace on a selection: drop the room from state and from the table, recalculate,
+ *  refresh the summary and the description, redraw the boxes and persist. */
+function planDeleteRoom(id) {
+  const room = roomById(id);
+  if (!room) return;
+  const idx = state.rooms.indexOf(room);
+  if (idx < 0) return;
+  deleteRoom(idx);   // splices state, closes the description if it showed this room, renderAll + save
 }
 
 /** A level for a room drawn on page N: the levels the parser found, in the order it found them,
@@ -1516,6 +1592,9 @@ async function openPlan(bytes, opts) {
         getMode: () => (state.ui.planMode === 'select' ? 'select' : 'draw'),
         onDraw: planDrawRoom,
         onSelect: planSelectRoom,
+        onRoomMoved: planRoomMoved,
+        onRoomMoveEnd: planRoomMoveEnd,
+        onDelete: planDeleteRoom,
       });
       if (plan.overlay.setMode) plan.overlay.setMode(state.ui.planMode === 'select' ? 'select' : 'draw');
       planWire();

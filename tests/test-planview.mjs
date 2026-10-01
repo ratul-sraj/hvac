@@ -7,6 +7,7 @@ import {
   normalizeRect, rectIsUsable, areaFromRect, dimsFromRect, clampRectToPage, rectCenter,
   rectContainsPoint, moveRect, resizeRect, handlePoints, roomAtPoint, roomsOnPage, roomFromRect,
   round2, isDrawnRoom, pdfPointToView, viewPointToPdf, rectToViewBox,
+  handleAtPoint,
 } from '../js/planview.js';
 import { normalizeRoom, calcRoom, calcProject, DEFAULT_PROJECT } from '../js/calc.js';
 
@@ -151,6 +152,47 @@ ok('a rotated page still yields a positive view box',
   box45.w > 0 && box45.h > 0 && near(box45.w, 20, 0.001), JSON.stringify(box45));
 ok('a missing viewport degrades to zero instead of throwing',
   pdfPointToView(null, { x: 1, y: 1 }).x === 0 && rectToViewBox(null, rect).w === 0);
+
+// ---- grabbing a corner to resize ---------------------------------------------------------------
+const gRect = { x: 100, y: 200, w: 400, h: 300 };   // sw(100,200) se(500,200) ne(500,500) nw(100,500)
+const grab = (x, y) => handleAtPoint(gRect, { x, y }, 12);
+ok('the sw corner is grabbed just above it', grab(104, 204) === 'sw', String(grab(104, 204)));
+ok('the se corner is grabbed just below it', grab(497, 197) === 'se', String(grab(497, 197)));
+ok('the ne corner is grabbed just past it', grab(503, 503) === 'ne', String(grab(503, 503)));
+ok('the nw corner is grabbed just inside it', grab(96, 496) === 'nw', String(grab(96, 496)));
+// this is what stops an ordinary drag from resizing the room by accident
+ok('the middle of the box is a MOVE, not a handle', grab(300, 350) === null, String(grab(300, 350)));
+ok('an edge midpoint is a MOVE too', grab(100, 350) === null && grab(500, 350) === null,
+  `${grab(100, 350)} / ${grab(500, 350)}`);
+ok('a point outside the grab radius is a MOVE', grab(80, 190) === null, String(grab(80, 190)));
+ok('zero tolerance still matches a corner exactly',
+  handleAtPoint(gRect, { x: 100, y: 200 }, 0) === 'sw' && handleAtPoint(gRect, { x: 101, y: 200 }, 0) === null);
+// overlapping grab areas resolve to the corner actually aimed at, not to the list order
+const tightRect = { x: 100, y: 200, w: 10, h: 10 };
+ok('overlapping grab areas pick the nearest corner',
+  handleAtPoint(tightRect, { x: 101, y: 201 }, 8) === 'sw' && handleAtPoint(tightRect, { x: 108, y: 208 }, 8) === 'ne',
+  `${handleAtPoint(tightRect, { x: 101, y: 201 }, 8)} / ${handleAtPoint(tightRect, { x: 108, y: 208 }, 8)}`);
+ok('a missing rect or point cannot throw',
+  handleAtPoint(null, { x: 0, y: 0 }, 10) === null && handleAtPoint(gRect, null, 10) === null);
+
+// ---- dragging keeps the geometry sane ----------------------------------------------------------
+// moving then resizing must behave like the pointer's own path: a move cannot change the area, and a
+// resize that drags one corner across the box must not produce a negative rectangle
+const movedRoom = moveRect(gRect, 50, -30);
+ok('moving a room cannot change its area',
+  Math.abs(areaFromRect(movedRoom, 100) - areaFromRect(gRect, 100)) < 1e-9,
+  `${areaFromRect(gRect, 100).toFixed(2)} m2 -> ${areaFromRect(movedRoom, 100).toFixed(2)} m2`);
+ok('moving a room keeps its size', movedRoom.w === gRect.w && movedRoom.h === gRect.h);
+const grownRect = resizeRect(gRect, 'se', { x: 700, y: 100 });      // drag the se corner down-right
+ok('dragging a corner outwards grows the room',
+  grownRect.w === 600 && grownRect.h === 400 && grownRect.x === 100 && grownRect.y === 100,
+  JSON.stringify(grownRect));
+const flippedRect = resizeRect(gRect, 'se', { x: 50, y: 450 });     // drag it right across the box
+ok('dragging a corner across the box still gives a positive rectangle',
+  flippedRect.w > 0 && flippedRect.h > 0 && flippedRect.x + flippedRect.w <= 101,
+  JSON.stringify(flippedRect));
+ok('the opposite corner stays pinned while resizing',
+  resizeRect(gRect, 'nw', { x: 120, y: 220 }).x + resizeRect(gRect, 'nw', { x: 120, y: 220 }).w === 500);
 
 console.log(`\n${pass}/${pass + fail} plan view checks passed`);
 if (fail) { console.log(`${fail} FAILED`); process.exit(1); }

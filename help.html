@@ -213,6 +213,33 @@
         </details>
 
         <details>
+          <summary>I drew a room box in the wrong place. Can I move, resize or delete it?</summary>
+          <p>
+            Yes. Switch the plan view to <strong>Select / edit</strong> and work on the box directly:
+          </p>
+          <ul>
+            <li><strong>Move:</strong> drag the body of the box. The room follows your pointer, and its
+              area does not change &mdash; only its position on the sheet does.</li>
+            <li><strong>Resize:</strong> drag one of the four <strong>corner handles</strong> of the
+              selected box. Because a drawn room's area is measured from its rectangle, resizing it
+              <strong>re-measures the room</strong>: its area and its length &times; width are
+              recalculated at the drawing scale, the row in the table updates and the total cooling load
+              follows.</li>
+            <li><strong>Delete:</strong> select the box and press <em>Delete</em> (or
+              <em>Backspace</em>). The room is removed from the table and from the totals. The same
+              <strong>&times;</strong> button at the end of the row does the same thing.</li>
+            <li><strong>Pan:</strong> the sheet scrolls if it is zoomed past the panel width. Drag with
+              the <strong>middle mouse button</strong>, or hold <strong>Space</strong> and drag, to pan
+              while staying in a drawing or selecting mode.</li>
+          </ul>
+          <p class="muted small">
+            Moving and resizing are saved with the project automatically &mdash; reload the page and the
+            box is where you left it. The keystroke only deletes when the focus is not in a table cell,
+            so pressing Delete while typing never removes a room by accident.
+          </p>
+        </details>
+
+        <details>
           <summary>What does the "In" (Include) tick do, and why are toilets and stairs excluded?</summary>
           <p>
             The <em>In</em> column decides whether a row is counted in the load. A ticked room is added up

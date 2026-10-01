@@ -570,6 +570,15 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 .plan-room-box { fill: var(--accent); fill-opacity: .26; stroke: var(--accent); stroke-width: 2; }
 .plan-room.is-excluded .plan-room-box { fill: #8b95a1; fill-opacity: .18; stroke: #6b7480; }
 .plan-room.is-selected .plan-room-box { stroke: var(--danger); stroke-width: 2.5; }
+/* Stage 2 — a room being moved or resized, the four corner grips of the SELECTED room, and the
+   overlay while panning. Grips are presentational (pointer-events:none): the overlay's grab test is
+   geometric (handleAtPoint on PDF points), so the grip under the pointer is never a DOM hit. */
+.plan-room.is-dragging { cursor: grabbing; }
+.plan-room.is-dragging .plan-room-box { stroke-width: 3; }
+.plan-room-handle {
+  fill: #fff; stroke: var(--danger); stroke-width: 1.5; pointer-events: none;
+}
+.plan-overlay.is-pan { cursor: grabbing; }
 .plan-room-label {
   font-size: 11px; fill: var(--ink); pointer-events: none;
   paint-order: stroke; stroke: rgba(255, 255, 255, .88); stroke-width: 3px;

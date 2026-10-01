@@ -32,6 +32,34 @@ js/overlay.js         OVERLAY agent — SVG layer over the canvas: draws rooms, 
                       first, ~0.5 s on a real CAD sheet), so a caller measuring straight after asking
                       for a zoom sees the PREVIOUS size and leaves the layer stale: rooms bunch toward
                       the top-left corner and the scroll extents are wrong.
+                      STAGE 2 (move / resize / delete / pan) — FROZEN interface, agreed 2026-10-01:
+                        modes: 'draw' | 'select'
+                        opts callbacks (the overlay NEVER writes room state; it only reports):
+                          onSelect(room | null)
+                          onRoomMoved(id, rectPt)     // live, every pointermove of a drag
+                          onRoomMoveEnd(id, rectPt)   // on release: the app persists here
+                          onDelete(id)                // Delete/Backspace with a selection
+                          (already there and unchanged: getViewport/getRooms/getPage/getSelectedId/
+                          getScaleDenom/getMode, onDraw, onSelect, setMode, render, resize, destroy)
+                          NEW, named exactly like this: onRoomMoved, onRoomMoveEnd, onDelete
+                          NEW class names to emit: is-dragging, plan-room-handle, is-pan
+                        select mode:
+                          - pointerdown within HANDLE_PX (9 px) of a corner of the SELECTED room →
+                            resize; the pixel radius is converted to PDF points through
+                            getViewport() and matched with planview.handleAtPoint(), so handles stay
+                            the same size under the finger at every zoom. Use ONLY handleAtPoint —
+                            never re-derive the grab logic in the overlay.
+                          - pointerdown inside a room box → move (live onRoomMoved, on release
+                            onRoomMoveEnd). Dragging the body must NEVER resize, and vice versa.
+                          - the new rect is computed with planview.moveRect()/resizeRect() (keep the
+                            page, keep w/h positive), then clamped to the page with clampRectToPage().
+                          - Delete/Backspace deletes the selection — but ONLY when the focus is not in
+                            a text field (never steal a keystroke from a table cell).
+                        pan (both modes): middle-button drag, or Space held + primary drag.
+                          While panning emit no room changes and do not start a draft.
+                        class names part of the contract: plan-overlay, plan-room-box, is-included,
+                          is-excluded, is-selected, is-dragging, plan-room-handle (+ is-nw/is-ne/
+                          is-se/ is-sw), is-draw, is-pan. css/style.css defines all of them.
 js/drawstore.js       PLANNER — the uploaded drawing, kept in this browser's IndexedDB so a refresh
                       does not lose it. putDrawing/getDrawing/clearDrawing never throw: a browser
                       without IndexedDB, or a full quota, must cost the user only the drawing.

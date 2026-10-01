@@ -127,6 +127,28 @@ export function handlePoints(rect) {
 }
 
 /**
+ * Which corner handle of `rect`, if any, a PDF-space point is grabbing — 'nw'|'ne'|'se'|'sw', or null
+ * for "not on a handle", which is the caller's cue to MOVE the box instead of resizing it.
+ * `tolPt` is the grab radius in PDF points: the overlay derives it from a pixel radius through the
+ * viewport, so a handle covers the same distance under the finger at every zoom.
+ * Grab areas are square and checked nearest-first, so overlapping areas resolve to the corner the
+ * user aimed at rather than to whichever corner happened to be listed first.
+ */
+export function handleAtPoint(rect, pt, tolPt) {
+  if (!rect || !pt) return null;
+  const tol = Number.isFinite(tolPt) && tolPt > 0 ? tolPt : 0;
+  const handles = handlePoints(rect);
+  let best = null;
+  let bestD = Infinity;
+  for (const name of RESIZE_HANDLES) {
+    const h = handles[name];
+    const d = Math.max(Math.abs(h.x - pt.x), Math.abs(h.y - pt.y));
+    if (d <= tol && d < bestD) { bestD = d; best = name; }
+  }
+  return best;
+}
+
+/**
  * Which room, if any, sits under a PDF-space point on a given page.
  * Smallest-area match wins, so a box drawn inside a big one stays clickable.
  * Skips rooms with no rect (parsed/scheduled rooms have no geometry) and other pages.

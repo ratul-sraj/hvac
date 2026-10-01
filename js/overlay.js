@@ -24,9 +24,36 @@
  *     onDraw,          // (rect, {page}) => void   rect = {x,y,w,h} PDF points; only when usable
  *     onSelect,        // (room|null) => void      click in select mode
  *     onHover,         // (room|null) => void      optional; cursor/label feedback
+ *     onRoomMoved,     // (id, rectPt) => void     LIVE: every pointermove of a move/resize drag
+ *     onRoomMoveEnd,   // (id, rectPt) => void     on release: the app persists here
+ *     onDelete,        // (id) => void             Delete/Backspace with a selection
  *   }) -> Overlay
  *
  *   Overlay: render() | setMode('draw'|'select') | resize() | destroy() | el (the <svg>)
+ *
+ * STAGE 2 (move / resize / delete / pan) — frozen 2026-10-01:
+ *   • This module NEVER writes room state. A drag only calls onRoomMoved(id, rectPt) live and
+ *     onRoomMoveEnd(id, rectPt) once on release; the app decides what to store. So the box follows
+ *     the pointer only if the app applies the reported rect and re-renders.
+ *   • select mode: a pointerdown within HANDLE_PX of a corner of the SELECTED room starts a RESIZE;
+ *     a pointerdown inside any room box body starts a MOVE. The grab test is
+ *     planview.handleAtPoint(), with the pixel radius converted to PDF points through the viewport
+ *     (so a handle covers 9 px at every zoom); the new rect is planview.moveRect()/resizeRect() and
+ *     is clamped with clampRectToPage(). A body drag can never resize and a handle drag can never
+ *     move — the grabbed corner decides, once, at pointerdown.
+ *   • a pointerup within CLICK_SLOP_PX of the pointerdown is still a click: it fires onSelect (the
+ *     Stage-1 behaviour) and never onRoomMoveEnd. Beyond the slop it is a drag: it fires
+ *     onRoomMoveEnd and never onSelect.
+ *   • Delete/Backspace fires onDelete(selectedId) — but only when the focus is not in a text field
+ *     (an <input>/<textarea>/<select> or contenteditable), so a table cell never loses a keystroke.
+ *   • pan (BOTH modes): middle-button drag, or Space held + primary drag. Panning scrolls the
+ *     scroll box (rootEl) itself and emits NO room callback and starts no draft.
+ *   • Escape / pointercancel during a drag restores the rect the drag started from (one more
+ *     onRoomMoved back to the original) and never fires onRoomMoveEnd.
+ *
+ *   class names added by Stage 2: plan-room-handle (+ is-nw/is-ne/is-se/is-sw) on the four corner
+ *   grips of the selected room, is-dragging on a room during a move/resize, is-pan on the overlay
+ *   while panning. Extra DOM: <g class="plan-handles"> inside the selected room's <g class="plan-room">.
  *
  * DOM created inside rootEl:
  *   <svg class="plan-overlay">
@@ -44,6 +71,9 @@
  *   .plan-room-box           { fill:rgba(56,132,255,.18); stroke:#2f6fed; stroke-width:1; }
  *   .plan-room.is-excluded .plan-room-box { fill:rgba(120,120,120,.14); stroke:#8a8a8a; }
  *   .plan-room.is-selected .plan-room-box { stroke:#ff8a00; stroke-width:2.5; }
+ *   .plan-room.is-dragging { cursor:grabbing; }
+ *   .plan-room-handle        { fill:#fff; stroke:#ff8a00; stroke-width:1.5; pointer-events:none; }
+ *   .plan-overlay.is-pan     { cursor:grabbing; }
  *   .plan-room-label         { font:11px system-ui; fill:#12243d; pointer-events:none; }
  *   .plan-draft-box          { fill:rgba(47,111,237,.15); stroke:#2f6fed; stroke-width:1.5;
  *                              stroke-dasharray:5 3; }
@@ -61,15 +91,24 @@ import {
   isDrawnRoom,         // has rect geometry? (parsed/scheduled rooms have none)
   rectToViewBox,       // PDF rect -> SVG box in view pixels, rotation-safe
   viewPointToPdf,      // view pixel -> PDF point
+  handleAtPoint,       // which corner grip a PDF point grabs (the ONLY grab test allowed)
+  moveRect,            // PDF rect moved by a delta
+  resizeRect,          // PDF rect with one corner dragged, opposite corner pinned
+  clampRectToPage,     // keep a PDF rect on the sheet
 } from './planview.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** A pointerup this close (view px) to the pointerdown counts as a click, not a drag. */
 const CLICK_SLOP_PX = 4;
+/** Corner grips: grab radius in view pixels (converted to PDF points through the viewport), and the
+ *  drawn size of the grip square in view pixels. */
+const HANDLE_PX = 9;
+const HANDLE_DRAW_PX = 9;
 /** Labels are hidden rather than drawn illegibly. */
 const MIN_LABEL_PX = 6;
 const MAX_LABEL_PX = 12;
+const HANDLE_NAMES = ['nw', 'ne', 'se', 'sw'];
 
 /** Trim float dust and render a small, stable SVG number. */
 function num(n) {
@@ -88,6 +127,9 @@ export function createOverlay(rootEl, {
   onDraw = null,
   onSelect = null,
   onHover = null,
+  onRoomMoved = null,
+  onRoomMoveEnd = null,
+  onDelete = null,
 } = {}) {
   if (!rootEl) throw new Error('createOverlay: rootEl is required');
 
@@ -113,6 +155,11 @@ export function createOverlay(rootEl, {
   let captureId = null;
   let hoverId = null;
   let destroyed = false;
+  // Stage 2 gesture state.
+  let drag = null;       // { kind:'move'|'resize', id, handle, startRect, startPdf, startView,
+                         //   lastRect, dragged }   — null when no move/resize is in flight
+  let pan = null;        // { startClientX, startClientY, scrollLeft, scrollTop }
+  let spaceHeld = false; // Space is down (pan modifier)
 
   /* ------------------------------------------------------------ helpers */
   function safeString(fn) {
@@ -144,13 +191,75 @@ export function createOverlay(rootEl, {
     if (!d) return null;
     return normalizeRect(d.startPdf, d.endPdf);
   }
+  /** The selected room, but only when it is a drawn room on the current page (else null). */
+  function selectedRoom() {
+    const id = safeCall(getSelectedId);
+    if (id == null) return null;
+    const page = safeCall(getPage) ?? 1;
+    for (const room of safeCall(getRooms) || []) {
+      if (room && String(room.id) === String(id) && isDrawnRoom(room) && room.rect.page === page) return room;
+    }
+    return null;
+  }
+  /** The grab radius of a corner handle, in PDF points: HANDLE_PX view pixels measured through the
+   *  viewport's own scale, so the grip covers the same distance under the finger at every zoom.
+   *  (pdf.js /Rotate is always a multiple of 90°, so a pixel offset maps to an axis-aligned PDF
+   *  offset and one scalar tolerance is exact.) Falls back to matrix probing for a viewport with no
+   *  numeric scale. */
+  function handleTolPt(vp) {
+    const scale = Number(vp && vp.scale);
+    if (Number.isFinite(scale) && scale > 0) return HANDLE_PX / scale;
+    const o = viewPointToPdf(vp, { x: 0, y: 0 });
+    const px = viewPointToPdf(vp, { x: HANDLE_PX, y: 0 });
+    const py = viewPointToPdf(vp, { x: 0, y: HANDLE_PX });
+    const tol = Math.max(Math.abs(px.x - o.x), Math.abs(px.y - o.y),
+      Math.abs(py.x - o.x), Math.abs(py.y - o.y));
+    return tol > 0 ? tol : HANDLE_PX;
+  }
+  /** The page size in PDF points, from the viewport's viewBox (the unrotated PDF box, which is the
+   *  space `rect` lives in). null when it cannot be known — the caller then skips clamping rather
+   *  than guessing a page. */
+  function pageSizeOf(vp) {
+    const vb = vp && vp.viewBox;
+    if (!Array.isArray(vb) || vb.length < 4) return null;
+    const w = Math.abs(Number(vb[2]) - Number(vb[0]));
+    const h = Math.abs(Number(vb[3]) - Number(vb[1]));
+    return (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) ? { width: w, height: h } : null;
+  }
+  /** The element a pan must scroll: the nearest scrollable box at or above rootEl (the plan lives in
+   *  a scroll container, and that is where a grab-pan has to act). rootEl when there is none. */
+  function scrollBox() {
+    let el = rootEl;
+    for (let i = 0; el && i < 6; i += 1) {
+      const cs = typeof getComputedStyle === 'function' ? getComputedStyle(el) : null;
+      const scrolls = cs && /(auto|scroll|overlay)/.test(`${cs.overflow}${cs.overflowX}${cs.overflowY}`);
+      const overflow = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+      if (scrolls && overflow) return el;
+      el = el.parentElement;
+    }
+    return rootEl;
+  }
+  /** Is this element a text-entry field? Delete/Backspace must never be stolen from one. */
+  function isTextEntry(el) {
+    if (!el || el === document) return false;
+    const tag = String(el.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    return el.isContentEditable === true;
+  }
+  function isSpaceKey(e) {
+    return e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
+  }
+  function idOf(room) {
+    return room && room.id != null ? room.id : null;
+  }
 
   /* ---------------------------------------------------------- rendering */
-  function roomShape(room, box, selected) {
+  function roomShape(room, box, selected, dragging) {
     const g = document.createElementNS(SVG_NS, 'g');
     const excluded = room.include === false;
     g.setAttribute('class',
-      'plan-room' + (excluded ? ' is-excluded' : ' is-included') + (selected ? ' is-selected' : ''));
+      'plan-room' + (excluded ? ' is-excluded' : ' is-included')
+      + (selected ? ' is-selected' : '') + (dragging ? ' is-dragging' : ''));
     g.setAttribute('data-room-id', room.id == null ? '' : String(room.id));
     g.setAttribute('data-include', excluded ? 'false' : 'true');
     if (selected) g.setAttribute('data-selected', 'true');
@@ -166,7 +275,35 @@ export function createOverlay(rootEl, {
 
     const label = roomLabel(room, box);
     if (label) g.appendChild(label);
+    // The four corner grips, only on the selected room — the room the resize gesture can act on.
+    // They are drawn from the SAME view box as the outline, and are presentational only: the grab
+    // test is geometric (handleAtPoint on PDF points), never a hit on this DOM.
+    if (selected) g.appendChild(handleShape(box));
     return g;
+  }
+
+  /** The four corner grips of a room's view box, as a <g class="plan-handles">. */
+  function handleShape(box) {
+    const wrap = document.createElementNS(SVG_NS, 'g');
+    wrap.setAttribute('class', 'plan-handles');
+    const half = HANDLE_DRAW_PX / 2;
+    const corners = {
+      nw: { x: box.x, y: box.y },
+      ne: { x: box.x + box.w, y: box.y },
+      se: { x: box.x + box.w, y: box.y + box.h },
+      sw: { x: box.x, y: box.y + box.h },
+    };
+    for (const name of HANDLE_NAMES) {
+      const c = corners[name];
+      const h = document.createElementNS(SVG_NS, 'rect');
+      h.setAttribute('class', `plan-room-handle is-${name}`);
+      h.setAttribute('x', num(c.x - half));
+      h.setAttribute('y', num(c.y - half));
+      h.setAttribute('width', num(HANDLE_DRAW_PX));
+      h.setAttribute('height', num(HANDLE_DRAW_PX));
+      wrap.appendChild(h);
+    }
+    return wrap;
   }
 
   /** The room name, centred in the box — or null when the box cannot fit it. */
@@ -239,7 +376,8 @@ export function createOverlay(rootEl, {
     for (const room of rooms) {
       const box = clampBox(rectToViewBox(vp, room.rect));
       if (box.w <= 0 || box.h <= 0) continue;        // wholly off-page: nothing visible to draw
-      roomsG.appendChild(roomShape(room, box, room.id === selectedId));
+      const dragging = !!drag && drag.dragged && String(drag.id) === String(room.id);
+      roomsG.appendChild(roomShape(room, box, room.id === selectedId, dragging));
     }
     renderDraft(vp);
   }
@@ -342,8 +480,107 @@ export function createOverlay(rootEl, {
   }
 
   /* ------------------------------------------------------------- gestures */
+  /** Middle button, or primary while Space is held: a PAN. Decided before the mode, so a Space-drag
+   *  never starts a draft, and it works in both modes. */
+  function isPanStart(e) {
+    if (e.pointerType === 'mouse' && e.button === 1) return true;
+    return spaceHeld && e.button === 0;
+  }
+
+  function startPan(e) {
+    const box = scrollBox();
+    pan = {
+      box,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      scrollLeft: box.scrollLeft || 0,
+      scrollTop: box.scrollTop || 0,
+    };
+    // Nothing in flight survives a pan: no draft, no move/resize, no selection change.
+    if (draft) cancelDraft();
+    drag = null;
+    downAt = null;
+    setHover(null);
+    svg.classList.add('is-pan');
+    try { svg.setPointerCapture(e.pointerId); captureId = e.pointerId; } catch { /* ignore */ }
+    e.preventDefault?.();
+  }
+
+  function updatePan(e) {
+    if (!pan) return;
+    const box = pan.box || rootEl;
+    box.scrollLeft = pan.scrollLeft - (e.clientX - pan.startClientX);
+    box.scrollTop = pan.scrollTop - (e.clientY - pan.startClientY);
+    e.preventDefault?.();
+  }
+
+  function endPan(e) {
+    if (!pan) return;
+    releaseCapture(e);
+    pan = null;
+    svg.classList.remove('is-pan');
+  }
+
+  /** Begin a move (handle=null) or a resize (handle='nw'|'ne'|'se'|'sw') of one room. */
+  function startDrag(e, kind, room, handle, p, pdf) {
+    drag = {
+      kind,
+      id: idOf(room),
+      handle: handle || null,
+      startRect: { ...room.rect },
+      startPdf: { ...pdf },
+      startView: p,
+      lastRect: { ...room.rect },
+      dragged: false,
+    };
+    downAt = p;
+    try { svg.setPointerCapture(e.pointerId); captureId = e.pointerId; } catch { /* ignore */ }
+    render();
+  }
+
+  /** The rect this drag would produce for a pointer PDF point, clamped to the sheet. moveRect() and
+   *  resizeRect() (planner-owned) do the geometry; the only things added here are the page (a rect
+   *  must stay on its page — resizeRect returns x/y/w/h only) and the clamp. */
+  function dragRect(pdf, vp) {
+    const base = drag.startRect;
+    // resizeRect() returns a bare {x,y,w,h}: put the page back, or the room would leave its page.
+    const rect = drag.kind === 'move'
+      ? moveRect(base, pdf.x - drag.startPdf.x, pdf.y - drag.startPdf.y)
+      : { ...resizeRect(base, drag.handle, pdf), page: base.page };
+    return clampRectToPage(rect, pageSizeOf(vp));
+  }
+
+  function updateDrag(e) {
+    const vp = viewport();
+    if (!vp) return;
+    const p = localPoint(e);
+    if (!drag.dragged) {
+      // Stay a click until the pointer actually leaves the click slop — a twitch on a room body
+      // must still select it, not emit a 1 px move.
+      if (Math.abs(p.x - drag.startView.x) <= CLICK_SLOP_PX
+        && Math.abs(p.y - drag.startView.y) <= CLICK_SLOP_PX) return;
+      drag.dragged = true;
+    }
+    const rect = dragRect(viewPointToPdf(vp, p), vp);
+    drag.lastRect = rect;
+    safeCall(onRoomMoved, drag.id, rect);   // live: every pointermove, no persistence here
+    render();
+  }
+
+  /** Abandon a drag: put the app's rect back, and never fire onRoomMoveEnd. */
+  function cancelDrag() {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    downAt = null;
+    releaseCapture();
+    if (d.dragged) safeCall(onRoomMoved, d.id, { ...d.startRect });
+    render();
+  }
+
   function onPointerDown(e) {
     if (destroyed) return;
+    if (isPanStart(e)) { startPan(e); return; }
     // mouse only reacts to the primary button; touch/pen have button 0 too
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (mode === 'draw') {
@@ -351,12 +588,33 @@ export function createOverlay(rootEl, {
       startDraft(e);
       return;
     }
-    downAt = localPoint(e);
+    // select mode
+    const vp = viewport();
+    const p = localPoint(e);
+    if (!vp) {
+      downAt = p;
+      try { svg.setPointerCapture(e.pointerId); captureId = e.pointerId; } catch { /* ignore */ }
+      return;
+    }
+    const pdf = viewPointToPdf(vp, p);
+    // 1. a corner of the SELECTED room → resize. The grab test is planview.handleAtPoint() with the
+    //    pixel radius converted to PDF points through the viewport; never re-derived here.
+    const selected = selectedRoom();
+    const handle = selected ? handleAtPoint(selected.rect, pdf, handleTolPt(vp)) : null;
+    if (handle) { startDrag(e, 'resize', selected, handle, p, pdf); return; }
+    // 2. the body of any drawn room → move. The grabbed target decides once, so a body drag can
+    //    never resize and vice versa.
+    const room = roomAtPoint(safeCall(getRooms) || [], safeCall(getPage) ?? 1, pdf);
+    if (room && isDrawnRoom(room)) { startDrag(e, 'move', room, null, p, pdf); return; }
+    // 3. empty sheet: the Stage-1 click-to-select / click-to-deselect path
+    downAt = p;
     try { svg.setPointerCapture(e.pointerId); captureId = e.pointerId; } catch { /* ignore */ }
   }
 
   function onPointerMove(e) {
     if (destroyed) return;
+    if (pan) { updatePan(e); return; }
+    if (drag) { updateDrag(e); return; }
     if (mode === 'draw') {
       if (draft) updateDraft(e);
       return;
@@ -368,45 +626,94 @@ export function createOverlay(rootEl, {
 
   function onPointerUp(e) {
     if (destroyed) return;
-    if (mode === 'draw') { finishDraft(e); return; }
+    if (pan) { endPan(e); return; }
     const p = localPoint(e);
+    const vp = viewport();
+    const roomUnder = () => (vp
+      ? roomAtPoint(safeCall(getRooms) || [], safeCall(getPage) ?? 1, viewPointToPdf(vp, p))
+      : null);
+
+    if (drag) {
+      const d = drag;
+      drag = null;
+      downAt = null;
+      releaseCapture(e);
+      const room = roomUnder();
+      if (d.dragged) {
+        // a real drag: report the final rect for persistence, never a selection change
+        safeCall(onRoomMoveEnd, d.id, d.lastRect);
+      } else {
+        // no movement beyond the slop: it was a click — exactly the Stage-1 behaviour
+        safeCall(onSelect, room || null);
+      }
+      setHover(room || null);
+      render();
+      return;
+    }
+
+    if (mode === 'draw') { finishDraft(e); return; }
     releaseCapture(e);
     const wasClick = downAt
       && Math.abs(p.x - downAt.x) <= CLICK_SLOP_PX
       && Math.abs(p.y - downAt.y) <= CLICK_SLOP_PX;
     downAt = null;
     if (!wasClick) return;
-    const vp = viewport();
-    const room = vp
-      ? roomAtPoint(safeCall(getRooms) || [], safeCall(getPage) ?? 1, viewPointToPdf(vp, p))
-      : null;
+    const room = roomUnder();
     safeCall(onSelect, room || null);
     setHover(room || null);
   }
 
   function onPointerCancel(e) {
     if (destroyed) return;
+    if (pan) { endPan(e); return; }
+    if (drag) { cancelDrag(); return; }
     if (mode === 'draw') { cancelDraft(); return; }
     releaseCapture(e);
     downAt = null;
   }
 
   function onKeyDown(e) {
-    if (e.key === 'Escape' && draft) cancelDraft();
+    if (destroyed) return;
+    if (e.key === 'Escape') {
+      if (drag) cancelDrag();
+      else if (draft) cancelDraft();
+      return;
+    }
+    if (isSpaceKey(e)) {
+      // Space is the pan modifier. Never steal it from a text field.
+      if (!isTextEntry(document.activeElement)) spaceHeld = true;
+      return;
+    }
+    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+    // NEVER steal Delete from a text field or a contenteditable cell.
+    if (isTextEntry(document.activeElement) || isTextEntry(e.target)) return;
+    if (drag || pan) return;                    // mid-gesture: a stray Delete does nothing
+    const id = safeCall(getSelectedId);
+    if (id == null) return;
+    e.preventDefault?.();                       // Backspace must not act as "go back"
+    safeCall(onDelete, id);
   }
+
+  function onKeyUp(e) {
+    if (isSpaceKey(e)) spaceHeld = false;
+  }
+  function onWindowBlur() { spaceHeld = false; }
 
   svg.addEventListener('pointerdown', onPointerDown);
   svg.addEventListener('pointermove', onPointerMove);
   svg.addEventListener('pointerup', onPointerUp);
   svg.addEventListener('pointercancel', onPointerCancel);
-  svg.addEventListener('pointerleave', () => { if (mode !== 'draw') setHover(null); });
+  svg.addEventListener('pointerleave', () => { if (mode !== 'draw' && !drag && !pan) setHover(null); });
   window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onWindowBlur);
 
   /* --------------------------------------------------------------- public */
   function setMode(m) {
     mode = m === 'draw' ? 'draw' : 'select';
     svg.classList.toggle('is-draw', mode === 'draw');
     svg.classList.toggle('is-select', mode !== 'draw');
+    cancelDrag();
     cancelDraft();
     setHover(null);
     render();
@@ -418,13 +725,19 @@ export function createOverlay(rootEl, {
     if (observer) { try { observer.disconnect(); } catch { /* nothing to do */ } observer = null; }
     observed = null;
     window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('blur', onWindowBlur);
     svg.removeEventListener('pointerdown', onPointerDown);
     svg.removeEventListener('pointermove', onPointerMove);
     svg.removeEventListener('pointerup', onPointerUp);
     svg.removeEventListener('pointercancel', onPointerCancel);
     releaseCapture();
     draft = null;
+    drag = null;
+    pan = null;
+    spaceHeld = false;
     downAt = null;
+    svg.classList.remove('is-pan');
     if (svg.parentNode) svg.parentNode.removeChild(svg);
   }
 

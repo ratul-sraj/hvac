@@ -208,6 +208,26 @@ applies to it.
 Switch to **Select / edit** and click a room box. The selected box gets a **thicker red outline** and
 that room's **load breakdown** opens, ready to edit. Press `Esc` to close it.
 
+### Move, resize and delete a drawn room
+
+In **Select / edit** you work on the box directly, and the table stays in step as you go:
+
+- **Move** — drag the body of a box. The box follows your pointer and its **area does not change**;
+  only its place on the sheet moves.
+- **Resize** — drag one of the four **corner handles** of the selected box. A drawn room's area is
+  measured from its rectangle, so resizing it **re-measures the room**: its area and its
+  length × width are recalculated from the new rectangle at the drawing scale, the **Area m²** cell in
+  the table updates, and the **total cooling load** and the other summary figures follow it.
+- **Delete** — select a box and press `Delete` (or `Backspace`), or use the **×** at the end of the
+  row. The room leaves the table and the totals. The keystroke is ignored while the focus is in a
+  table cell, so typing in a cell never deletes a room by accident.
+- **Pan** — when the sheet is zoomed past the width of the panel it scrolls. Drag with the **middle
+  mouse button**, or hold **Space** and drag, to pan.
+
+A move or a resize is saved with the project automatically (it is part of the same local storage and
+**Save project (.json)** file as everything else), so the box is still where you put it after a
+reload.
+
 ### Changing the scale re-measures the rooms you drew
 
 A drawn room's area is derived from its rectangle, so it keeps the scale it was measured at. **Change
