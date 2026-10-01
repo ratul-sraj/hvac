@@ -36,6 +36,30 @@ try {
 }
 await page.setViewport({ width: 1400, height: 1000 });
 
+// ---- deterministic location auto-detect ------------------------------------------------
+// The app asks a free IP-geolocation service on a first visit (js/climates.js + autoDetectClimate
+// in js/app.js). The checks below must not depend on where this machine happens to sit, and the
+// 363.86 TR sample baseline assumes the default Kochi 35/28 conditions — so the geo endpoints are
+// INTERCEPTED for the whole run. `geoResponse`/`geoFail` are re-set by the location checks further
+// down; for the main run they answer "Kochi, Kerala, India", i.e. exactly the app's defaults, so
+// the pre-fill changes nothing.
+let geoResponse = { country: "India", region: "Kerala", city: "Kochi" };
+let geoFail = false;
+await page.setRequestInterception(true);
+page.on("request", (req) => {
+  const u = req.url();
+  if (u.startsWith("https://ipwho.is/") || u.startsWith("https://ipapi.co/")) {
+    if (geoFail) { req.abort("failed"); return; }
+    req.respond({
+      status: 200, contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify(geoResponse),
+    });
+    return;
+  }
+  req.continue();
+});
+
 const consoleErrors = [];
 // A static host (GitHub Pages) has no /api/health, so the app's own availability probe
 // legitimately 404s there; browsers log that as a console error. It is not a page fault.
@@ -1636,6 +1660,98 @@ if (!sampleMissing) {
     await new Promise((r) => setTimeout(r, 400));
   }
 } // end of the checks that need the sample drawing
+
+  // ---- Location-aware design conditions -----------------------------------------------
+  // autoDetectClimate() in js/app.js asks the (mocked, see the request interception above) geo
+  // endpoint once per visitor, maps country/region/city through js/climates.js and pre-fills the
+  // outdoor design conditions of a FIRST visit. Saved values are never overwritten, the chip is
+  // dismissible per location, and a blocked lookup falls back to the timezone at country level.
+  {
+    const snapGeo = () => page.evaluate(() => ({
+      db: document.getElementById("proj-outDb").value,
+      wb: document.getElementById("proj-outWb").value,
+      country: document.getElementById("proj-country").value,
+      city: document.getElementById("proj-city").value,
+      hidden: document.getElementById("geoNote").classList.contains("hidden"),
+      chip: document.getElementById("geoNote").innerText.replace(/\s+/g, " ").trim(),
+      acts: [...document.querySelectorAll("#geoNote [data-act]")].map((b) => b.getAttribute("data-act")),
+      status: document.getElementById("statusBox").className,
+    }));
+    const clearStore = () => page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    const waitChip = () => page.waitForSelector("#geoNote:not(.hidden)", { timeout: 15000 }).catch(() => {});
+    const waitStable = (ms = 1200) => new Promise((r) => setTimeout(r, ms));
+
+    // (a) first visit: a known city is detected -> the empty fields are filled AND a chip says so
+    geoResponse = { country: "India", region: "Delhi", city: "Delhi" };
+    geoFail = false;
+    await clearStore();
+    await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
+    await waitChip();
+    const a = await snapGeo();
+    ok("a detected city pre-fills the empty design conditions (Delhi 43/24)",
+      Number(a.db) === 43 && Number(a.wb) === 24, `DB=${a.db} WB=${a.wb}`);
+    ok("a dismissible detection chip appears and asks the user to verify",
+      !a.hidden && /Detected/.test(a.chip) && /[Vv]erify/.test(a.chip) && /ISHRAE|ASHRAE/.test(a.chip),
+      a.chip.slice(0, 150));
+    ok("the chip names the place and offers Change",
+      /Delhi/.test(a.chip) && /India/.test(a.chip) && a.acts.includes("change") && a.acts.includes("dismiss"),
+      a.chip.slice(0, 150));
+
+    // (b) dismissing the chip remembers it for that location, across a reload
+    await page.click('#geoNote [data-act="dismiss"]');
+    await waitStable(250);
+    await page.reload({ waitUntil: "networkidle2" });
+    await waitStable();
+    const b = await snapGeo();
+    ok("a dismissed chip stays dismissed for that location on reload", b.hidden === true,
+      b.chip || "(chip hidden)");
+    ok("dismissing does not undo the filled values", Number(b.db) === 43 && Number(b.wb) === 24,
+      `DB=${b.db} WB=${b.wb}`);
+
+    // (c) a saved project's own values are never overwritten — the chip offers an Apply button
+    geoResponse = { country: "India", region: "Karnataka", city: "Bengaluru" };
+    geoFail = false;
+    await clearStore();
+    await page.evaluate(() => localStorage.setItem("webhvac.state.v1", JSON.stringify({
+      v: 1, project: { name: "My Project", country: "India", city: "Mumbai", outDb: 36, outWb: 28, inDb: 24, inRh: 50 }, rooms: [],
+    })));
+    await page.goto(URL_, { waitUntil: "networkidle2" });
+    await waitChip();
+    const c = await snapGeo();
+    ok("saved design conditions are never overwritten by the detection",
+      Number(c.db) === 36 && Number(c.wb) === 28 && c.city === "Mumbai",
+      `DB=${c.db} WB=${c.wb} city=${c.city}`);
+    ok("a saved project gets a [Use detected values] button, not a silent overwrite",
+      c.acts.includes("apply") && /left alone/.test(c.chip), c.chip.slice(0, 150));
+    await page.click('#geoNote [data-act="apply"]');
+    await waitStable(300);
+    const c2 = await snapGeo();
+    ok("Use detected values applies the suggestion on request",
+      Number(c2.db) === 34 && Number(c2.wb) === 22 && c2.city === "Bengaluru",
+      `DB=${c2.db} WB=${c2.wb} city=${c2.city}`);
+
+    // (d) a blocked lookup falls back to the timezone (country level) and shows no error
+    geoFail = true;
+    await clearStore();
+    const peBefore = consoleErrors.filter((t) => t.startsWith("pageerror:")).length;
+    await page.goto(URL_, { waitUntil: "networkidle2" });
+    await waitChip();
+    await waitStable(1500);
+    const d = await snapGeo();
+    const peAfter = consoleErrors.filter((t) => t.startsWith("pageerror:")).length;
+    ok("a blocked geo lookup still suggests, from the timezone, at country level (India 40/26)",
+      Number(d.db) === 40 && Number(d.wb) === 26, `DB=${d.db} WB=${d.wb} chip="${d.chip.slice(0, 90)}"`);
+    ok("the timezone fallback is labelled a country-level match",
+      /country-level match/i.test(d.chip), d.chip.slice(0, 150));
+    ok("a blocked geo lookup surfaces no error to the user",
+      !/\berr\b/.test(d.status), d.status || "(no status class)");
+    ok("a blocked geo lookup raises no page error", peAfter === peBefore,
+      `pageerrors ${peBefore} -> ${peAfter}`);
+
+    // leave the interception in a neutral state for the checks that follow
+    geoFail = false;
+    geoResponse = { country: "India", region: "Kerala", city: "Kochi" };
+  }
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });

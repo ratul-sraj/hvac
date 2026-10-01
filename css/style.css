@@ -104,6 +104,23 @@ details.adv > summary::marker { content: ""; }
 details.adv > summary::before { content: "\25B8 "; }
 details.adv[open] > summary::before { content: "\25BE "; }
 
+/* ---------- location auto-detect chip (#geoNote) ---------- */
+/* A small, dismissible notice under the design-condition fields. It states where the suggested
+   values came from and that they are a starting point to verify — never an engineering result. */
+.geo-note {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  margin: 10px 0 4px; padding: 9px 12px;
+  background: var(--accent-soft); border: 1px solid #cfe0f2; border-left: 3px solid var(--accent);
+  border-radius: var(--radius); color: var(--ink-soft); font-size: 13px; line-height: 1.45;
+}
+.geo-note strong { color: var(--ink); font-weight: 600; }
+.geo-note .geo-text { flex: 1 1 auto; }
+.geo-note .geo-actions { display: flex; gap: 8px; flex: none; align-self: center; }
+@media (max-width: 640px) {
+  .geo-note { flex-direction: column; }
+  .geo-note .geo-actions { align-self: flex-start; }
+}
+
 /* ---------- buttons ---------- */
 .btn {
   font: inherit;

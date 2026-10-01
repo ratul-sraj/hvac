@@ -458,6 +458,31 @@
           </p>
         </details>
 
+        <details>
+          <summary>LoadLens filled in the design conditions by itself — where did those numbers come from?</summary>
+          <p>
+            On a <b>first visit</b> the app fills the outdoor <b>dry bulb</b> and <b>wet bulb</b> for you,
+            if those two fields are still empty. It makes <b>one</b> free location lookup (a country,
+            region and city only — no key, no account, and nothing about your drawing), maps it through a
+            small editable table, and puts the result in the fields. A small chip then says what it
+            detected, for example <em>"Detected Kochi, Kerala, India — design conditions filled"</em>, and
+            asks you to verify it.
+          </p>
+          <p>
+            Please do verify: the table holds <b>indicative</b> ISHRAE/ASHRAE-style summer design values
+            and is only a starting point. Check them against ISHRAE / ASHRAE or your local code before you
+            use the result. The table lives in <code>js/climates.js</code> and is meant to be edited.
+          </p>
+          <p>
+            Your own numbers always win. If you already have a saved project, the app <b>never</b>
+            overwrites it — the chip offers a <b>Use detected values</b> button instead, and typing in a
+            field by hand always takes precedence. The chip is dismissible and will not come back for that
+            place. If the location lookup is blocked or you are offline, the app falls back to your
+            timezone or browser language and offers at most a <b>country-level</b> value; if it cannot work
+            out even a country, it leaves your fields exactly as they were.
+          </p>
+        </details>
+
       </div>
     </div>
   </section>

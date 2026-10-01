@@ -17,6 +17,9 @@ import {
 // SAME scale conversion the placed rectangles use) and the simplicity test that lets the app refuse
 // a self-crossing or zero-area shape. No DOM, so it is loaded with the app, not on demand.
 import { polyAreaM2, ringIsUsable, ringBBox, roundRing } from './polyshape.js';
+// The location -> design-conditions table and its resolver (js/climates.js): pure data + a pure
+// lookup, loaded with the app. The auto-detect wiring below uses it; nothing here touches the DOM.
+import { resolveClimate, countryFromTimezone, countryFromLocale, locationKey } from './climates.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -151,6 +154,8 @@ const el = {
   planHint: $('#planHint'),
   planStatus: $('#planStatus'),
   planScaleFix: $('#planScaleFix'),
+  projectPanel: $('#projectPanel'),
+  geoNote: $('#geoNote'),
   reportView: $('#reportView'),
   reportFrame: $('#reportFrame'),
   reportPrint: $('#reportPrint'),
@@ -350,6 +355,216 @@ function checkCustomClimate() {
   state.project.city = 'Custom';
   projInput('country').value = 'Custom';
   fillCitySelect();
+}
+
+/* ------------------------------------------------------------------ */
+/* location-aware design conditions (auto-detect, once per visitor)    */
+/* ------------------------------------------------------------------ */
+// On a first visit the outdoor design conditions are pre-filled from a free IP-geolocation lookup,
+// mapped through the EDITABLE table in js/climates.js. The rules, in order of importance:
+//   * saved values are never overwritten — the chip offers a [Use detected values] button instead;
+//   * manual edits always win;
+//   * the chip is dismissible, and stays dismissed for that location;
+//   * offline / blocked / unknown location falls back to the timezone or locale (country level),
+//     and if even that names nothing the fields are left exactly as they were.
+// The lookup result is cached for 30 days. The page works fully with the network off.
+
+const GEO_CACHE_KEY = 'webhvac.geo.v1';       // the 30-day IP-lookup cache
+const GEO_DISMISS_KEY = 'webhvac.geo.dismissed.v1'; // the locations the visitor said "no thanks" to
+const GEO_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const GEO_TIMEOUT_MS = 7000;
+
+let geoRan = false;            // the whole dance runs at most once per page load
+let hadStoredProject = false;  // was there a saved project when the page started?
+
+function readGeoCache() {
+  try {
+    const raw = localStorage.getItem(GEO_CACHE_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || typeof d !== 'object') return null;
+    if (!Number.isFinite(d.ts) || (Date.now() - d.ts) > GEO_TTL_MS) return null;
+    if (!d.country && !d.region && !d.city) return null;
+    return { country: String(d.country || ''), region: String(d.region || ''), city: String(d.city || ''), source: String(d.source || 'ip') };
+  } catch (e) { return null; }   // storage blocked: behave as if there were no cache
+}
+
+function writeGeoCache(loc) {
+  try {
+    localStorage.setItem(GEO_CACHE_KEY, JSON.stringify({
+      ts: Date.now(), country: loc.country, region: loc.region, city: loc.city, source: loc.source,
+    }));
+  } catch (e) { /* storage full or blocked: not fatal */ }
+}
+
+function geoDismissed() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(GEO_DISMISS_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+
+function isDismissedFor(loc) {
+  return geoDismissed().includes(locationKey(loc.country, loc.region, loc.city));
+}
+
+function rememberDismissed(loc) {
+  const key = locationKey(loc.country, loc.region, loc.city);
+  const arr = geoDismissed();
+  if (!arr.includes(key)) arr.push(key);
+  try { localStorage.setItem(GEO_DISMISS_KEY, JSON.stringify(arr.slice(-25))); } catch (e) { /* not fatal */ }
+}
+
+function geoAbortSignal() {
+  try {
+    return (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
+      ? AbortSignal.timeout(GEO_TIMEOUT_MS) : undefined;
+  } catch (e) { return undefined; }
+}
+
+async function geoFetchJson(url) {
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json' }, signal: geoAbortSignal(), credentials: 'omit', cache: 'no-store',
+  });
+  if (!res || !res.ok) throw new Error('geo HTTP ' + (res && res.status));
+  return res.json();
+}
+
+// Two free, keyless, HTTPS + CORS endpoints. ipwho.is first; ipapi.co if it is unreachable.
+// Verified response shapes (see docs/USER-GUIDE.md): ipwho.is -> { country, region, city, success };
+// ipapi.co -> { country_name, region, city, error }.
+async function detectFromIp() {
+  try {
+    const d = await geoFetchJson('https://ipwho.is/');
+    if (d && d.success !== false && (d.country || d.region || d.city)) {
+      return { country: d.country || '', region: d.region || '', city: d.city || '', source: 'ipwho.is' };
+    }
+  } catch (e) { /* offline, blocked or rate-limited: fall through */ }
+  try {
+    const d = await geoFetchJson('https://ipapi.co/json/');
+    if (d && !d.error && (d.country_name || d.region || d.city)) {
+      return { country: d.country_name || '', region: d.region || '', city: d.city || '', source: 'ipapi.co' };
+    }
+  } catch (e) { /* nothing either: the caller falls back to the locale */ }
+  return null;
+}
+
+// The offline fallback: name a country from the browser's own clock/locale. It only ever yields a
+// COUNTRY, so the suggestion can only ever be a country-level one — no city is ever assumed.
+function detectFromLocale() {
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { tz = ''; }
+  const byTz = countryFromTimezone(tz);
+  if (byTz) return { country: byTz, region: '', city: '', source: 'timezone' };
+  let lang = '';
+  try { lang = (typeof navigator !== 'undefined' && navigator.language) || ''; } catch (e) { lang = ''; }
+  const byLocale = countryFromLocale(lang);
+  if (byLocale) return { country: byLocale, region: '', city: '', source: 'locale' };
+  return null;
+}
+
+function outdoorFieldsEmpty() {
+  const empty = (i) => !i || String(i.value).trim() === '';
+  return empty(projInput('outDb')) && empty(projInput('outWb'));
+}
+
+// Put the suggestion into the fields. A detected city the app's own country list knows is selected
+// properly so the two dropdowns stay consistent; anything else (e.g. London, which has no row in
+// the older js/calc.js list) is marked 'Custom', so the pair is honoured exactly as suggested
+// rather than silently relabelled as some other city's climate.
+function applyDetectedClimate(match, loc) {
+  const known = loc.city ? CLIMATES[loc.city] : null;
+  if (known) {
+    state.project.country = known.country;
+    state.project.city = loc.city;
+  } else {
+    state.project.country = 'Custom';
+    state.project.city = 'Custom';
+  }
+  state.project.outDb = match.db;
+  state.project.outWb = match.wb;
+  syncProjectInputs();
+  renderAll();
+  if (state.ui.openId) renderDetail(currentCalc());
+  saveNow();
+}
+
+function detectedLabel(loc, match) {
+  const bits = [];
+  if (match.matched === 'city' && loc.city) bits.push(loc.city);
+  if (match.matched !== 'country' && loc.region) bits.push(loc.region);
+  if (loc.country) bits.push(loc.country);
+  return bits.filter(Boolean).join(', ');
+}
+
+const GEO_LEVEL_NOTE = { region: ' (region-level match)', country: ' (country-level match)' };
+
+function hideGeoNote() {
+  if (!el.geoNote) return;
+  el.geoNote.classList.add('hidden');
+  el.geoNote.innerHTML = '';
+}
+
+// mode === 'filled': the fields were empty, so the suggestion is already IN them.
+// mode === 'offer':  saved values were left alone; the visitor can apply the suggestion on request.
+function showGeoNote(loc, match, mode) {
+  if (!el.geoNote) return;
+  const place = detectedLabel(loc, match) || loc.country || 'your location';
+  const level = GEO_LEVEL_NOTE[match.matched] || '';
+  const head = mode === 'filled'
+    ? `Detected <strong>${esc(place)}${esc(level)}</strong> — design conditions filled from an editable table.`
+    : `Detected <strong>${esc(place)}${esc(level)}</strong>. Your saved design conditions were left alone.`;
+  const verify = ' Verify against ISHRAE / ASHRAE before engineering use.';
+  const action = mode === 'filled'
+    ? '<button type="button" class="btn btn-small btn-ghost" data-act="change">Change</button>'
+    : '<button type="button" class="btn btn-small" data-act="apply">Use detected values</button>';
+  el.geoNote.innerHTML =
+    `<span class="geo-text">${head}${verify}</span>` +
+    `<span class="geo-actions">${action}` +
+    `<button type="button" class="btn btn-small btn-ghost" data-act="dismiss">Dismiss</button></span>`;
+  el.geoNote.classList.remove('hidden');
+
+  const change = el.geoNote.querySelector('[data-act="change"]');
+  if (change) change.addEventListener('click', () => {
+    const i = projInput('outDb');
+    if (i) { i.focus(); if (i.select) i.select(); }
+  });
+  const applyBtn = el.geoNote.querySelector('[data-act="apply"]');
+  if (applyBtn) applyBtn.addEventListener('click', () => {
+    applyDetectedClimate(match, loc);
+    rememberDismissed(loc);   // done for this location: do not nag again
+    hideGeoNote();
+    setStatus('ok', `Design conditions set to ${place} — ${match.db} °C DB / ${match.wb} °C WB.`);
+  });
+  const dismiss = el.geoNote.querySelector('[data-act="dismiss"]');
+  if (dismiss) dismiss.addEventListener('click', () => { rememberDismissed(loc); hideGeoNote(); });
+}
+
+async function autoDetectClimate() {
+  if (geoRan) return;
+  geoRan = true;
+  try {
+    let loc = readGeoCache();
+    let match = loc ? resolveClimate(loc.country, loc.region, loc.city) : null;
+    if (!match || !match.matched) {
+      const ip = await detectFromIp();
+      if (ip) { writeGeoCache(ip); loc = ip; match = resolveClimate(ip.country, ip.region, ip.city); }
+    }
+    if (!match || !match.matched) {
+      const fb = detectFromLocale();
+      if (fb) { loc = fb; match = resolveClimate(fb.country, fb.region, fb.city); }
+    }
+    if (!loc || !match || !match.matched || !Number.isFinite(match.db) || !Number.isFinite(match.wb)) return;
+    if (isDismissedFor(loc)) return;
+    if (!hadStoredProject || outdoorFieldsEmpty()) {
+      applyDetectedClimate(match, loc);
+      showGeoNote(loc, match, 'filled');
+    } else {
+      showGeoNote(loc, match, 'offer');
+    }
+  } catch (e) {
+    /* Detection is a convenience, never a requirement: any failure leaves the page untouched. */
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2837,12 +3052,14 @@ function wire() {
 function start() {
   fillCountrySelect();
   const restored = loadStored();
+  hadStoredProject = restored;
   syncProjectInputs();
   wire();
   renderAll();
   updateParseWhere(); // the browser text until the one-time check answers
   probeServer();      // asks the server if it is there; never blocks the page
   restoreDrawing();   // put back the drawing this browser kept for us; never blocks either
+  autoDetectClimate(); // one free IP lookup -> the editable table -> pre-fill, if it is a first visit
   if (restored && state.rooms.length) {
     setStatus('ok', `Restored your last work from this browser: ${state.rooms.length} room(s).`);
   } else {

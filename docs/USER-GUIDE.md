@@ -59,6 +59,19 @@ see [section 5](#5-design-conditions-and-assumptions) for what each one does.
 
 Everything recalculates as you type. You do not need to press any "calculate" button.
 
+**Where do the design conditions come from?** On a first visit the app tries to fill them for you.
+It makes one free IP-location lookup (country / region / city only — no key, no account, nothing
+about your drawing), maps it through a small editable table in `js/climates.js`, and fills the
+outdoor DB/WB **if they are still empty**. A small chip then appears under the fields: *"Detected
+&lt;place&gt; — design conditions filled. Verify before engineering use."* Those numbers are a
+starting point only — check them against ISHRAE / ASHRAE / your local code before you use the
+result. **Your own values always win:** if you already have a saved project, the app never
+overwrites them; the chip instead offers a **Use detected values** button. Dismiss the chip and it
+will not come back for that place. With the network off (or the lookup blocked) the app falls back
+to your timezone/locale and offers at most a **country-level** suggestion; if it cannot name even a
+country, it leaves the fields exactly as they were. See
+section 5 for the detail.
+
 ### Step 2 — upload the drawing
 
 Drag a file onto the dashed box (or click it and choose the file). The drop zone accepts:
@@ -487,6 +500,29 @@ and roof build-ups in the architectural drawing.
 | Outdoor wet bulb (°C) | 28 | Coincident WB. The gap between DB and WB is the **latent** load of the fresh air; a humid place (Kochi 35/28) has much more latent load than a dry one (Delhi 43/24) |
 | Indoor dry bulb (°C) | 24 | Room set point |
 | Indoor RH (%) | 50 | Room relative humidity → indoor humidity ratio |
+
+#### Where do the suggested design conditions come from?
+
+The app can pre-fill the outdoor DB/WB on a **first visit** by detecting where you are. It asks a
+free IP-geolocation service (no key, no account) once, caches the answer in your browser for 30
+days, and maps the country / region / city through the editable table in **`js/climates.js`**
+(`CLIMATE_TABLE`). It fills the fields only when they are empty, then shows a dismissible chip:
+*"Detected Kochi, Kerala, India — design conditions filled. Verify before engineering use."* A match
+may be at city, region or country level; when it is coarser than a city the chip says so
+("country-level match"). The table is **data, not logic** — edit the numbers freely.
+
+Two honesty rules are baked in:
+
+* **Saved values are never overwritten.** If you already have a project, the chip carries a **Use
+  detected values** button instead of touching your fields. Manual edits always win.
+* **Nothing is invented.** An unknown place, a blocked lookup or no network at all means the app
+  falls back to your timezone or browser locale and offers at most a country-level value; if even
+  that names nothing, the fields are left exactly as they were.
+
+The numbers are indicative ISHRAE/ASHRAE-style summer design values and **must be verified against
+ISHRAE / ASHRAE / the local code before any engineering use.** The engine's own warnings for
+impossible conditions (wet bulb above dry bulb, outdoor not above indoor, RH over 100 %) still fire
+normally on whatever ends up in the fields.
 
 ### Construction and system assumptions
 
