@@ -531,6 +531,34 @@ if (!sampleMissing) {
   const planZoom = Number(await page.$eval("#planZoomPct", (e) => e.textContent)) / 100;
   ok("the drawing is fitted to the panel width", planZoom > 0.1 && planZoom < 3, `scale ${planZoom}`);
 
+  // 13b. ONE drawing tool, TWO gestures. The redundant 'Draw room' mode is retired: Draw shape is
+  //      now the only drawing mode and understands a DRAG (a rectangle, exactly what Draw room did)
+  //      as well as a CLICK (a polygon corner). The shipped markup is read straight from disk, so
+  //      this does not depend on whatever mode a previous run left saved in this browser.
+  {
+    const appHtml = fs.readFileSync("app.html", "utf8");
+    ok("the retired 'Draw room' mode is gone from app.html",
+      !/id="planModeDraw"/.test(appHtml) && !/name="planMode"[^>]*value="draw"/.test(appHtml),
+      /id="planModeDraw"/.test(appHtml) ? "planModeDraw still present" : "no Draw room control");
+    ok("app.html ships Draw shape as the checked mode, with Select / edit beside it",
+      /id="planModeShape"[^>]*\bchecked\b/.test(appHtml)
+        && /id="planModeSelect"/.test(appHtml) && !/id="planModeSelect"[^>]*\bchecked\b/.test(appHtml),
+      "shape checked by default");
+    await page.click("#planModeShape");
+    await new Promise((r) => setTimeout(r, 200));
+    const liveModes = await page.evaluate(() => ({
+      radios: document.querySelectorAll('input[name="planMode"]').length,
+      draw: !!document.getElementById("planModeDraw"),
+      shape: document.getElementById("planModeShape").checked,
+      select: document.getElementById("planModeSelect").checked,
+      mode: window.webhvac.state.ui.planMode,
+    }));
+    ok("the live panel offers only Draw shape and Select / edit",
+      liveModes.radios === 2 && !liveModes.draw && liveModes.shape && !liveModes.select
+        && liveModes.mode === "shape",
+      JSON.stringify(liveModes));
+  }
+
   const readTotalTr = () => page.$eval("#summaryCards", (e) => {
     const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
     return m ? parseFloat(m[1]) : NaN;
@@ -594,7 +622,7 @@ if (!sampleMissing) {
   const detailShown = await page.evaluate(() => !document.getElementById("detailPanel").classList.contains("hidden"));
   ok("clicking a box in select mode opens that room's breakdown", selectedBoxes === 1 && detailShown,
       `${selectedBoxes} selected, breakdown open: ${detailShown}`);
-  await page.click("#planModeDraw");
+  await page.click("#planModeShape");
 
   // the drawn room is part of the load, not just the table
   const trWithPlan = await readTotalTr();
@@ -912,6 +940,156 @@ if (!sampleMissing) {
       const b = await panelBox();
       return { x: b.x + fx * b.w, y: b.y + fy * b.h };
     };
+
+    // ---- (b0) the merged tool: a DRAG draws a rectangle, a CLICK adds a corner, and a saved
+    //           'draw' mode migrates silently to 'shape'. Runs before the polygon checks so the row
+    //           count they capture already includes the rectangle drawn here.
+    {
+      // (i) migration: a project saved carrying the retired 'draw' mode must open on Draw shape
+      await page.evaluate(() => {
+        const h = window.webhvac;
+        localStorage.setItem("webhvac.state.v1", JSON.stringify({
+          v: 1, project: h.state.project, rooms: h.state.rooms, ui: { planMode: "draw" },
+        }));
+      });
+      await page.reload({ waitUntil: "load", timeout: 90000 });
+      await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+        { timeout: 120000, polling: 400 });
+      await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
+        { timeout: 60000, polling: 400 }).catch(() => {});
+      await sleep2(800);
+      const migrated = await page.evaluate(() => ({
+        mode: window.webhvac.state.ui.planMode,
+        shape: document.getElementById("planModeShape").checked,
+        select: document.getElementById("planModeSelect").checked,
+        draw: !!document.getElementById("planModeDraw"),
+      }));
+      ok("a saved plan mode of 'draw' loads silently as Draw shape",
+        migrated.mode === "shape" && migrated.shape && !migrated.select && !migrated.draw,
+        JSON.stringify(migrated));
+
+      // (ii) a load with NO stored mode still opens on Draw shape — the shipped default
+      await page.evaluate(() => {
+        const h = window.webhvac;
+        localStorage.setItem("webhvac.state.v1",
+          JSON.stringify({ v: 1, project: h.state.project, rooms: h.state.rooms }));
+      });
+      await page.reload({ waitUntil: "load", timeout: 90000 });
+      await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+        { timeout: 120000, polling: 400 });
+      await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
+        { timeout: 60000, polling: 400 }).catch(() => {});
+      await sleep2(800);
+      const fresh = await page.evaluate(() => ({
+        mode: window.webhvac.state.ui.planMode,
+        shape: document.getElementById("planModeShape").checked,
+      }));
+      ok("with no stored mode, a fresh load opens on Draw shape (the default)",
+        fresh.mode === "shape" && fresh.shape, JSON.stringify(fresh));
+
+      // (iii) a DRAG in Draw shape → a rectangle room, area as the table shows it
+      await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+      await sleep2(500);
+      const rowsBeforeRect = await rowCount();
+      const scaleRect = await scaleNow();
+      const denomRect = Number(await page.$eval("#planScale", (e) => e.value)) || 100;
+      const bR = await panelBox();
+      const sxR = bR.x + 0.06 * bR.w, syR = bR.y + 0.62 * bR.h;
+      const wR = 0.22 * bR.w, hR = 0.22 * bR.h;
+      await page.mouse.move(sxR, syR);
+      await page.mouse.down();
+      await page.mouse.move(sxR + wR / 2, syR + hR / 2, { steps: 5 });
+      const rubber = await page.$$eval(".plan-draft-box", (n) => n.length);
+      await page.mouse.move(sxR + wR, syR + hR, { steps: 8 });
+      await page.mouse.up();
+      await sleep2(900);
+      const rowsAfterRect = await rowCount();
+      const rectRoom = await page.evaluate(() => {
+        const rooms = window.webhvac.state.rooms.filter((r) => r.source === "manual" && r.rect
+          && r.rect.placed !== true && !Array.isArray(r.poly));
+        const r = rooms[rooms.length - 1];
+        if (!r) return null;
+        const g = document.querySelector(`.plan-room[data-room-id="${r.id}"]`);
+        const cell = document.querySelector(`tr[data-id="${r.id}"] input[data-field="area"]`);
+        return { id: r.id, name: r.name, area: r.area, hasPoly: Array.isArray(r.poly),
+          shape: g ? g.getAttribute("data-shape") : null, cell: cell ? Number(cell.value) : null };
+      });
+      const expectRect = areaOf(wR / scaleRect, hR / scaleRect, denomRect);
+      ok("a DRAG in Draw shape draws a rectangle room in one gesture",
+        rowsAfterRect === rowsBeforeRect + 1 && !!rectRoom && rectRoom.hasPoly === false
+          && rectRoom.shape === "rect",
+        `${rowsBeforeRect} -> ${rowsAfterRect} rows, ${rectRoom && rectRoom.name}, data-shape ${rectRoom && rectRoom.shape}`);
+      ok("the rectangle's area is what the room table shows for it (at the drawing scale)",
+        !!rectRoom && Math.abs(rectRoom.cell - expectRect) <= Math.max(1, expectRect * 0.05)
+          && Math.abs(rectRoom.area - rectRoom.cell) <= 0.01,
+        rectRoom ? `table ${rectRoom.cell} m² vs geometry ${expectRect.toFixed(2)} m²` : "no room");
+      ok("a live rubber band is shown while the rectangle is dragged", rubber === 1, `${rubber} preview box(es)`);
+      ok("the drag leaves no stray polygon corner behind",
+        (await page.$$eval(".plan-vertex", (n) => n.length)) === 0);
+
+      // (iv) that rectangle is editable afterwards, by its corner handles in Select / edit
+      if (rectRoom) {
+        await page.click("#planModeSelect");
+        await sleep2(250);
+        const rbox = await page.evaluate((rid) => {
+          const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+          const b2 = g ? g.querySelector(".plan-room-box") : null;
+          if (!b2) return null;
+          const rr = b2.getBoundingClientRect();
+          return { cx: rr.x + rr.width / 2, cy: rr.y + rr.height / 2, w: rr.width, h: rr.height };
+        }, rectRoom.id);
+        await page.mouse.click(rbox.cx, rbox.cy);
+        await sleep2(400);
+        const handlesNow = await page.$$eval(".plan-room-handle", (n) => n.length);
+        const areaBeforeResize = await page.$eval(`tr[data-id="${rectRoom.id}"] input[data-field="area"]`,
+          (i) => Number(i.value));
+        await page.mouse.move(rbox.cx + rbox.w / 2, rbox.cy + rbox.h / 2);
+        await page.mouse.down();
+        await page.mouse.move(rbox.cx + rbox.w / 2 + 120, rbox.cy + rbox.h / 2 + 90, { steps: 8 });
+        await page.mouse.up();
+        await sleep2(700);
+        const areaAfterResize = await page.$eval(`tr[data-id="${rectRoom.id}"] input[data-field="area"]`,
+          (i) => Number(i.value));
+        ok("a rectangle drawn by dragging is editable by its handles afterwards",
+          handlesNow === 4 && areaAfterResize > areaBeforeResize,
+          `${handlesNow} handle(s), area ${areaBeforeResize} -> ${areaAfterResize} m²`);
+      } else {
+        ok("a rectangle drawn by dragging is editable by its handles afterwards", false, "no rectangle room");
+      }
+
+      // (v) a plain CLICK still adds a polygon corner (and finishes nothing)
+      await page.click("#planModeShape");
+      await sleep2(250);
+      const rowsBeforeClicks = await rowCount();
+      for (const [x, y] of [[0.34, 0.16], [0.46, 0.16], [0.46, 0.28]]) await clickAt(x, y);
+      const clicking = await page.evaluate(() => ({
+        vertices: document.querySelectorAll(".plan-vertex").length,
+        readout: document.querySelector(".plan-overlay-readout[data-vertices]")
+          ? document.querySelector(".plan-overlay-readout[data-vertices]").getAttribute("data-vertices") : null,
+      }));
+      ok("a plain click starts a polygon (three clicks = three corners, nothing finished)",
+        clicking.vertices === 3 && clicking.readout === "3" && (await rowCount()) === rowsBeforeClicks,
+        `${clicking.vertices} corner(s), readout ${clicking.readout}, rows ${rowsBeforeClicks} -> ${await rowCount()}`);
+      await page.keyboard.press("Escape");
+      await sleep2(300);
+
+      // (vi) a click that drifts a few pixels is still a click, never a degenerate rectangle
+      const rowsBeforeDrift = await rowCount();
+      const dp = await atF(0.70, 0.16);
+      await page.mouse.move(dp.x, dp.y);
+      await page.mouse.down();
+      await page.mouse.move(dp.x + 3, dp.y + 3, { steps: 1 });
+      await page.mouse.up();
+      await sleep2(300);
+      const drift = await page.evaluate(() => ({
+        vertices: document.querySelectorAll(".plan-vertex").length,
+      }));
+      ok("a 3 px drift counts as a click (a corner), not a degenerate rectangle",
+        drift.vertices === 1 && (await rowCount()) === rowsBeforeDrift,
+        `${drift.vertices} corner(s), rows ${rowsBeforeDrift} -> ${await rowCount()}`);
+      await page.keyboard.press("Escape");
+      await sleep2(300);
+    }
 
     // ---- (b) draw a 6-corner CONCAVE shape, close it on the first corner, keep it as a new room
     const rowsBeforeShape = await rowCount();
@@ -1436,8 +1614,8 @@ if (!sampleMissing) {
     await new Promise((r) => setTimeout(r, 400));
     const rowsStart = await rows2();
 
-    // draw one room to work on
-    await page.click("#planModeDraw");
+    // draw one room to work on (Draw shape: a bare drag is a rectangle)
+    await page.click("#planModeShape");
     await new Promise((r) => setTimeout(r, 200));
     await page.mouse.move(p0.x + 140, p0.y + 120);
     await page.mouse.down();
@@ -1611,7 +1789,7 @@ if (!sampleMissing) {
     });
 
     await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
-    await page.click("#planModeDraw");
+    await page.click("#planModeShape");
     await new Promise((r) => setTimeout(r, 250));
     const before = await roomsNow();
     const totalBefore = await totalOf();

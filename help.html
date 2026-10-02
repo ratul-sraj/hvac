@@ -109,7 +109,7 @@
       "name": "Where do my files go? Is my drawing uploaded anywhere?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Nothing is uploaded to a third party: there is no cloud service, no analytics and no account. In the static version the PDF is read by pdf.js inside your browser; if you ran npm start, the PDF is posted to your own localhost server and parsed there, not stored. Your project is saved in your browser's local storage."
+        "text": "Nothing is uploaded to a third party: there is no cloud service, no third-party analytics, no tracking cookies and no account. The site keeps anonymous counts of which buttons are used (no cookie, no id, no personal data, and never your drawing or its contents). In the static version the PDF is read by pdf.js inside your browser; if you ran npm start, the PDF is posted to your own localhost server and parsed there, not stored. Your project is saved in your browser's local storage."
       }
     },
     {
@@ -315,10 +315,11 @@
           <ol>
             <li>Set <strong>Drawing scale</strong> to the scale printed on the sheet &mdash;
               <strong>1:100</strong> is the default, and 1:20, 1:50, 1:200 and 1:500 are also there.</li>
-            <li>Stay in <strong>Draw room</strong> mode and drag a rectangle over the room. A new room is
+            <li>Stay in <strong>Draw shape</strong> mode and <strong>drag</strong> a rectangle over
+              the room. A new room is
               created as <em>Drawn room N</em>, its area is measured from the rectangle at that scale, and
-              it is already counted in the cooling load. A stray click does nothing &mdash; the drag has
-              to be big enough.</li>
+              it is already counted in the cooling load. A stray click does not make a rectangle &mdash;
+              it starts a shape instead, so a slip of the hand never drops a wrong room.</li>
             <li>The room's <strong>load breakdown</strong> opens so you can set its name, space type,
               orientation and glazing. Switch to <strong>Select / edit</strong> and click a box to reopen
               it later.</li>
@@ -349,8 +350,10 @@
         <details>
           <summary>My room is not a rectangle. Can I draw its real shape?</summary>
           <p>
-            Yes &mdash; use <strong>Draw shape</strong>, the mode next to <em>Draw room</em> in the plan
-            view. Instead of dragging a box, you <strong>click each corner</strong> of the room, however
+            Yes &mdash; use <strong>Draw shape</strong>, the drawing tool in the plan
+            view. It reads your hand: a <strong>drag</strong> makes a rectangle, and a
+            <strong>click</strong> adds a corner. For a room that is not a box,
+            <strong>click each corner</strong> of the room, however
             many there are: an L-shaped room or a stepped room gets its real outline.
           </p>
           <ul>
@@ -529,8 +532,10 @@
 
           <summary>Where do my files go? Is my drawing uploaded anywhere?</summary>
           <p>
-            <strong>Nothing is uploaded to a third party.</strong> There is no cloud service, no analytics
-            and no account.
+            <strong>Nothing is uploaded to a third party.</strong> There is no cloud service, no third-party
+            analytics, no tracking cookies and no account. The only measurement is an anonymous count of
+            which buttons are used &mdash; no cookie, no id, no personal data, and never your drawing or
+            anything from it.
           </p>
           <ul>
             <li><strong>Static version (GitHub Pages):</strong> the PDF is read by pdf.js inside your own

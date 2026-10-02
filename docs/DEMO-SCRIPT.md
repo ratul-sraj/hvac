@@ -81,7 +81,7 @@ Put it back to 35 (or click **Reset to defaults**).
 
 **If you have 30 seconds more — the plan view (optional).** The drawing is loaded, so section
 **3. Draw rooms on the plan** is now showing. Set **Drawing scale** to **1:100**, keep the mode on
-**Draw room**, and drag a rectangle over one room on the plan (about 5 m by 4 m). Its breakdown opens.
+**Draw shape**, and drag a rectangle over one room on the plan (about 5 m by 4 m). Its breakdown opens.
 
 > "The reader is not a CAD engine, so it can miss a room. Here I just draw it — a 5 metre by 4 metre
 > room, and the app measures **20 square metres** straight off the rectangle at the scale I set, one
@@ -90,10 +90,13 @@ Put it back to 35 (or click **Reset to defaults**).
 > ones I place: the rooms it read from the PDF stay in the table. Change the scale and it re-measures
 > everything I drew."
 
+> "Drag for a rectangle, click for an odd shape — same tool."
+
 Leave the drawn room in place (or delete it with the row's **×** before moving on).
 
-**If you have 60 seconds more — a room that is not a box (optional).** Switch the mode to **Draw
-shape** and click the corners of an **L-shaped** room on the sheet (five or six clicks), then click the
+**If you have 60 seconds more — a room that is not a box (optional).** Keep the mode on **Draw
+shape** (it is the same tool you just dragged with) and click the corners of an **L-shaped** room on
+the sheet (five or six clicks), then click the
 **first corner** again to close it. The chooser appears: leave it on **`(new room)`** for a new room, or
 pick an existing row from the list to **give that room the shape**.
 
@@ -196,7 +199,9 @@ input of all. Exporting the schedule as PDF also works — the same reader reads
 No. Running it locally with `npm start`, the PDF goes to your own machine's Node server on
 localhost and nothing leaves the PC. Opened as the static GitHub Pages copy, the PDF never leaves
 the browser tab at all — the PDF engine is bundled inside the page. There is no database, no
-account, no analytics, and the server keeps nothing after the response.
+account, and the server keeps nothing after the response. What it does send is an anonymous count
+of which buttons get used — no cookie, no user id, no personal data, and never the drawing or
+anything from it. Plus no third-party analytics and no ads in the page.
 
 **Can it be wrong about a room?**
 Yes, and it says so. It found 159 rooms here and flagged one parser note (a label with no area).

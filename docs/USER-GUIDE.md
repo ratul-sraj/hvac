@@ -191,9 +191,10 @@ opening the page again restores the last table. **Clear all rooms** empties it.
 
 As soon as a drawing is loaded — an uploaded PDF, or the **Try sample drawing** button — the
 calculator shows a plan view, **3. Draw rooms on the plan**. It renders the actual page of the
-drawing and lets you place rooms on it: drag a **rectangle** with **Draw room**, or click the
-**corners of any shape** with **Draw shape** when the room is not a box. Use it to add a room the
-reader missed, or to measure a room straight off the sheet. **Place all rooms on the plan** also drops
+drawing and lets you place rooms on it with **one drawing tool, two gestures**: in **Draw shape**
+you **drag** diagonally over a room for a plain **rectangle**, or **click each corner** when the
+room is not a box. Use it to add a room the reader missed, or to measure a room straight off the
+sheet. **Place all rooms on the plan** also drops
 a box on the sheet for every room the reader found, so you can click a room in the drawing instead of
 in the table.
 
@@ -209,7 +210,7 @@ applies to it.
 | **← Prev / Next →** with a **Page N of M** readout | Move between the pages of the loaded drawing |
 | **− / +** with a **%** readout | Zoom out / zoom in |
 | **Fit width** | Zoom the page to the width of the panel |
-| **Draw room** / **Draw shape** / **Select / edit** | Choose the mode: drag a rectangle, click the corners of any shape, or click an existing box to open it |
+| **Draw shape** / **Select / edit** | Choose the mode. In **Draw shape**: **drag** a rectangle, or **click** the corners of any shape. In **Select / edit**: click an existing box to open it, and move, resize or delete it |
 | **Place all rooms on the plan** | Give every table room the drawing *names* a locator box on the sheet (see below) |
 | **Remove placed rooms** | Take those locator boxes away again — your own drawn boxes are untouched |
 | **Drawing scale** | 1:20, 1:50, **1:100 (default)**, 1:200, 1:500 — the scale a drawn room is measured at |
@@ -222,23 +223,29 @@ applies to it.
    input, not a label: the area of every room you draw is measured from its rectangle at this scale,
    so a wrong scale gives a wrong area. The scale you pick is **remembered with the project**.
 
-### Draw a room
+### Draw a rectangle — press, drag, release
 
-1. Keep the mode on **Draw room**.
-2. Drag a rectangle over a room in the drawing. The drag has to be real — about **1 mm on paper**; a
-   tiny accidental click creates nothing.
+1. Keep the mode on **Draw shape** (it is the default when the panel opens).
+2. **Drag** diagonally across a rectangular room — press, move, release. A **rubber-band** rectangle
+   and its live size and area follow your pointer while you drag. The drag has to be real — about
+   **1 mm on paper**; a tiny accidental movement is treated as a click (see the next section), not as
+   a room.
 3. A room is created instantly, named **`Drawn room N`**. Its **area is measured from the rectangle at
    the chosen drawing scale**, and its length and width are derived from the rectangle. It appears in
    the room table immediately and is **already counted in the cooling load**.
 4. Its **load breakdown** opens so you can set the name, space type, orientation, glazing and the rest
    — exactly like any other room.
+5. A **click** — a press and release **without** dragging — does **not** make a rectangle. It starts a
+   shape instead (a corner appears), so a slip of the hand never drops a wrong room on the plan. Press
+   **`Esc`** or **Backspace** to take the stray corner away.
 
 ### Draw a shape — a room with any number of edges
 
-A rectangle is only right for a rectangular room. **Draw shape** builds a room from as many corners as
-you like, so an L-shaped or stepped room gets its **real floor plan** instead of a box around it.
+A rectangle is only right for a rectangular room. The **same Draw shape tool** also builds a room from
+as many corners as you like, so an L-shaped or stepped room gets its **real floor plan** instead of a
+box around it. The tool decides from your hand: a **drag** is a rectangle, a **click** is a corner.
 
-1. Set **Drawing scale** first (same rule as above), then switch the mode to **Draw shape**.
+1. Set **Drawing scale** first (same rule as above), then stay on **Draw shape**.
 2. **Click** each corner of the room in turn. Every click adds a corner, and the part you have drawn so
    far is shown while the **current edge follows your pointer** with a dashed line back to the first
    corner, so you can see where it will close.

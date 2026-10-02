@@ -335,7 +335,7 @@ function main() {
   for (const f of [...DIRS, "vendor"]) {
     if (!fs.existsSync(path.join(STAGING, f))) throw new Error(`no ${f}/ in the staging folder`);
   }
-  for (const must of ["lambda/index.mjs", "lib/app.js", "lib/parse.js", "js/pdfparse.js", "js/calc.js", "vendor/pdf.worker.min.mjs"]) {
+  for (const must of ["lambda/index.mjs", "lib/app.js", "lib/event.js", "lib/parse.js", "js/pdfparse.js", "js/calc.js", "vendor/pdf.worker.min.mjs"]) {
     if (!fs.existsSync(path.join(STAGING, must))) throw new Error(`required file missing from the build: ${must}`);
   }
 

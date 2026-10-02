@@ -11,6 +11,7 @@ import * as pdfjs from '../vendor/pdf.min.mjs';
 import {
   roomFromRect, areaFromRect, dimsFromRect, round2, isDrawnRoom,
   rectFromLabel, isPlacedRoom,
+  normalizeRect, rectIsUsable, rectToViewBox, pdfPointToView, viewPointToPdf,
   DRAWING_SCALES, DEFAULT_SCALE_DENOM,
 } from './planview.js';
 // Pure ring maths for a hand-drawn polygon (js/polyshape.js): the shoelace area in m² (through the
@@ -20,6 +21,10 @@ import { polyAreaM2, ringIsUsable, ringBBox, roundRing } from './polyshape.js';
 // The location -> design-conditions table and its resolver (js/climates.js): pure data + a pure
 // lookup, loaded with the app. The auto-detect wiring below uses it; nothing here touches the DOM.
 import { resolveClimate, countryFromTimezone, countryFromLocale, locationKey } from './climates.js';
+// Anonymous usage counting (js/usage.js): a strict allowlist of real actions plus
+// the utm_* campaign tags already in the URL. No cookies, no ids, no plan data —
+// see the module header. Every call is a no-op if counting is unavailable.
+import { track } from './usage.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -95,7 +100,7 @@ const state = {
     openId: null,
     order: [],
     busy: false,
-    planMode: 'draw',
+    planMode: 'shape',
   },
   // Filled once on load by probeServer(): is the Express server (server.js) there?
   server: { available: false, version: null, checked: false },
@@ -140,7 +145,6 @@ const el = {
   planZoomPct: $('#planZoomPct'),
   planFit: $('#planFit'),
   planScale: $('#planScale'),
-  planModeDraw: $('#planModeDraw'),
   planModeShape: $('#planModeShape'),
   planModeSelect: $('#planModeSelect'),
   planPlaceAll: $('#planPlaceAll'),
@@ -262,6 +266,18 @@ function currentCalc() {
   return calcProject(state.rooms, state.project);
 }
 
+// Anonymous, once-per-page-load signal that a calculation produced zero included
+// rooms — the honest "it did not work for me" case (a load that added nothing, or
+// every room excluded). Sent at most once, and only after a real attempt, so an
+// untouched empty page never counts. See js/usage.js.
+let calcEmptySent = false;
+function noteCalcEmpty(source) {
+  if (calcEmptySent) return;
+  if (currentCalc().totals.rooms > 0) return;
+  calcEmptySent = true;
+  track('calc_empty', { source });
+}
+
 /* ------------------------------------------------------------------ */
 /* persistence                                                        */
 /* ------------------------------------------------------------------ */
@@ -274,10 +290,21 @@ function saveSoon() {
 
 function saveNow() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 1, project: state.project, rooms: state.rooms }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      v: 1, project: state.project, rooms: state.rooms,
+      // The plan mode is remembered too, so a reload hands the panel back as the user left it.
+      // An older saved project may carry the retired 'draw' mode; loadStored migrates it.
+      ui: { planMode: state.ui.planMode },
+    }));
   } catch (e) {
     /* storage full or blocked: not fatal */
   }
+}
+
+/** The two plan modes the UI offers. Anything else — including the retired 'draw' — becomes
+ *  'shape', so an old saved mode can never leave the panel without a drawing tool. */
+function normalizePlanMode(m) {
+  return m === 'select' ? 'select' : 'shape';
 }
 
 function loadStored() {
@@ -292,6 +319,10 @@ function loadStored() {
         state.project.country = inferCountry(state.project);
       }
       if (Array.isArray(data.rooms)) state.rooms = data.rooms.filter((r) => r && typeof r === 'object');
+      // SILENT migration: a project saved by an older version may hold the retired 'draw' mode
+      // (the panel used to offer Draw room / Draw shape / Select). It becomes 'shape' here, with
+      // nothing said on screen — the two-gesture shape tool covers what Draw room used to do.
+      if (data.ui && data.ui.planMode != null) state.ui.planMode = normalizePlanMode(data.ui.planMode);
       return true;
     }
   } catch (e) { /* ignore bad data */ }
@@ -1418,6 +1449,7 @@ function finishUpload(added, skipped, failed, notes, serverError, readers, scann
     if (ocrEmpty) msg += ` | ${OCR_NO_ROOMS_MSG}`;
     if (serverError) msg = `Server: ${serverError}. These files were read in your browser. ${msg}`;
     setStatus(scanned || ocrEmpty ? 'warn' : (failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok')), msg);
+  if (!added) noteCalcEmpty('upload');   // nothing usable came out of this upload
 }
 
 async function handleFiles(fileList) {
@@ -1458,6 +1490,7 @@ async function handleFiles(fileList) {
         pushWarnings(out.warnings.map((w) => `${f.name}: ${w}`));
       }
       readers.add('schedule');
+      track('schedule_imported', { reader: 'schedule' });
       const bits = [`${res.added} room(s) from the schedule`];
       if (out.rowCount) bits.push(`${out.rowCount} row(s) read`);
       if (out.sheetName) bits.push(`sheet "${out.sheetName}"`);
@@ -1493,6 +1526,7 @@ async function handleFiles(fileList) {
       skipped = res.skipped;
       if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
       readers.add('server');
+      track('plan_parsed', { reader: 'server' });
       if (out.files && out.files.length) {
         for (const info of out.files) {
           const n = (typeof info.roomCount === 'number')
@@ -1528,6 +1562,7 @@ async function handleFiles(fileList) {
       added += res.added;
       skipped += res.skipped;
       readers.add(useOcr ? 'ocr' : 'browser');
+      track('plan_parsed', { reader: useOcr ? 'ocr' : 'browser' });
       if (out.warnings && out.warnings.length) {
         pushWarnings(out.warnings.map((w) => `${f.name}: ${w}`));
       }
@@ -1594,6 +1629,8 @@ async function loadSample() {
     const out = await parseOne(buf, used, 0, 1);
     const r = addRooms(out.rooms);
     if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
+    track('sample_loaded', { source: 'sample' });
+    if (!r.added) noteCalcEmpty('sample');
     setProgress(null);
     renderAll();
     saveSoon();
@@ -1656,17 +1693,12 @@ function planHintText() {
       `drop a point on another edge to remove it), Delete to remove, middle-drag or hold Space to pan. ` +
       `${drawn} hand-drawn and ${placed} placed room box(es) on the plan.`;
   }
-  if (state.ui.planMode === 'shape') {
-    return `Click to add a corner, and click the first corner again (or double-click, or press Enter) ` +
-      `to close the shape. Backspace takes back the last corner, Escape throws the shape away. When it ` +
-      `closes you choose which room it is. Areas are measured at 1:${planScaleDenom()}. ` +
-      `${drawn} room(s) drawn so far, ${placed} placed.`;
-  }
-  return `Drag a rectangle over a room in the drawing to add it as a room, or use ` +
-    `"Place all rooms on the plan" to give every room the drawing names a locator box, or ` +
-    `"Draw shape" to trace a room with any number of sides. ` +
-    `Areas are measured at 1:${planScaleDenom()} — change the drawing scale above if the sheet differs. ` +
-    `${drawn} room(s) drawn so far, ${placed} placed. Switch to Select / edit to move, resize or delete a box.`;
+  return `Drag over a room to add it as a rectangle, or click to add a corner of a room with any ` +
+    `number of sides. Close a shape by clicking its first corner again (or double-click, or press ` +
+    `Enter); Backspace takes back the last corner, Escape throws the shape away. When a shape closes ` +
+    `you choose which room it is. Areas are measured at 1:${planScaleDenom()} — change the drawing ` +
+    `scale above if the sheet differs. ${drawn} room(s) drawn so far, ${placed} placed. Switch to ` +
+    `Select / edit to move, resize or delete a box.`;
 }
 
 function planSync() {
@@ -1862,6 +1894,7 @@ async function planPlaceAllRooms() {
 
   let msg = rehydrateNote + `Placed ${placed} room(s) on the plan. `;
   msg += notes.length ? `${notes.join('; ')}.` : 'Each box is a locator centred on the point that names the room, sized back from its own area — the load has not changed.';
+  track('rooms_placed');
   setStatus('ok', msg, 'plan');
 }
 
@@ -2135,6 +2168,7 @@ async function planTraceOutlines() {
       planTraceBusy(false);
       renderAll();
       saveSoon();
+      if (accepted) track('trace_run');   // an outline was actually stored
 
       // The implied scale only means something for a region that held exactly ONE label: a region that
       // merged several rooms, or one far larger than any single room, says nothing about the scale.
@@ -2670,15 +2704,161 @@ async function planFitWidth() {
 }
 
 function planSetMode(mode) {
-  state.ui.planMode = mode === 'select' ? 'select' : (mode === 'shape' ? 'shape' : 'draw');
+  // Two modes only: 'shape' (the drawing tool, default) and 'select' (Select / edit). The retired
+  // 'draw' mode — and anything else a saved project might carry — migrates silently to 'shape'.
+  state.ui.planMode = normalizePlanMode(mode);
   // keep the radio buttons in step with the state: the mode can also be changed from code (a closed
   // shape hands over to Select / edit), and a stale radio would then swallow the next click on it.
-  if (el.planModeDraw) el.planModeDraw.checked = state.ui.planMode === 'draw';
   if (el.planModeShape) el.planModeShape.checked = state.ui.planMode === 'shape';
   if (el.planModeSelect) el.planModeSelect.checked = state.ui.planMode === 'select';
   if (plan.overlay) { plan.overlay.setMode(state.ui.planMode); plan.overlay.render(); }
   planSync();
   saveSoon();
+}
+
+/* ---- one drawing tool, two gestures (the merged 'Draw shape') ------------------------------------
+ * The retired 'Draw room' mode (a bare press-move-release = a rectangle) is folded into 'Draw shape'.
+ * The overlay still owns the polygon gestures (a click adds a corner; close on the first corner /
+ * double-click / Enter; Backspace; Escape). The app adds the DRAG gesture on top.
+ *
+ * The overlay's <svg> is a descendant of #planView, so a capture-phase listener on #planView sees
+ * every pointer event BEFORE the overlay's own listeners. That is what lets a drag be recognised and
+ * taken over before it can leave a stray corner behind:
+ *
+ *   • a press-and-release that never leaves PLAN_DRAG_PX is left entirely to the overlay — a click,
+ *     which adds one polygon corner exactly as before;
+ *   • once the pointer travels further than that, the gesture is a RECTANGLE. The overlay's
+ *     in-progress shape draft is dropped (setMode('shape') cancels it), the overlay is stopped from
+ *     seeing this and every later move, and the app rubber-bands the box itself;
+ *   • on release the finished rectangle goes to planDrawRoom() — the very path the old Draw room mode
+ *     used, so the room, its area, its table row and the load are all unchanged.
+ */
+const PLAN_DRAG_PX = 6;      // a press that travels beyond this (view px) is a drag, not a click
+let planGesture = null;      // { startView, startPdf, page, drag } while a press is in flight
+let planSpaceHeld = false;   // Space is the pan modifier, exactly as it is in the overlay
+
+function planGestureSpaceKey(e) {
+  return e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
+}
+
+function planGestureViewport() {
+  const vp = plan.viewer && typeof plan.viewer.getViewport === 'function' ? plan.viewer.getViewport() : null;
+  return vp && typeof vp.convertToPdfPoint === 'function' ? vp : null;
+}
+
+function planGesturePoint(e) {
+  const svg = plan.overlay && plan.overlay.el;
+  if (!svg) return null;
+  const r = svg.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+/** The rubber band + the live size/area readout, drawn straight onto the overlay <svg> (the overlay's
+ *  own render() only replaces its <g> children, so these survive it). Mirrors what Draw room showed. */
+function planShowPreview(rect) {
+  planClearPreview();
+  const vp = planGestureViewport();
+  const svg = plan.overlay && plan.overlay.el;
+  if (!vp || !svg) return;
+  const box = rectToViewBox(vp, rect);
+  const band = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  band.setAttribute('class', 'plan-draft-box');
+  band.setAttribute('x', box.x);
+  band.setAttribute('y', box.y);
+  band.setAttribute('width', box.w);
+  band.setAttribute('height', box.h);
+  band.setAttribute('vector-effect', 'non-scaling-stroke');
+  svg.appendChild(band);
+
+  const denom = planScaleDenom();
+  const mPerPt = Math.sqrt(areaFromRect({ x: 0, y: 0, w: 1, h: 1 }, denom));
+  const area = areaFromRect(rect, denom);
+  const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  t.setAttribute('class', 'plan-overlay-readout');
+  t.setAttribute('text-anchor', 'start');
+  t.setAttribute('data-area-m2', String(Math.round(area * 100) / 100));
+  t.textContent = `${(rect.w * mPerPt).toFixed(2)} × ${(rect.h * mPerPt).toFixed(2)} m · ${area.toFixed(2)} m²`;
+  const w = Number(svg.getAttribute('width')) || 0;
+  const h = Number(svg.getAttribute('height')) || 0;
+  t.setAttribute('x', String(Math.max(2, Math.min(box.x + box.w + 12, w - 4))));
+  t.setAttribute('y', String(Math.max(14, Math.min(box.y + box.h + 20, h - 4))));
+  svg.appendChild(t);
+  plan.preview = [band, t];
+}
+
+function planClearPreview() {
+  if (!plan.preview) return;
+  for (const node of plan.preview) if (node.parentNode) node.parentNode.removeChild(node);
+  plan.preview = null;
+}
+
+function planGestureDown(e) {
+  if (plan.unavailable || !plan.overlay) return;
+  if (state.ui.planMode !== 'shape') return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;   // middle-drag pans, owned by the overlay
+  if (planSpaceHeld) return;                                 // Space + drag pans, owned by the overlay
+  const vp = planGestureViewport();
+  const p = planGesturePoint(e);
+  if (!vp || !p) return;
+  // Deliberately NOT stopped: the overlay still needs the press for the click (polygon) gesture.
+  planGesture = { startView: p, startPdf: viewPointToPdf(vp, p), page: plan.page || 1, drag: false };
+}
+
+function planGestureMove(e) {
+  if (!planGesture) return;
+  const p = planGesturePoint(e);
+  if (!p) return;
+  if (!planGesture.drag) {
+    const far = Math.max(Math.abs(p.x - planGesture.startView.x), Math.abs(p.y - planGesture.startView.y));
+    if (far <= PLAN_DRAG_PX) return;   // still a click: leave it to the overlay
+    // A drag: it is a RECTANGLE. Drop the corner the overlay just placed at the press, take the
+    // gesture over (so the overlay sees no more of it), and rubber-band the box ourselves.
+    planGesture.drag = true;
+    if (typeof plan.overlay.setMode === 'function') plan.overlay.setMode('shape');
+    e.stopPropagation();
+  } else {
+    e.stopPropagation();
+  }
+  const vp = planGestureViewport();
+  if (!vp) return;
+  planShowPreview(normalizeRect(planGesture.startPdf, viewPointToPdf(vp, p)));
+}
+
+function planGestureUp(e) {
+  const g = planGesture;
+  if (!g) return;
+  planGesture = null;
+  if (!g.drag) return;   // a click: the overlay has already turned it into a polygon corner
+  e.stopPropagation();
+  planClearPreview();
+  const vp = planGestureViewport();
+  const p = planGesturePoint(e);
+  if (!vp || !p) return;
+  const rect = normalizeRect(g.startPdf, viewPointToPdf(vp, p));
+  if (rectIsUsable(rect)) planDrawRoom({ ...rect, page: g.page }, { page: g.page });
+  // too small to be a room: discard silently, exactly as the old Draw room mode did.
+}
+
+function planGestureCancel() {
+  planGesture = null;
+  planClearPreview();
+}
+
+/** The merged drawing gestures. Wired once, with the rest of the plan panel. */
+function planWireGestures() {
+  if (!el.planView) return;
+  // capture:true — #planView is an ANCESTOR of the overlay <svg>, so these run before the overlay's
+  // own handlers and can decide whether the press is a click (polygon) or a drag (rectangle).
+  el.planView.addEventListener('pointerdown', planGestureDown, true);
+  el.planView.addEventListener('pointermove', planGestureMove, true);
+  el.planView.addEventListener('pointerup', planGestureUp, true);
+  el.planView.addEventListener('pointercancel', planGestureCancel, true);
+  window.addEventListener('keydown', (e) => {
+    if (planGestureSpaceKey(e)) planSpaceHeld = true;
+    if (e.key === 'Escape' && planGesture) planGestureCancel();
+  });
+  window.addEventListener('keyup', (e) => { if (planGestureSpaceKey(e)) planSpaceHeld = false; });
+  window.addEventListener('blur', () => { planSpaceHeld = false; });
 }
 
 function planWire() {
@@ -2703,7 +2883,6 @@ function planWire() {
   if (el.planZoomIn) el.planZoomIn.addEventListener('click', () => planZoomBy(1.25));
   if (el.planZoomOut) el.planZoomOut.addEventListener('click', () => planZoomBy(1 / 1.25));
   if (el.planFit) el.planFit.addEventListener('click', planFitWidth);
-  if (el.planModeDraw) el.planModeDraw.addEventListener('change', () => planSetMode('draw'));
   if (el.planModeShape) el.planModeShape.addEventListener('change', () => planSetMode('shape'));
   if (el.planModeSelect) el.planModeSelect.addEventListener('change', () => planSetMode('select'));
   if (el.planShapeAssignGo) el.planShapeAssignGo.addEventListener('click', () => {
@@ -2714,6 +2893,7 @@ function planWire() {
   if (el.planPlaceClear) el.planPlaceClear.addEventListener('click', planClearPlaced);
   if (el.planTraceOutlines) el.planTraceOutlines.addEventListener('click', planTraceOutlines);
   if (el.planTraceClear) el.planTraceClear.addEventListener('click', planTraceClear);
+  planWireGestures();
 }
 
 /** Open a drawing in the plan panel. Safe to call for every upload: the panel is an enhancement. */
@@ -2765,7 +2945,7 @@ async function openPlan(bytes, opts) {
         onRoomMoveEnd: planRoomMoveEnd,
         onDelete: planDeleteRoom,
       });
-      if (plan.overlay.setMode) plan.overlay.setMode(state.ui.planMode);
+      if (plan.overlay.setMode) planSetMode(state.ui.planMode);   // also syncs the mode radios
       planWire();
     }
     const info = await plan.viewer.load(own);
@@ -2823,6 +3003,7 @@ function safeName() {
 function exportCsv() {
   if (!state.rooms.length) { setStatus('warn', 'There are no rooms to export yet.'); return; }
   download(safeName() + '-cooling-load.csv', toCsv(state.project, currentCalc()), 'text/csv;charset=utf-8');
+  track('export_csv');
   setStatus('ok', 'CSV downloaded.');
 }
 
@@ -2835,7 +3016,7 @@ const LOADLENS_URL = 'https://loadlens.net/';
  *  wanted. If clipboard access is unavailable or refused (older browser, denied permission) it
  *  degrades quietly to a warning that names the address instead of throwing. */
 function copyLoadLensLink() {
-  const done = () => setStatus('ok', 'LoadLens link copied. Paste it to a colleague who needs a quick load check.');
+  const done = () => { track('share_link_copied'); setStatus('ok', 'LoadLens link copied. Paste it to a colleague who needs a quick load check.'); };
   const fail = () => setStatus('warn', `Could not copy automatically. The address is ${LOADLENS_URL} — type it in the address bar or copy it from there.`);
   try {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
@@ -2867,6 +3048,7 @@ function printReport() {
       return;
     }
     w.document.open(); w.document.write(html); w.document.close();
+    track('report_opened');
     setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* the user can press the button */ } }, 500);
     setStatus('ok', 'Report opened in a new window.');
     return;
@@ -2875,6 +3057,7 @@ function printReport() {
   view.classList.remove('hidden');
   document.body.classList.add('reporting');
   el.reportClose.focus();
+  track('report_opened');
   setStatus(null);
 }
 
@@ -3154,6 +3337,7 @@ function wire() {
 /* ------------------------------------------------------------------ */
 
 function start() {
+  track('app_open');   // once per page load — the calculator was opened
   fillCountrySelect();
   const restored = loadStored();
   hadStoredProject = restored;

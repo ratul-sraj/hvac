@@ -217,11 +217,12 @@
   <section class="card hidden" id="planCard" aria-labelledby="planHead">
     <h2 id="planHead">3. Draw rooms on the plan</h2>
     <p class="muted small plan-intro">
-      Set the drawing scale, then drag a rectangle over a room to add it as a room — the area is
-      measured from the rectangle and that scale. <em>Draw shape</em> traces a room with any number of
-      sides: click each corner, then click the first corner again (or double-click) to close it, and
-      choose which room the shape belongs to — a new room, or an existing row whose area the shape then
-      sets. The boxes below are the rooms you have placed;
+      Set the drawing scale, then use <em>Draw shape</em> to add a room — one tool, two gestures.
+      <strong>Drag</strong> over a room for a plain rectangle: the area is measured from the rectangle
+      and that scale, and it becomes a new room straight away. <strong>Click</strong> each corner to
+      trace a room with any number of sides: click the first corner again (or double-click, or press
+      Enter) to close it, and choose which room the shape belongs to — a new room, or an existing row
+      whose area the shape then sets. The boxes below are the rooms you have placed;
       rooms found by reading the PDF stay in the table, but <em>Place all rooms on the plan</em> gives
       every one the drawing names a locator box where the sheet names it, sized back from that room's
       own area (it is a locator, not the traced room boundary). <em>Trace real outlines</em> reads the
@@ -250,8 +251,7 @@
         <button type="button" class="btn btn-small" id="planFit">Fit width</button>
       </div>
       <div class="plan-group">
-        <label class="plan-mode"><input type="radio" name="planMode" id="planModeDraw" value="draw" checked> Draw room</label>
-        <label class="plan-mode"><input type="radio" name="planMode" id="planModeShape" value="shape"> Draw shape</label>
+        <label class="plan-mode"><input type="radio" name="planMode" id="planModeShape" value="shape" checked> Draw shape</label>
         <label class="plan-mode"><input type="radio" name="planMode" id="planModeSelect" value="select"> Select / edit</label>
       </div>
       <div class="plan-group">

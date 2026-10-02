@@ -12,7 +12,9 @@
 //   * invalid JSON-LD, or the wrong/missing structured data (SoftwareApplication on index,
 //     FAQPage on help, built from the questions actually on help.html);
 //   * design-conditions.html missing any sourced city from js/climates.js, or carrying a DB/WB
-//     that disagrees with the table (so a stale generated page cannot ship).
+//     that disagrees with the table (so a stale generated page cannot ship); the page must also
+//     carry a city search box, a region jump index with one anchor per region, and a printed
+//     sourced-city count equal to js/climates.js.
 //
 // Prints "N/M checks passed" and exits non-zero on any failure.
 import fs from "node:fs";
@@ -278,6 +280,29 @@ if (dc && dc.status === 200) {
     /github\.com\/ratul-sraj\/hvac\/blob\/main\/docs\/CLIMATE-SOURCES\.md/.test(dc.html), "provenance link present");
   ok("design-conditions.html: ends with a link to the calculator (app.html)",
     /href="app\.html"[^>]*>\s*Calculate a cooling load for your own floor plan/i.test(dc.html), "CTA present");
+
+  // the page is world-facing: a search box, region grouping with stable anchors, and a count that
+  // is the real sourced-city count (so a stale title/description/count cannot ship unnoticed).
+  ok("design-conditions.html: has a city search box",
+    /id="dc-search"/.test(dc.html) && /<input\b[^>]*type="search"/i.test(dc.html),
+    /id="dc-search"/.test(dc.html) ? "search input present" : "no search input");
+
+  const REGION_IDS = ["india", "south-asia", "southeast-asia", "east-asia", "middle-east", "europe", "africa", "americas", "oceania"];
+  const missingRegionIds = REGION_IDS.filter((id) => !new RegExp(`id="${id}"`).test(dc.html));
+  ok("design-conditions.html: groups cities by region with stable anchors",
+    missingRegionIds.length === 0,
+    missingRegionIds.length ? `missing #${missingRegionIds.join(", #")}` : `${REGION_IDS.length} region anchors present`);
+  const indexLinks = REGION_IDS.filter((id) => new RegExp(`href="#${id}"`).test(dc.html));
+  ok("design-conditions.html: carries a region jump index at the top",
+    indexLinks.length === REGION_IDS.length,
+    indexLinks.length ? `${indexLinks.length} jump links` : "no jump links");
+
+  const printedCount = dc.html.match(/Showing (\d+) of (\d+) sourced cities/);
+  const totalSourced = Object.values(CLIMATE_TABLE).reduce(
+    (n, e) => n + Object.values(e.cities || {}).filter((r) => !!r.src).length, 0);
+  ok(`design-conditions.html: printed city count matches js/climates.js (${totalSourced})`,
+    !!printedCount && printedCount[1] === String(totalSourced) && printedCount[2] === String(totalSourced),
+    printedCount ? `page says "showing ${printedCount[1]} of ${printedCount[2]}"` : "no count found");
 } else {
   ok("design-conditions.html: is served (HTTP 200)", false, dc ? `HTTP ${dc.status}` : "no response");
 }
