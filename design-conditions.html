@@ -1,0 +1,1750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASHRAE 2021 Design Conditions, Indian Cities | LoadLens</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="description" content="Sourced ASHRAE 2021 outdoor design conditions for Indian cities: summer dry bulb, mean coincident wet bulb, source station and record period. Verify before use.">
+<link rel="canonical" href="https://loadlens.net/design-conditions.html">
+<meta property="og:url" content="https://loadlens.net/design-conditions.html">
+<meta property="og:image" content="https://loadlens.net/favicon.svg">
+<meta name="twitter:image" content="https://loadlens.net/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/landing.css">
+</head>
+<body>
+
+<header class="site-nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html" aria-label="LoadLens — home">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+        <rect x="1.5" y="7" width="29" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">LoadLens<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="index.html">Home</a>
+      <a href="app.html">Calculator</a>
+      <a href="about.html">About</a>
+      <a href="method.html">Method</a>
+      <a href="help.html">Help</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <!-- ======================= intro / provenance ======================= -->
+  <section class="section">
+    <div class="wrap prose">
+      <h1>ASHRAE 2021 outdoor design conditions for Indian cities</h1>
+      <p class="lead">
+        Summer outdoor design conditions for Indian cities, city by city: the <strong>0.4% annual cooling
+        dry bulb</strong> (DB) and its <strong>mean coincident wet bulb</strong> (WB), the ASHRAE station the
+        number was read from, and the station's record period. These are the same values LoadLens fills in
+        when it recognises your city.
+      </p>
+
+      <div class="callout">
+        <h2>Where these numbers come from</h2>
+        <p>
+          Every sourced row is the pair an HVAC cooling-coil selection uses, read from the public per-station
+          tables of the <strong>ASHRAE 2021 Handbook—Fundamentals, Chapter 14 (Climatic Design
+          Information)</strong> at <a href="https://ashrae-meteo.info/v3.0/">ashrae-meteo.info</a> (edition 2021,
+          SI). The station name and WMO number are shown on each row so any figure can be re-checked.
+        </p>
+        <p>
+          A city is marked <strong>sourced</strong> only when an ASHRAE station lies within about 75 km.
+          Where the nearest station is farther, the value is kept as an estimate and the row is flagged
+          <span class="dc-badge dc-ind">indicative</span> with the reason — attributing a distant
+          station's climate to a city would be misleading. ISHRAE design conditions are the right thing to
+          check against for a real project; they could not be verified from an open, machine-readable source,
+          so ASHRAE 2021 is used as the single checkable primary source throughout.
+        </p>
+        <p>
+          Full provenance, the reasons for the indicative rows and the per-station record periods are in
+          <a href="https://github.com/ratul-sraj/hvac/blob/main/docs/CLIMATE-SOURCES.md">docs/CLIMATE-SOURCES.md</a> on GitHub.
+        </p>
+      </div>
+
+      <div class="callout warn">
+        <h2>Verify before engineering use</h2>
+        <p>
+          These are outdoor <em>design conditions</em>, not a load calculation, and this page is a reference,
+          not a design. A small number of stations rest on a record period older or shorter than the standard
+          1994–2019 — those periods are printed on each row. Before any engineering use, open the
+          station's table, confirm the period, and check the value against ISHRAE / ASHRAE or the local code.
+          A qualified HVAC engineer must verify every number.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= India ======================= -->
+  <section class="section" id="india">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>India — cities with a sourced ASHRAE 2021 station</h2>
+        <p class="muted">
+          29 cities with a station within about 75 km. DB is the 0.4% annual cooling
+          dry bulb; WB is its mean coincident wet bulb. Both in °C.
+        </p>
+      </div>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">India — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Ahmedabad" data-db="43.1" data-wb="23" data-sourced="true">
+          <td class="l">Ahmedabad</td>
+          <td>43.1</td>
+          <td>23</td>
+          <td class="l">AHMEDABAD (WMO 426470)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Amritsar" data-db="43.2" data-wb="23.3" data-sourced="true">
+          <td class="l">Amritsar</td>
+          <td>43.2</td>
+          <td>23.3</td>
+          <td class="l">LAHORE ALLAMA IQBAL INTL (WMO 416410)</td>
+          <td class="l">1994–2019 — nearest station in the edition (~46 km, in Pakistan, cross-border)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Bengaluru" data-db="34.3" data-wb="20" data-sourced="true">
+          <td class="l">Bengaluru</td>
+          <td>34.3</td>
+          <td>20</td>
+          <td class="l">BENGALURU (WMO 432950)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Bhopal" data-db="42" data-wb="21.9" data-sourced="true">
+          <td class="l">Bhopal</td>
+          <td>42</td>
+          <td>21.9</td>
+          <td class="l">BHOPAL (WMO 426670)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Chennai" data-db="39" data-wb="26" data-sourced="true">
+          <td class="l">Chennai</td>
+          <td>39</td>
+          <td>26</td>
+          <td class="l">CHENNAI INTL (WMO 432790)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Coimbatore" data-db="36.7" data-wb="22.2" data-sourced="true">
+          <td class="l">Coimbatore</td>
+          <td>36.7</td>
+          <td>22.2</td>
+          <td class="l">COIMBATORE INTL (WMO 433210)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Delhi" data-db="42.3" data-wb="23.2" data-sourced="true">
+          <td class="l">Delhi</td>
+          <td>42.3</td>
+          <td>23.2</td>
+          <td class="l">NEW DELHI SAFDARJUNG (WMO 421820)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Faridabad" data-db="42.3" data-wb="23.2" data-sourced="true">
+          <td class="l">Faridabad</td>
+          <td>42.3</td>
+          <td>23.2</td>
+          <td class="l">NEW DELHI SAFDARJUNG (WMO 421820)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Gurugram" data-db="43.8" data-wb="22.2" data-sourced="true">
+          <td class="l">Gurugram</td>
+          <td>43.8</td>
+          <td>22.2</td>
+          <td class="l">NEW DELHI INDIRA GANDHI INTL (WMO 421810)</td>
+          <td class="l">shorter than 1994–2019</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Guwahati" data-db="35.2" data-wb="27.8" data-sourced="true">
+          <td class="l">Guwahati</td>
+          <td>35.2</td>
+          <td>27.8</td>
+          <td class="l">GUWAHATI INTL (WMO 424100)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Hyderabad" data-db="41" data-wb="22" data-sourced="true">
+          <td class="l">Hyderabad</td>
+          <td>41</td>
+          <td>22</td>
+          <td class="l">HYDERABAD BEGUMPET (WMO 431280)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Indore" data-db="40.8" data-wb="20.9" data-sourced="true">
+          <td class="l">Indore</td>
+          <td>40.8</td>
+          <td>20.9</td>
+          <td class="l">INDORE INTL (WMO 427540)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Jaipur" data-db="42.7" data-wb="20.9" data-sourced="true">
+          <td class="l">Jaipur</td>
+          <td>42.7</td>
+          <td>20.9</td>
+          <td class="l">JAIPUR (WMO 423480)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Kanpur" data-db="42.8" data-wb="23.4" data-sourced="true">
+          <td class="l">Kanpur</td>
+          <td>42.8</td>
+          <td>23.4</td>
+          <td class="l">LUCKNOW (WMO 423690)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Kolkata" data-db="37.9" data-wb="27.3" data-sourced="true">
+          <td class="l">Kolkata</td>
+          <td>37.9</td>
+          <td>27.3</td>
+          <td class="l">KOLKATA BOSE INTL (WMO 428090)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Kollam" data-db="34.2" data-wb="26.2" data-sourced="true">
+          <td class="l">Kollam</td>
+          <td>34.2</td>
+          <td>26.2</td>
+          <td class="l">THIRUVANANTHAPURAM (WMO 433710)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Kozhikode" data-db="35.2" data-wb="28.2" data-sourced="true">
+          <td class="l">Kozhikode</td>
+          <td>35.2</td>
+          <td>28.2</td>
+          <td class="l">KOZHIKODE (WMO 433140)</td>
+          <td class="l">shorter than 1994–2019</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Lucknow" data-db="42.8" data-wb="23.4" data-sourced="true">
+          <td class="l">Lucknow</td>
+          <td>42.8</td>
+          <td>23.4</td>
+          <td class="l">LUCKNOW (WMO 423690)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Mangaluru" data-db="34.4" data-wb="24.9" data-sourced="true">
+          <td class="l">Mangaluru</td>
+          <td>34.4</td>
+          <td>24.9</td>
+          <td class="l">MANGALORE INTL (WMO 432840)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Mumbai" data-db="36" data-wb="22.7" data-sourced="true">
+          <td class="l">Mumbai</td>
+          <td>36</td>
+          <td>22.7</td>
+          <td class="l">MUMBAI SHIVAJI INTL (WMO 430030)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Nagpur" data-db="44.2" data-wb="22.6" data-sourced="true">
+          <td class="l">Nagpur</td>
+          <td>44.2</td>
+          <td>22.6</td>
+          <td class="l">NAGPUR AMBEDKAR INTL (WMO 428670)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="New Delhi" data-db="42.3" data-wb="23.2" data-sourced="true">
+          <td class="l">New Delhi</td>
+          <td>42.3</td>
+          <td>23.2</td>
+          <td class="l">NEW DELHI SAFDARJUNG (WMO 421820)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Palakkad" data-db="36.7" data-wb="22.2" data-sourced="true">
+          <td class="l">Palakkad</td>
+          <td>36.7</td>
+          <td>22.2</td>
+          <td class="l">COIMBATORE INTL (WMO 433210)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Panaji" data-db="34.2" data-wb="25.9" data-sourced="true">
+          <td class="l">Panaji</td>
+          <td>34.2</td>
+          <td>25.9</td>
+          <td class="l">GOA PANAJI (WMO 431920)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Patna" data-db="41.3" data-wb="23.2" data-sourced="true">
+          <td class="l">Patna</td>
+          <td>41.3</td>
+          <td>23.2</td>
+          <td class="l">PATNA (WMO 424920)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Pune" data-db="38.5" data-wb="19.9" data-sourced="true">
+          <td class="l">Pune</td>
+          <td>38.5</td>
+          <td>19.9</td>
+          <td class="l">PUNE (WMO 430630)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Surat" data-db="38.2" data-wb="22.6" data-sourced="true">
+          <td class="l">Surat</td>
+          <td>38.2</td>
+          <td>22.6</td>
+          <td class="l">SURAT (WMO 428400)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Thiruvananthapuram" data-db="34.2" data-wb="26.2" data-sourced="true">
+          <td class="l">Thiruvananthapuram</td>
+          <td>34.2</td>
+          <td>26.2</td>
+          <td class="l">THIRUVANANTHAPURAM (WMO 433710)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="India" data-kind="city" data-city="Visakhapatnam" data-db="34" data-wb="27.1" data-sourced="true">
+          <td class="l">Visakhapatnam</td>
+          <td>34</td>
+          <td>27.1</td>
+          <td class="l">VISHAKHAPATNAM CWC (WMO 431500)</td>
+          <td class="l">1994–2015</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="section" id="india-indicative">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>India — indicative rows (not station values)</h2>
+        <p class="muted">
+          Cities with no ASHRAE station within the radius, plus the state/province estimates and the
+          country-wide fallback. Each is an estimate; the reason is shown.
+        </p>
+      </div>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">India — indicative estimates (no station within about 75 km)</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-indicative" data-country="India" data-kind="city" data-city="Kannur" data-db="35" data-wb="28" data-sourced="false">
+          <td class="l">Kannur</td>
+          <td>35</td>
+          <td>28</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">no ASHRAE station within 75 km; indicative value kept</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="city" data-city="Kochi" data-db="35" data-wb="28" data-sourced="false">
+          <td class="l">Kochi</td>
+          <td>35</td>
+          <td>28</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">no ASHRAE station within 75 km; indicative value kept</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="city" data-city="Kottayam" data-db="35" data-wb="27.5" data-sourced="false">
+          <td class="l">Kottayam</td>
+          <td>35</td>
+          <td>27.5</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">no ASHRAE station within 75 km; indicative value kept</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="city" data-city="Ludhiana" data-db="42" data-wb="26" data-sourced="false">
+          <td class="l">Ludhiana</td>
+          <td>42</td>
+          <td>26</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">no ASHRAE station within 75 km; indicative value kept</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="city" data-city="Madurai" data-db="39" data-wb="26" data-sourced="false">
+          <td class="l">Madurai</td>
+          <td>39</td>
+          <td>26</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">no ASHRAE station within 75 km; indicative value kept</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="city" data-city="Mysuru" data-db="33" data-wb="22" data-sourced="false">
+          <td class="l">Mysuru</td>
+          <td>33</td>
+          <td>22</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">no ASHRAE station within 75 km; indicative value kept</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="city" data-city="Thrissur" data-db="36" data-wb="27.5" data-sourced="false">
+          <td class="l">Thrissur</td>
+          <td>36</td>
+          <td>27.5</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">no ASHRAE station within 75 km; indicative value kept</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Andhra Pradesh" data-db="36" data-wb="27" data-sourced="false">
+          <td class="l">Andhra Pradesh (region)</td>
+          <td>36</td>
+          <td>27</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Assam" data-db="36" data-wb="27" data-sourced="false">
+          <td class="l">Assam (region)</td>
+          <td>36</td>
+          <td>27</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Bihar" data-db="42" data-wb="26" data-sourced="false">
+          <td class="l">Bihar (region)</td>
+          <td>42</td>
+          <td>26</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Delhi" data-db="43" data-wb="24" data-sourced="false">
+          <td class="l">Delhi (region)</td>
+          <td>43</td>
+          <td>24</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Goa" data-db="33" data-wb="27" data-sourced="false">
+          <td class="l">Goa (region)</td>
+          <td>33</td>
+          <td>27</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Gujarat" data-db="42" data-wb="25" data-sourced="false">
+          <td class="l">Gujarat (region)</td>
+          <td>42</td>
+          <td>25</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Haryana" data-db="43" data-wb="24" data-sourced="false">
+          <td class="l">Haryana (region)</td>
+          <td>43</td>
+          <td>24</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Karnataka" data-db="34" data-wb="23" data-sourced="false">
+          <td class="l">Karnataka (region)</td>
+          <td>34</td>
+          <td>23</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Kerala" data-db="35" data-wb="28" data-sourced="false">
+          <td class="l">Kerala (region)</td>
+          <td>35</td>
+          <td>28</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Madhya Pradesh" data-db="41" data-wb="24" data-sourced="false">
+          <td class="l">Madhya Pradesh (region)</td>
+          <td>41</td>
+          <td>24</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Maharashtra" data-db="36" data-wb="26" data-sourced="false">
+          <td class="l">Maharashtra (region)</td>
+          <td>36</td>
+          <td>26</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Punjab" data-db="42" data-wb="25" data-sourced="false">
+          <td class="l">Punjab (region)</td>
+          <td>42</td>
+          <td>25</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Rajasthan" data-db="44" data-wb="24" data-sourced="false">
+          <td class="l">Rajasthan (region)</td>
+          <td>44</td>
+          <td>24</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Tamil Nadu" data-db="38" data-wb="27" data-sourced="false">
+          <td class="l">Tamil Nadu (region)</td>
+          <td>38</td>
+          <td>27</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Telangana" data-db="41" data-wb="24" data-sourced="false">
+          <td class="l">Telangana (region)</td>
+          <td>41</td>
+          <td>24</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="Uttar Pradesh" data-db="43" data-wb="25" data-sourced="false">
+          <td class="l">Uttar Pradesh (region)</td>
+          <td>43</td>
+          <td>25</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="region" data-city="West Bengal" data-db="38" data-wb="28" data-sourced="false">
+          <td class="l">West Bengal (region)</td>
+          <td>38</td>
+          <td>28</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">state/province estimate; not a station value</td>
+        </tr>
+        <tr class="dc-indicative" data-country="India" data-kind="fallback" data-city="" data-db="40" data-wb="26" data-sourced="false">
+          <td class="l">(country fallback)</td>
+          <td>40</td>
+          <td>26</td>
+          <td class="l"><span class="dc-badge dc-ind">indicative</span></td>
+          <td class="l">country-level fallback; no single station defines a whole country</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================= other countries ======================= -->
+  <section class="section" id="international">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>Other countries — sourced stations</h2>
+        <p class="muted">
+          The same ASHRAE 2021 sourced pairs for the other countries LoadLens knows. The countries with no
+          station of their own (and the state/province estimates) stay flagged indicative in the app.
+        </p>
+      </div>
+      <details class="dc-country">
+        <summary>Australia <span class="muted">(6 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Australia — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Australia" data-kind="city" data-city="Adelaide" data-db="36.8" data-wb="18.5" data-sourced="true">
+          <td class="l">Adelaide</td>
+          <td>36.8</td>
+          <td>18.5</td>
+          <td class="l">ADELAIDE AP (WMO 946720)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Australia" data-kind="city" data-city="Brisbane" data-db="30.8" data-wb="23.1" data-sourced="true">
+          <td class="l">Brisbane</td>
+          <td>30.8</td>
+          <td>23.1</td>
+          <td class="l">BRISBANE AP (WMO 945780)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Australia" data-kind="city" data-city="Darwin" data-db="34.2" data-wb="23.5" data-sourced="true">
+          <td class="l">Darwin</td>
+          <td>34.2</td>
+          <td>23.5</td>
+          <td class="l">DARWIN (WMO 941200)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Australia" data-kind="city" data-city="Melbourne" data-db="35.4" data-wb="18.1" data-sourced="true">
+          <td class="l">Melbourne</td>
+          <td>35.4</td>
+          <td>18.1</td>
+          <td class="l">MELBOURNE AP (WMO 948660)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Australia" data-kind="city" data-city="Perth" data-db="37.5" data-wb="19.4" data-sourced="true">
+          <td class="l">Perth</td>
+          <td>37.5</td>
+          <td>19.4</td>
+          <td class="l">PERTH AP (WMO 946100)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Australia" data-kind="city" data-city="Sydney" data-db="33.3" data-wb="19.5" data-sourced="true">
+          <td class="l">Sydney</td>
+          <td>33.3</td>
+          <td>19.5</td>
+          <td class="l">SYDNEY AP (WMO 947670)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Bahrain <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Bahrain — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Bahrain" data-kind="city" data-city="Manama" data-db="41.2" data-wb="23.7" data-sourced="true">
+          <td class="l">Manama</td>
+          <td>41.2</td>
+          <td>23.7</td>
+          <td class="l">BAHRAIN INTL (WMO 411500)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Brazil <span class="muted">(2 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Brazil — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Brazil" data-kind="city" data-city="Rio de Janeiro" data-db="34.8" data-wb="25.7" data-sourced="true">
+          <td class="l">Rio de Janeiro</td>
+          <td>34.8</td>
+          <td>25.7</td>
+          <td class="l">RIO DE JANEIRO SANTOS DUMONT (WMO 837550)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Brazil" data-kind="city" data-city="São Paulo" data-db="32.2" data-wb="20.1" data-sourced="true">
+          <td class="l">São Paulo</td>
+          <td>32.2</td>
+          <td>20.1</td>
+          <td class="l">SAO PAULO CONGONHAS (WMO 837800)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Canada <span class="muted">(5 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Canada — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Canada" data-kind="city" data-city="Calgary" data-db="28.8" data-wb="16" data-sourced="true">
+          <td class="l">Calgary</td>
+          <td>28.8</td>
+          <td>16</td>
+          <td class="l">CALGARY INTL (WMO 718770)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Canada" data-kind="city" data-city="Montreal" data-db="30.3" data-wb="22.1" data-sourced="true">
+          <td class="l">Montreal</td>
+          <td>30.3</td>
+          <td>22.1</td>
+          <td class="l">MONTREAL TRUDEAU (WMO 716270)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Canada" data-kind="city" data-city="Ottawa" data-db="30.9" data-wb="22" data-sourced="true">
+          <td class="l">Ottawa</td>
+          <td>30.9</td>
+          <td>22</td>
+          <td class="l">OTTAWA INTL (WMO 716280)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Canada" data-kind="city" data-city="Toronto" data-db="31.5" data-wb="22.4" data-sourced="true">
+          <td class="l">Toronto</td>
+          <td>31.5</td>
+          <td>22.4</td>
+          <td class="l">TORONTO PEARSON (WMO 716240)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Canada" data-kind="city" data-city="Vancouver" data-db="25.1" data-wb="18.5" data-sourced="true">
+          <td class="l">Vancouver</td>
+          <td>25.1</td>
+          <td>18.5</td>
+          <td class="l">VANCOUVER INTL (WMO 718920)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>China <span class="muted">(4 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">China — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="China" data-kind="city" data-city="Beijing" data-db="35.2" data-wb="22" data-sourced="true">
+          <td class="l">Beijing</td>
+          <td>35.2</td>
+          <td>22</td>
+          <td class="l">BEIJING (WMO 545110)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="China" data-kind="city" data-city="Guangzhou" data-db="36" data-wb="26.2" data-sourced="true">
+          <td class="l">Guangzhou</td>
+          <td>36</td>
+          <td>26.2</td>
+          <td class="l">GUANGZHOU (WMO 592870)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="China" data-kind="city" data-city="Shanghai" data-db="35.5" data-wb="26.7" data-sourced="true">
+          <td class="l">Shanghai</td>
+          <td>35.5</td>
+          <td>26.7</td>
+          <td class="l">SHANGHAI BAOSHAN (WMO 583620)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="China" data-kind="city" data-city="Shenzhen" data-db="34" data-wb="26.4" data-sourced="true">
+          <td class="l">Shenzhen</td>
+          <td>34</td>
+          <td>26.4</td>
+          <td class="l">SHENZHEN (WMO 594930)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Egypt <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Egypt — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Egypt" data-kind="city" data-city="Cairo" data-db="38.8" data-wb="21" data-sourced="true">
+          <td class="l">Cairo</td>
+          <td>38.8</td>
+          <td>21</td>
+          <td class="l">CAIRO INTL (WMO 623660)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>France <span class="muted">(3 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">France — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="France" data-kind="city" data-city="Lyon" data-db="33.8" data-wb="20.2" data-sourced="true">
+          <td class="l">Lyon</td>
+          <td>33.8</td>
+          <td>20.2</td>
+          <td class="l">LYON-BRON AP (WMO 074800)</td>
+          <td class="l">shorter than 1994–2019</td>
+        </tr>
+        <tr class="dc-sourced" data-country="France" data-kind="city" data-city="Marseille" data-db="33.1" data-wb="21" data-sourced="true">
+          <td class="l">Marseille</td>
+          <td>33.1</td>
+          <td>21</td>
+          <td class="l">MARSEILLE PROVENCE AP (WMO 076500)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="France" data-kind="city" data-city="Paris" data-db="31.6" data-wb="20.4" data-sourced="true">
+          <td class="l">Paris</td>
+          <td>31.6</td>
+          <td>20.4</td>
+          <td class="l">PARIS MONTSOURIS (WMO 071560)</td>
+          <td class="l">shorter than 1994–2019</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Germany <span class="muted">(4 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Germany — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Germany" data-kind="city" data-city="Berlin" data-db="29.3" data-wb="19" data-sourced="true">
+          <td class="l">Berlin</td>
+          <td>29.3</td>
+          <td>19</td>
+          <td class="l">BERLIN DAHLEM (WMO 103810)</td>
+          <td class="l">1982–2003</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Germany" data-kind="city" data-city="Frankfurt" data-db="32.1" data-wb="20" data-sourced="true">
+          <td class="l">Frankfurt</td>
+          <td>32.1</td>
+          <td>20</td>
+          <td class="l">FRANKFURT AM MAIN (WMO 106370)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Germany" data-kind="city" data-city="Hamburg" data-db="29.1" data-wb="19.2" data-sourced="true">
+          <td class="l">Hamburg</td>
+          <td>29.1</td>
+          <td>19.2</td>
+          <td class="l">HAMBURG FUHLSBUTTEL (WMO 101470)</td>
+          <td class="l">shorter than 1994–2019</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Germany" data-kind="city" data-city="Munich" data-db="29.5" data-wb="19" data-sourced="true">
+          <td class="l">Munich</td>
+          <td>29.5</td>
+          <td>19</td>
+          <td class="l">MUNICH STADT (WMO 108650)</td>
+          <td class="l">1982–2003</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Hong Kong <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Hong Kong — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Hong Kong" data-kind="city" data-city="Hong Kong" data-db="32.2" data-wb="26.5" data-sourced="true">
+          <td class="l">Hong Kong</td>
+          <td>32.2</td>
+          <td>26.5</td>
+          <td class="l">HONG KONG OBSERVATORY (WMO 450050)</td>
+          <td class="l">1982–1992</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Indonesia <span class="muted">(3 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Indonesia — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Indonesia" data-kind="city" data-city="Denpasar" data-db="32.5" data-wb="26.6" data-sourced="true">
+          <td class="l">Denpasar</td>
+          <td>32.5</td>
+          <td>26.6</td>
+          <td class="l">DENPASAR NGURAH RAI (WMO 972300)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Indonesia" data-kind="city" data-city="Jakarta" data-db="34" data-wb="25.4" data-sourced="true">
+          <td class="l">Jakarta</td>
+          <td>34</td>
+          <td>25.4</td>
+          <td class="l">JAKARTA SOEKARNO-HATTA (WMO 967490)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Indonesia" data-kind="city" data-city="Surabaya" data-db="34.1" data-wb="24.7" data-sourced="true">
+          <td class="l">Surabaya</td>
+          <td>34.1</td>
+          <td>24.7</td>
+          <td class="l">JUANDA SURABAYA (WMO 969350)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Israel <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Israel — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Israel" data-kind="city" data-city="Tel Aviv" data-db="35.2" data-wb="20.5" data-sourced="true">
+          <td class="l">Tel Aviv</td>
+          <td>35.2</td>
+          <td>20.5</td>
+          <td class="l">TEL AVIV BEN GURION (WMO 401800)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Japan <span class="muted">(2 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Japan — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Japan" data-kind="city" data-city="Osaka" data-db="34.5" data-wb="25" data-sourced="true">
+          <td class="l">Osaka</td>
+          <td>34.5</td>
+          <td>25</td>
+          <td class="l">OSAKA (WMO 477720)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Japan" data-kind="city" data-city="Tokyo" data-db="33.7" data-wb="25.6" data-sourced="true">
+          <td class="l">Tokyo</td>
+          <td>33.7</td>
+          <td>25.6</td>
+          <td class="l">TOKYO (WMO 476620)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Kenya <span class="muted">(2 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Kenya — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Kenya" data-kind="city" data-city="Mombasa" data-db="33.2" data-wb="25.3" data-sourced="true">
+          <td class="l">Mombasa</td>
+          <td>33.2</td>
+          <td>25.3</td>
+          <td class="l">MOMBASA INTL (WMO 638200)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Kenya" data-kind="city" data-city="Nairobi" data-db="29.2" data-wb="16" data-sourced="true">
+          <td class="l">Nairobi</td>
+          <td>29.2</td>
+          <td>16</td>
+          <td class="l">NAIROBI JOMO KENYATTA INTL (WMO 637400)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Kuwait <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Kuwait — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Kuwait" data-kind="city" data-city="Kuwait City" data-db="48.1" data-wb="21.2" data-sourced="true">
+          <td class="l">Kuwait City</td>
+          <td>48.1</td>
+          <td>21.2</td>
+          <td class="l">KUWAIT INTL (WMO 405820)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Malaysia <span class="muted">(4 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Malaysia — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Malaysia" data-kind="city" data-city="George Town" data-db="33.2" data-wb="26.3" data-sourced="true">
+          <td class="l">George Town</td>
+          <td>33.2</td>
+          <td>26.3</td>
+          <td class="l">PENANG INTL (WMO 486010)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Malaysia" data-kind="city" data-city="Johor Bahru" data-db="33.2" data-wb="26.3" data-sourced="true">
+          <td class="l">Johor Bahru</td>
+          <td>33.2</td>
+          <td>26.3</td>
+          <td class="l">SINGAPORE/CHANGI INTL (WMO 486980)</td>
+          <td class="l">1994–2019 — nearest ASHRAE station is ~30 km away, in Singapore (cross-border, as Amritsar is served by Lahore)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Malaysia" data-kind="city" data-city="Kuala Lumpur" data-db="35" data-wb="26.3" data-sourced="true">
+          <td class="l">Kuala Lumpur</td>
+          <td>35</td>
+          <td>26.3</td>
+          <td class="l">KUALA LUMPUR SUBANG (WMO 486470)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Malaysia" data-kind="city" data-city="Penang" data-db="33.2" data-wb="26.3" data-sourced="true">
+          <td class="l">Penang</td>
+          <td>33.2</td>
+          <td>26.3</td>
+          <td class="l">PENANG INTL (WMO 486010)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Maldives <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Maldives — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Maldives" data-kind="city" data-city="Malé" data-db="32.2" data-wb="27.1" data-sourced="true">
+          <td class="l">Malé</td>
+          <td>32.2</td>
+          <td>27.1</td>
+          <td class="l">MALE (WMO 435550)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Mexico <span class="muted">(2 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Mexico — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Mexico" data-kind="city" data-city="Guadalajara" data-db="33.1" data-wb="15.2" data-sourced="true">
+          <td class="l">Guadalajara</td>
+          <td>33.1</td>
+          <td>15.2</td>
+          <td class="l">GUADALAJARA INTL (WMO 766133)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Mexico" data-kind="city" data-city="Mexico City" data-db="29.1" data-wb="12.3" data-sourced="true">
+          <td class="l">Mexico City</td>
+          <td>29.1</td>
+          <td>12.3</td>
+          <td class="l">MEXICO CITY INTL (WMO 766793)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Netherlands <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Netherlands — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Netherlands" data-kind="city" data-city="Amsterdam" data-db="28.1" data-wb="20" data-sourced="true">
+          <td class="l">Amsterdam</td>
+          <td>28.1</td>
+          <td>20</td>
+          <td class="l">AMSTERDAM AP SCHIPHOL (WMO 062400)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>New Zealand <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">New Zealand — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="New Zealand" data-kind="city" data-city="Auckland" data-db="25.8" data-wb="20.1" data-sourced="true">
+          <td class="l">Auckland</td>
+          <td>25.8</td>
+          <td>20.1</td>
+          <td class="l">AUCKLAND (WMO 931100)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Oman <span class="muted">(3 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Oman — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Oman" data-kind="city" data-city="Muscat" data-db="42.6" data-wb="22.3" data-sourced="true">
+          <td class="l">Muscat</td>
+          <td>42.6</td>
+          <td>22.3</td>
+          <td class="l">MUSCAT INTL (WMO 412560)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Oman" data-kind="city" data-city="Salalah" data-db="33.8" data-wb="21.6" data-sourced="true">
+          <td class="l">Salalah</td>
+          <td>33.8</td>
+          <td>21.6</td>
+          <td class="l">SALALAH (WMO 413160)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Oman" data-kind="city" data-city="Sohar" data-db="40.4" data-wb="23.5" data-sourced="true">
+          <td class="l">Sohar</td>
+          <td>40.4</td>
+          <td>23.5</td>
+          <td class="l">SOHAR MAJIS (WMO 412460)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Pakistan <span class="muted">(3 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Pakistan — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Pakistan" data-kind="city" data-city="Islamabad" data-db="41.1" data-wb="22.8" data-sourced="true">
+          <td class="l">Islamabad</td>
+          <td>41.1</td>
+          <td>22.8</td>
+          <td class="l">ISLAMABAD INTL (WMO 415710)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Pakistan" data-kind="city" data-city="Karachi" data-db="39" data-wb="22.7" data-sourced="true">
+          <td class="l">Karachi</td>
+          <td>39</td>
+          <td>22.7</td>
+          <td class="l">JINNAH INTL (WMO 417800)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Pakistan" data-kind="city" data-city="Lahore" data-db="43.2" data-wb="23.3" data-sourced="true">
+          <td class="l">Lahore</td>
+          <td>43.2</td>
+          <td>23.3</td>
+          <td class="l">LAHORE ALLAMA IQBAL INTL (WMO 416410)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Philippines <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Philippines — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Philippines" data-kind="city" data-city="Manila" data-db="34.5" data-wb="26.4" data-sourced="true">
+          <td class="l">Manila</td>
+          <td>34.5</td>
+          <td>26.4</td>
+          <td class="l">MANILA (WMO 984250)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Qatar <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Qatar — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Qatar" data-kind="city" data-city="Doha" data-db="44.3" data-wb="22.3" data-sourced="true">
+          <td class="l">Doha</td>
+          <td>44.3</td>
+          <td>22.3</td>
+          <td class="l">DOHA INTL (WMO 411700)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Russia <span class="muted">(2 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Russia — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Russia" data-kind="city" data-city="Moscow" data-db="29.9" data-wb="21.1" data-sourced="true">
+          <td class="l">Moscow</td>
+          <td>29.9</td>
+          <td>21.1</td>
+          <td class="l">MOSKVA VDNH (WMO 276120)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Russia" data-kind="city" data-city="Saint Petersburg" data-db="28.4" data-wb="19.6" data-sourced="true">
+          <td class="l">Saint Petersburg</td>
+          <td>28.4</td>
+          <td>19.6</td>
+          <td class="l">ST PETERSBURG PULKOVO (WMO 260630)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Saudi Arabia <span class="muted">(5 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Saudi Arabia — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Saudi Arabia" data-kind="city" data-city="Dammam" data-db="45.9" data-wb="22.9" data-sourced="true">
+          <td class="l">Dammam</td>
+          <td>45.9</td>
+          <td>22.9</td>
+          <td class="l">DHAHARAN KING ABDULAZIZ AB (WMO 404160)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Saudi Arabia" data-kind="city" data-city="Jeddah" data-db="41" data-wb="23.7" data-sourced="true">
+          <td class="l">Jeddah</td>
+          <td>41</td>
+          <td>23.7</td>
+          <td class="l">JEDDAH KING ABDULAZIZ INTL (WMO 410240)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Saudi Arabia" data-kind="city" data-city="Madinah" data-db="45.2" data-wb="18.8" data-sourced="true">
+          <td class="l">Madinah</td>
+          <td>45.2</td>
+          <td>18.8</td>
+          <td class="l">MEDINA PRINCE ABDULAZIZ INTL (WMO 404300)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Saudi Arabia" data-kind="city" data-city="Makkah" data-db="45.2" data-wb="24.5" data-sourced="true">
+          <td class="l">Makkah</td>
+          <td>45.2</td>
+          <td>24.5</td>
+          <td class="l">MAKKAH (WMO 410300)</td>
+          <td class="l">1994–2018</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Saudi Arabia" data-kind="city" data-city="Riyadh" data-db="44.9" data-wb="19.5" data-sourced="true">
+          <td class="l">Riyadh</td>
+          <td>44.9</td>
+          <td>19.5</td>
+          <td class="l">RIYADH KING SALMAN AB (WMO 404380)</td>
+          <td class="l">1994–2014</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Singapore <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Singapore — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Singapore" data-kind="city" data-city="Singapore" data-db="33.2" data-wb="26.3" data-sourced="true">
+          <td class="l">Singapore</td>
+          <td>33.2</td>
+          <td>26.3</td>
+          <td class="l">SINGAPORE CHANGI INTL (WMO 486980)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>South Africa <span class="muted">(3 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">South Africa — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="South Africa" data-kind="city" data-city="Cape Town" data-db="31.9" data-wb="19.8" data-sourced="true">
+          <td class="l">Cape Town</td>
+          <td>31.9</td>
+          <td>19.8</td>
+          <td class="l">CAPE TOWN INTL (WMO 688160)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="South Africa" data-kind="city" data-city="Durban" data-db="30.2" data-wb="23.9" data-sourced="true">
+          <td class="l">Durban</td>
+          <td>30.2</td>
+          <td>23.9</td>
+          <td class="l">DURBAN (WMO 685880)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="South Africa" data-kind="city" data-city="Johannesburg" data-db="29.1" data-wb="14.8" data-sourced="true">
+          <td class="l">Johannesburg</td>
+          <td>29.1</td>
+          <td>14.8</td>
+          <td class="l">JOHANNESBURG INTL (WMO 683680)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Spain <span class="muted">(3 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Spain — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Spain" data-kind="city" data-city="Barcelona" data-db="30.9" data-wb="23.5" data-sourced="true">
+          <td class="l">Barcelona</td>
+          <td>30.9</td>
+          <td>23.5</td>
+          <td class="l">BARCELONA AP (WMO 081810)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Spain" data-kind="city" data-city="Madrid" data-db="36.8" data-wb="18.4" data-sourced="true">
+          <td class="l">Madrid</td>
+          <td>36.8</td>
+          <td>18.4</td>
+          <td class="l">MADRID-BARAJAS AP (WMO 082210)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Spain" data-kind="city" data-city="Seville" data-db="39.2" data-wb="21.4" data-sourced="true">
+          <td class="l">Seville</td>
+          <td>39.2</td>
+          <td>21.4</td>
+          <td class="l">SEVILLA AP (WMO 083910)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Sri Lanka <span class="muted">(1 sourced city)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Sri Lanka — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Sri Lanka" data-kind="city" data-city="Colombo" data-db="33.1" data-wb="24.7" data-sourced="true">
+          <td class="l">Colombo</td>
+          <td>33.1</td>
+          <td>24.7</td>
+          <td class="l">KATUNAYAKE (WMO 434500)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Thailand <span class="muted">(3 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Thailand — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Thailand" data-kind="city" data-city="Bangkok" data-db="36.2" data-wb="26.9" data-sourced="true">
+          <td class="l">Bangkok</td>
+          <td>36.2</td>
+          <td>26.9</td>
+          <td class="l">BANGKOK METROPOLIS (WMO 484550)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Thailand" data-kind="city" data-city="Chiang Mai" data-db="38.1" data-wb="22.8" data-sourced="true">
+          <td class="l">Chiang Mai</td>
+          <td>38.1</td>
+          <td>22.8</td>
+          <td class="l">CHIANG MAI INTL (WMO 483270)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Thailand" data-kind="city" data-city="Phuket" data-db="34.9" data-wb="26.2" data-sourced="true">
+          <td class="l">Phuket</td>
+          <td>34.9</td>
+          <td>26.2</td>
+          <td class="l">PHUKET (WMO 485640)</td>
+          <td class="l">shorter than 1994–2019</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Turkey <span class="muted">(2 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Turkey — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Turkey" data-kind="city" data-city="Ankara" data-db="33.9" data-wb="17" data-sourced="true">
+          <td class="l">Ankara</td>
+          <td>33.9</td>
+          <td>17</td>
+          <td class="l">ANKARA ESENBOGA (WMO 171280)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Turkey" data-kind="city" data-city="Istanbul" data-db="32.1" data-wb="21.5" data-sourced="true">
+          <td class="l">Istanbul</td>
+          <td>32.1</td>
+          <td>21.5</td>
+          <td class="l">ISTANBUL ATATURK (WMO 170600)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>United Arab Emirates <span class="muted">(7 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">United Arab Emirates — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="United Arab Emirates" data-kind="city" data-city="Abu Dhabi" data-db="45.1" data-wb="23" data-sourced="true">
+          <td class="l">Abu Dhabi</td>
+          <td>45.1</td>
+          <td>23</td>
+          <td class="l">ABU DHABI INTL (WMO 412170)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Arab Emirates" data-kind="city" data-city="Ajman" data-db="44.3" data-wb="23.5" data-sourced="true">
+          <td class="l">Ajman</td>
+          <td>44.3</td>
+          <td>23.5</td>
+          <td class="l">SHARJAH INTL (WMO 411960)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Arab Emirates" data-kind="city" data-city="Al Ain" data-db="46" data-wb="22.5" data-sourced="true">
+          <td class="l">Al Ain</td>
+          <td>46</td>
+          <td>22.5</td>
+          <td class="l">AL AIN INTL (WMO 412180)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Arab Emirates" data-kind="city" data-city="Dubai" data-db="43.3" data-wb="23.6" data-sourced="true">
+          <td class="l">Dubai</td>
+          <td>43.3</td>
+          <td>23.6</td>
+          <td class="l">DUBAI INTL (WMO 411940)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Arab Emirates" data-kind="city" data-city="Fujairah" data-db="42.9" data-wb="21.9" data-sourced="true">
+          <td class="l">Fujairah</td>
+          <td>42.9</td>
+          <td>21.9</td>
+          <td class="l">FUJAIRAH INTL (WMO 411980)</td>
+          <td class="l">shorter than 1994–2019</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Arab Emirates" data-kind="city" data-city="Ras Al Khaimah" data-db="44.7" data-wb="24.4" data-sourced="true">
+          <td class="l">Ras Al Khaimah</td>
+          <td>44.7</td>
+          <td>24.4</td>
+          <td class="l">RAS AL KHAIMAH INTL (WMO 411840)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Arab Emirates" data-kind="city" data-city="Sharjah" data-db="44.3" data-wb="23.5" data-sourced="true">
+          <td class="l">Sharjah</td>
+          <td>44.3</td>
+          <td>23.5</td>
+          <td class="l">SHARJAH INTL (WMO 411960)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>United Kingdom <span class="muted">(6 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">United Kingdom — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="United Kingdom" data-kind="city" data-city="Birmingham" data-db="26.8" data-wb="18.1" data-sourced="true">
+          <td class="l">Birmingham</td>
+          <td>26.8</td>
+          <td>18.1</td>
+          <td class="l">BIRMINGHAM (WMO 035340)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Kingdom" data-kind="city" data-city="Bristol" data-db="26.7" data-wb="18.3" data-sourced="true">
+          <td class="l">Bristol</td>
+          <td>26.7</td>
+          <td>18.3</td>
+          <td class="l">BRISTOL WEATHER CENTRE (WMO 037260)</td>
+          <td class="l">1990–2001</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Kingdom" data-kind="city" data-city="Edinburgh" data-db="22.2" data-wb="16.8" data-sourced="true">
+          <td class="l">Edinburgh</td>
+          <td>22.2</td>
+          <td>16.8</td>
+          <td class="l">EDINBURGH AP (WMO 031600)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Kingdom" data-kind="city" data-city="Glasgow" data-db="23.2" data-wb="17.2" data-sourced="true">
+          <td class="l">Glasgow</td>
+          <td>23.2</td>
+          <td>17.2</td>
+          <td class="l">GLASGOW AP (WMO 031400)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Kingdom" data-kind="city" data-city="London" data-db="28.4" data-wb="18.5" data-sourced="true">
+          <td class="l">London</td>
+          <td>28.4</td>
+          <td>18.5</td>
+          <td class="l">LONDON WC CLERKENWELL (WMO 037790)</td>
+          <td class="l">1994–2010</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United Kingdom" data-kind="city" data-city="Manchester" data-db="25.8" data-wb="18.1" data-sourced="true">
+          <td class="l">Manchester</td>
+          <td>25.8</td>
+          <td>18.1</td>
+          <td class="l">MANCHESTER AP (WMO 033340)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>United States <span class="muted">(15 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">United States — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Atlanta" data-db="34.3" data-wb="23.2" data-sourced="true">
+          <td class="l">Atlanta</td>
+          <td>34.3</td>
+          <td>23.2</td>
+          <td class="l">ATLANTA HARTSFIELD-JACKSON (WMO 722190)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Boston" data-db="32.7" data-wb="22.8" data-sourced="true">
+          <td class="l">Boston</td>
+          <td>32.7</td>
+          <td>22.8</td>
+          <td class="l">BOSTON LOGAN (WMO 725090)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Chicago" data-db="32.9" data-wb="23.4" data-sourced="true">
+          <td class="l">Chicago</td>
+          <td>32.9</td>
+          <td>23.4</td>
+          <td class="l">CHICAGO O'HARE (WMO 725300)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Dallas" data-db="38.6" data-wb="23.4" data-sourced="true">
+          <td class="l">Dallas</td>
+          <td>38.6</td>
+          <td>23.4</td>
+          <td class="l">DALLAS FORT WORTH (WMO 722590)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Denver" data-db="34.9" data-wb="15.5" data-sourced="true">
+          <td class="l">Denver</td>
+          <td>34.9</td>
+          <td>15.5</td>
+          <td class="l">DENVER INTL (WMO 725650)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Houston" data-db="36.4" data-wb="24.8" data-sourced="true">
+          <td class="l">Houston</td>
+          <td>36.4</td>
+          <td>24.8</td>
+          <td class="l">HOUSTON BUSH (WMO 722430)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Las Vegas" data-db="42.8" data-wb="19.4" data-sourced="true">
+          <td class="l">Las Vegas</td>
+          <td>42.8</td>
+          <td>19.4</td>
+          <td class="l">LAS VEGAS MCCARRAN (WMO 723860)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Los Angeles" data-db="29.3" data-wb="17.4" data-sourced="true">
+          <td class="l">Los Angeles</td>
+          <td>29.3</td>
+          <td>17.4</td>
+          <td class="l">LOS ANGELES INTL (WMO 722950)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Miami" data-db="33.3" data-wb="25.4" data-sourced="true">
+          <td class="l">Miami</td>
+          <td>33.3</td>
+          <td>25.4</td>
+          <td class="l">MIAMI NHC (WMO 722020)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="New York" data-db="33.7" data-wb="23.3" data-sourced="true">
+          <td class="l">New York</td>
+          <td>33.7</td>
+          <td>23.3</td>
+          <td class="l">NEW YORK LA GUARDIA (WMO 725030)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Orlando" data-db="34.3" data-wb="24.8" data-sourced="true">
+          <td class="l">Orlando</td>
+          <td>34.3</td>
+          <td>24.8</td>
+          <td class="l">ORLANDO INTL (WMO 722050)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Phoenix" data-db="43.6" data-wb="20.7" data-sourced="true">
+          <td class="l">Phoenix</td>
+          <td>43.6</td>
+          <td>20.7</td>
+          <td class="l">PHOENIX SKY HARBOR (WMO 722780)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="San Francisco" data-db="28.3" data-wb="17.1" data-sourced="true">
+          <td class="l">San Francisco</td>
+          <td>28.3</td>
+          <td>17.1</td>
+          <td class="l">SAN FRANCISCO INTL (WMO 724940)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Seattle" data-db="30" data-wb="18.4" data-sourced="true">
+          <td class="l">Seattle</td>
+          <td>30</td>
+          <td>18.4</td>
+          <td class="l">SEATTLE TACOMA (WMO 727930)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="United States" data-kind="city" data-city="Washington" data-db="34.7" data-wb="24.2" data-sourced="true">
+          <td class="l">Washington</td>
+          <td>34.7</td>
+          <td>24.2</td>
+          <td class="l">WASHINGTON RONALD REAGAN (WMO 724050)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+      <details class="dc-country">
+        <summary>Vietnam <span class="muted">(2 sourced cities)</span></summary>
+      <div class="table-scroll">
+      <table class="num-table dc-table">
+        <caption class="dc-caption">Vietnam — sourced ASHRAE 2021 outdoor design conditions</caption>
+        <thead>
+          <tr><th class="l">City</th><th>Summer DB °C</th><th>WB °C</th><th class="l">Source station</th><th class="l">Record period / note</th></tr>
+        </thead>
+        <tbody>
+        <tr class="dc-sourced" data-country="Vietnam" data-kind="city" data-city="Hanoi" data-db="36.2" data-wb="27.4" data-sourced="true">
+          <td class="l">Hanoi</td>
+          <td>36.2</td>
+          <td>27.4</td>
+          <td class="l">HA NOI (WMO 488200)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        <tr class="dc-sourced" data-country="Vietnam" data-kind="city" data-city="Ho Chi Minh City" data-db="35.8" data-wb="25.7" data-sourced="true">
+          <td class="l">Ho Chi Minh City</td>
+          <td>35.8</td>
+          <td>25.7</td>
+          <td class="l">HO CHI MINH TAN SON NHAT INTL (WMO 489000)</td>
+          <td class="l">1994–2019 (standard)</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ======================= call to action ======================= -->
+  <section class="section">
+    <div class="wrap prose">
+      <h2>Calculate a cooling load for your own floor plan</h2>
+      <p>
+        LoadLens reads a floor plan PDF or an Excel / CSV room schedule, applies these design conditions,
+        and returns the room-wise cooling load in TR, L/s and watts — in your browser, nothing uploaded.
+      </p>
+      <a class="btn btn-lg" href="app.html">Calculate a cooling load for your own floor plan</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <h3>LoadLens</h3>
+      <p>Room-wise cooling load from a floor plan PDF — TR, L/s and watts, in your browser.</p>
+      <p class="small"><a href="https://loadlens.net/">LoadLens — loadlens.net</a></p>
+      <p class="small"><a href="index.html">Home</a></p>
+    </div>
+    <div>
+      <h3>Pages</h3>
+      <ul>
+        <li><a href="app.html">Calculator</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="design-conditions.html">Design conditions (India)</a></li>
+        <li><a href="help.html">Help / FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Project</h3>
+      <ul>
+        <li><a href="https://github.com/ratul-sraj/hvac">Source on GitHub</a></li>
+        <li><a href="https://github.com/ratul-sraj/hvac/blob/main/docs/CLIMATE-SOURCES.md">Climate sources</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap footer-bottom">
+    Generated from <code>js/climates.js</code> and <code>docs/CLIMATE-SOURCES.md</code> by
+    <code>tools/gen-design-conditions.mjs</code> on 2026-10-02 — do not edit by hand.
+    ASHRAE 2021 Handbook—Fundamentals, Ch.14, 0.4% annual cooling dry bulb / mean coincident wet bulb.
+    <strong>Reference only — a qualified HVAC engineer must verify every number.</strong>
+  </div>
+</footer>
+
+<script src="js/nav.js" defer></script>
+</body>
+</html>

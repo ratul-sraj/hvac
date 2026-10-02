@@ -2826,6 +2826,28 @@ function exportCsv() {
   setStatus('ok', 'CSV downloaded.');
 }
 
+/** The tool's own address, shown once in the report foot and in the CSV, and copied by the share
+ *  button so a user can hand the calculator to a colleague in one click. */
+const LOADLENS_URL = 'https://loadlens.net/';
+
+/** Copy LOADLENS_URL to the clipboard. Plain words, no pop-ups: the confirmation and the failure
+ *  both go through the normal status line, so the app's behaviour is unchanged where they are not
+ *  wanted. If clipboard access is unavailable or refused (older browser, denied permission) it
+ *  degrades quietly to a warning that names the address instead of throwing. */
+function copyLoadLensLink() {
+  const done = () => setStatus('ok', 'LoadLens link copied. Paste it to a colleague who needs a quick load check.');
+  const fail = () => setStatus('warn', `Could not copy automatically. The address is ${LOADLENS_URL} — type it in the address bar or copy it from there.`);
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(LOADLENS_URL).then(done).catch(fail);
+    } else {
+      fail();
+    }
+  } catch (e) {
+    fail();
+  }
+}
+
 /** Open the loading report in the page, and print it from there.
  *  It used to be written into a window from window.open(), which a pop-up blocker refuses — and which
  *  an embedded preview pane blocks outright, where "allow pop-ups for this page" cannot help because
@@ -3092,6 +3114,24 @@ function wire() {
   if (el.reportClose) el.reportClose.addEventListener('click', () => { closeReport(); });
   $('#btnSave').addEventListener('click', saveProjectFile);
   $('#btnOpen').addEventListener('click', () => el.jsonInput.click());
+
+  // One quiet way to hand the tool to a colleague. Built here rather than in the HTML so the share
+  // control sits with the export buttons without a page change; the same address is printed in every
+  // report foot and CSV, so a forwarded file carries it too.
+  {
+    const anchor = $('#btnPrint2');
+    if (anchor && anchor.parentNode) {
+      const shareBtn = document.createElement('button');
+      shareBtn.type = 'button';
+      shareBtn.id = 'btnShare';
+      shareBtn.className = 'btn btn-ghost';
+      shareBtn.textContent = 'Copy link to LoadLens';
+      shareBtn.title = `Copies ${LOADLENS_URL} to the clipboard so you can paste it to a colleague`;
+      shareBtn.addEventListener('click', copyLoadLensLink);
+      anchor.parentNode.insertBefore(shareBtn, anchor.nextSibling);
+    }
+  }
+
   el.jsonInput.addEventListener('change', () => {
     if (el.jsonInput.files && el.jsonInput.files[0]) openProjectFile(el.jsonInput.files[0]);
     el.jsonInput.value = '';

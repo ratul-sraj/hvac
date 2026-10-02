@@ -174,6 +174,14 @@ This panel is what you show when someone asks *"where does the number come from?
 - **Save project (.json)** and **Open project (.json)** keep a file copy of the rooms and settings,
   so you can move the work to another computer.
 
+Every export also carries one small, honest line at the end — the tool's own address and the plain
+sentence `free ... your drawing is never uploaded`. In the **CSV** it is a single trailing `#` comment
+line (kept free of commas, so it stays a plain comment rather than a quoted field), so the room rows
+above it still parse exactly as before; in the **printed report** it is a small muted line at the very
+foot of the sheet, after the signature block. It is there only so that when you email a load sheet to
+a colleague, they can see which tool produced it and open it themselves — nothing about the
+calculation changes.
+
 Your work is also saved automatically in the browser (local storage), so closing the tab and
 opening the page again restores the last table. **Clear all rooms** empties it.
 

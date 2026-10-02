@@ -129,7 +129,12 @@ export function toCsv(project, calcResult) {
     ['# Supply dT (K)', p.supplyDt], ['# Glazing % of wall', p.wwr],
     [],
   ];
-  const body = meta.concat(rows).map((r) => r.map(csvCell).join(',')).join('\r\n');
+  // One trailing comment line carries the tool's own address. The '#' prefix matches the header
+  // block, and the wording deliberately carries no comma, so the line stays a genuine unquoted '#'
+  // comment — a parser that reads the data rows (they start with 'yes,' / 'no,') is untouched, and a
+  // human opening the file in Excel sees it clearly as a note. See docs/USER-GUIDE.md.
+  const credit = [['# Calculated with LoadLens - loadlens.net - free and runs in your browser. Your drawing is never uploaded.']];
+  const body = meta.concat(rows, credit).map((r) => r.map(csvCell).join(',')).join('\r\n');
   return '\ufeff' + body + '\r\n';
 }
 
@@ -162,6 +167,9 @@ const REPORT_CSS = `
   .notes ul { margin: 6px 0 0 18px; padding: 0; }
   .notes li { margin-bottom: 4px; }
   .muted { color: #5b6774; }
+  /* The tool's own credit: small and muted at the very foot of the sheet, after the signature block,
+     so it never competes with the calculation. It is a plain line of text, not a graphical advert. */
+  .credit { margin: 10px 0 0; color: #8a97a3; font-size: 11px; }
   .sig { margin-top: 26px; display: flex; gap: 40px; }
   .sig div { flex: 1; border-top: 1px solid #444; padding-top: 4px; color: #444; }
   .btnbar { margin-bottom: 14px; }
@@ -389,6 +397,8 @@ ${skippedNote}
 
 <p class="muted">LoadLens &mdash; <a href="https://loadlens.net/">loadlens.net</a> &middot;
 Source on GitHub: <a href="https://github.com/ratul-sraj/hvac">github.com/ratul-sraj/hvac</a></p>
+
+<p class="credit">Calculated with LoadLens - loadlens.net &middot; free, runs in your browser, your drawing is never uploaded.</p>
 </body>
 </html>`;
   return html;

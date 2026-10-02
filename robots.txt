@@ -1,0 +1,7 @@
+# LoadLens — https://loadlens.net/
+# Everything here is public and may be crawled. Nothing is blocked.
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://loadlens.net/sitemap.xml

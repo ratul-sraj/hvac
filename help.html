@@ -3,14 +3,142 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Help and FAQ — LoadLens</title>
+<title>LoadLens Help — Floor Plan Reading &amp; Cooling Loads</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta name="description" content="LoadLens help: which files work (text-layer PDFs, Excel/CSV room schedules, scanned sheets with OCR), how to fix a wrong room, what Include does, what to change when the load looks too high or low, where the numbers are in the report, and where your files go.">
+<meta name="description" content="LoadLens help and FAQ: which PDFs work, the OCR option, fixing a wrong room, drawing the real room shape, why a load looks high, and where your files go.">
 <link rel="canonical" href="https://loadlens.net/help.html">
 <meta property="og:url" content="https://loadlens.net/help.html">
 <meta property="og:image" content="https://loadlens.net/favicon.svg">
 <meta name="twitter:image" content="https://loadlens.net/favicon.svg">
 <link rel="stylesheet" href="css/landing.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Why does a scanned drawing find no rooms? What does the OCR box do?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A scan or an image-only PDF has no text layer, so the normal reader finds no rooms. Tick \"Read scanned drawings with OCR (slow)\" to read it with OCR, which runs in your browser and downloads about 11 MB of OCR engine from this site, not a CDN. OCR is slow (about 4 seconds per page) and a scanned drawing usually still returns 0 rooms because the small area labels cannot be recovered; for a scan, import the Excel or CSV room schedule instead."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I import an Excel or CSV room schedule?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Export the room schedule from Revit or Excel as .xlsx, .csv or .tsv and drag it onto the same drop zone used for PDFs. The reader understands ordinary schedule headings such as Room / Space Name, Area, Level, Room No., Type and People, accepts areas in m2 or ft2, and turns dimensions like 4500x3600 into an area."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "A room name, area or level is wrong. How do I fix it?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Every cell in the room table is editable, and changing a value recalculates the load immediately. Click a cell to fix the name or area, use the Space type dropdown to change the room type, use the x button to delete a row that is not a room, or untick In for a real room that is not air conditioned."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I add a room that the PDF reader missed?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Use the plan view: once a drawing or the sample is loaded, section 3 \"Draw rooms on the plan\" renders the page and lets you drag a rectangle over the room at the drawing scale. The new room is created and counted in the load, and its load breakdown opens so you can set the name, space type, orientation and glazing."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "My room is not a rectangle. Can I draw its real shape?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. In the plan view use Draw shape and click each corner of the room. Close the shape by clicking the first corner, double-clicking, or pressing Enter; Backspace removes the last corner and Esc cancels. The room's area becomes the shape's own area, so an L-shaped room is measured as an L, and a self-crossing shape is refused."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "I drew a room box in the wrong place. Can I move, resize or delete it?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Switch the plan view to Select / edit: drag the body of a box to move it, drag a corner handle to resize it, which re-measures the room's area, or select it and press Delete to remove it. A drawn shape shows corner handles and edge dots for reshaping. Moving and resizing are saved with the project."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I see all the rooms from the table on the drawing?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Click \"Place all rooms on the plan\" to give every room whose label the reader found a locator box on the sheet, and \"Remove placed rooms\" to take them away. The box is a marker centred on the room's label and sized from the room's own area, not a traced outline, and placing or removing boxes never changes the load."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What does the \"In\" (Include) tick do, and why are toilets and stairs excluded?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The In column decides whether a row is counted in the load. A ticked room is included in the room totals, the level subtotals and the TR / L/s figures; an unticked room is still shown and printed as not air conditioned but adds to no total. Toilets, staircases, shafts, store rooms and similar spaces are unticked by default because they are normally not cooled."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "The load looks too high (or too low). What should I check first?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Check, in order: origin / orientation (the default West has the worst solar gain), glass area and exposed wall, the Roof tick (only the top floor), the room type and people count, the fresh-air rate, the safety factor, the design conditions for the city, infiltration and the In column. A difference of 10-15% against a full RTS calculation is normal; a difference of 2x usually means an input, not the method."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Where do the numbers end up in the report?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The printable report has six sections: project and design conditions, assumptions used, room-wise load, load summary, level-wise subtotal, and important notes with signature lines. On screen the same figures are in the load summary cards, the level-wise subtotal table and the room table, and the CSV export carries every input and result in one row per room."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I get a printable report or a PDF copy?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Press \"Print / Save PDF report\". The report opens over the page rather than in a new window, so a pop-up blocker cannot interfere. Use \"Print / Save as PDF\" on the report's bar and choose Save as PDF in the print dialog to keep an A4 landscape copy; Close or Escape returns to the calculator."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Where do my files go? Is my drawing uploaded anywhere?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nothing is uploaded to a third party: there is no cloud service, no analytics and no account. In the static version the PDF is read by pdf.js inside your browser; if you ran npm start, the PDF is posted to your own localhost server and parsed there, not stored. Your project is saved in your browser's local storage."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I use it on a phone or a tablet?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The pages are responsive down to a 390 px screen and the room table scrolls sideways instead of breaking. Reading and checking a few rooms on a phone at site works; editing a 300-room drawing is much easier on a laptop."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why are the rooms on the drawing boxes, and can they be their real shape?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A PDF's text says where a room is named and how big it is; the walls are separate lines in the file. \"Trace real outlines\" reads those lines and gives a room its real shape only where the name has an enclosed area and the traced area agrees with the area the plan states. You can also use Draw shape to click a room's corners yourself, and that shape's own area becomes the room's area. The load never changes on its own."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "LoadLens filled in the design conditions by itself - where did those numbers come from?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "On a first visit LoadLens fills the outdoor dry bulb and wet bulb using one free location lookup (country, region and city only) mapped through an editable table, and asks you to verify. The city rows are sourced from the ASHRAE 2021 Handbook - Fundamentals, Ch.14, 0.4% annual cooling dry bulb with the mean coincident wet bulb, and each station is listed in docs/CLIMATE-SOURCES.md. Rows that are not sourced are flagged indicative. Your own numbers always win."
+      }
+    }
+  ]
+}
+</script>
 </head>
 <body>
 
@@ -472,7 +600,9 @@
             Please do verify: the city rows of the table are now <b>sourced</b> — each carries the
             station it came from, listed city by city in
             <code>docs/CLIMATE-SOURCES.md</code> (ASHRAE 2021
-            <i>Fundamentals</i> Ch.14, 0.4% annual cooling dry bulb / mean coincident wet bulb). Rows
+            <i>Fundamentals</i> Ch.14, 0.4% annual cooling dry bulb / mean coincident wet bulb). The same
+            numbers, with the source station and record period for each one, are on the reference page
+            <a href="design-conditions.html">ASHRAE 2021 design conditions for Indian cities</a>. Rows
             that are <b>not</b> sourced are flagged <code>indicative</code> — a state/country-level
             estimate or a place with no station nearby — and for those the old advice stands: check
             them against ISHRAE / ASHRAE or your local code before you use the result. The table lives
@@ -525,6 +655,7 @@
         <li><a href="app.html">Calculator</a></li>
         <li><a href="about.html">About</a></li>
         <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="design-conditions.html">Design conditions (India)</a></li>
         <li><a href="help.html">Help / FAQ</a></li>
       </ul>
     </div>

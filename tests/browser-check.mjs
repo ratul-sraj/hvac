@@ -256,7 +256,49 @@ if (!sampleMissing) {
   ok("CSV has a row per room and the totals", csvLines.length > 100 && /TR/i.test(csv || ""),
     (csvLines[0] || "").slice(0, 140));
 
-  // 7b. supply dT = 0 must show "-" on screen and in the CSV / report, never Infinity (P2-3).
+  // 7b. product-led distribution, honestly: the export carries the tool's own address exactly once,
+  //     on its own '#' comment line at the very end — never inside a room row — so a parser that reads
+  //     the data rows starts and ends exactly as before.
+  {
+    const attr = "Calculated with LoadLens - loadlens.net";
+    const attrLines = csvLines.filter((l) => l.includes(attr));
+    const lastNonEmpty = [...csvLines].reverse().find((l) => l.trim() !== "") || "";
+    const roomLines = csvLines.filter((l) => /^(yes|no),/.test(l));
+    ok("the CSV carries the LoadLens credit exactly once, on its own final comment line",
+      attrLines.length === 1 && attrLines[0].startsWith("#") && lastNonEmpty.includes(attr),
+      `last line: "${lastNonEmpty.slice(0, 130)}"`);
+    ok("the LoadLens credit never appears inside a room row",
+      roomLines.length > 100 && roomLines.every((l) => !l.includes(attr)),
+      `${roomLines.length} room rows checked`);
+    // the room rows must still parse: same count, and the same TR total as the app shows on screen
+    const parseRow = (line) => {
+      const out = []; let cur = ""; let q = false;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (q) {
+          if (ch === '"' && line[i + 1] === '"') { cur += '"'; i += 1; }
+          else if (ch === '"') q = false;
+          else cur += ch;
+        } else if (ch === '"') q = true;
+        else if (ch === ",") { out.push(cur); cur = ""; }
+        else cur += ch;
+      }
+      out.push(cur);
+      return out;
+    };
+    const rowsParsed = roomLines.map(parseRow);
+    const includedTr = rowsParsed.filter((f) => f[0] === "yes").reduce((a, f) => a + (parseFloat(f[19]) || 0), 0);
+    const screenTr = await page.$eval("#summaryCards", (e) => {
+      const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+      return m ? parseFloat(m[1]) : NaN;
+    });
+    ok("the CSV room rows still parse to the same count and the same TR total as the app",
+      rowsParsed.length === roomLines.length && rowsParsed.every((f) => f.length === 24) &&
+        Number.isFinite(screenTr) && Math.abs(includedTr - screenTr) < 1.0,
+      `${rowsParsed.length} rows x 24 cols, CSV ${includedTr.toFixed(2)} TR vs screen ${screenTr} TR`);
+  }
+
+  // 7c. supply dT = 0 must show "-" on screen and in the CSV / report, never Infinity (P2-3).
   {
     const readSupply = () => page.evaluate(() => {
       const cell = document.querySelector("#roomsBody tr .v-ls");
@@ -345,6 +387,25 @@ if (!sampleMissing) {
     ok("report has design conditions, country and room totals",
       /Design conditions/i.test(report.text) && /Total cooling load/i.test(report.text) &&
         /India/i.test(report.text) && /TR/.test(report.text), report.text.slice(0, 160));
+
+    // 8b. the report's own credit: one quiet line, exactly once, at the foot of the sheet — and the
+    //     report's total must be exactly the app's total, so the footer changes nothing in the maths.
+    const repAttr = "Calculated with LoadLens - loadlens.net";
+    const repAttrCount = (report.text.match(/Calculated with LoadLens - loadlens\.net/g) || []).length;
+    ok("the report carries the LoadLens credit exactly once, in plain honest words",
+      repAttrCount === 1 && /free, runs in your browser, your drawing is never uploaded/.test(report.text),
+      `${repAttrCount} occurrence(s)`);
+    const repTr = (report.text.match(/Total cooling load ([0-9.]+) TR/) || [])[1];
+    const screenTrRep = await page.$eval("#summaryCards", (e) => {
+      const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+      return m ? parseFloat(m[1]) : NaN;
+    });
+    ok("the report's total is unchanged by the credit and equals the app's total",
+      Number.isFinite(screenTrRep) && Number(repTr) === screenTrRep,
+      `report ${repTr} TR vs screen ${screenTrRep} TR`);
+    ok("the credit sits at the foot of the report, after the signature block",
+      report.text.indexOf(repAttr) > report.text.indexOf("Prepared by"),
+      `credit at ${report.text.indexOf(repAttr)}, signature at ${report.text.indexOf("Prepared by")}`);
     fs.writeFileSync(`${OUT}/report.html`, report.text.slice(0, 40000));
 
     // printing happens from the frame itself (same origin), so stub its print and press the button
@@ -373,6 +434,36 @@ if (!sampleMissing) {
         closed.hidden && !closed.reporting && closed.srcdocCleared, JSON.stringify(closed));
   } catch (e) {
     ok("the loading report opens without a pop-up window", false, "driver error: " + (e && e.message));
+  }
+
+  // 8c. the share control: one small, plain-words button that copies the tool's own address. The
+  //     clipboard write is stubbed so the check is deterministic and touches no real clipboard; the
+  //     confirmation must arrive on the normal status line (no pop-up), exactly like every other action.
+  {
+    const shared = await page.evaluate(async () => {
+      let copied = null;
+      let orig = null;
+      try { orig = navigator.clipboard; } catch (e) {}
+      const stub = { writeText: (t) => { copied = t; return Promise.resolve(); } };
+      try { Object.defineProperty(navigator, "clipboard", { value: stub, configurable: true }); }
+      catch (e) { try { navigator.clipboard = stub; } catch (e2) {} }
+      const btn = document.getElementById("btnShare");
+      const label = btn ? btn.textContent.trim() : null;
+      if (btn) btn.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const box = document.getElementById("statusBox");
+      const out = { exists: !!btn, label, copied,
+        status: box ? box.textContent : "", cls: box ? box.className : "" };
+      try { Object.defineProperty(navigator, "clipboard", { value: orig, configurable: true }); }
+      catch (e) {}
+      return out;
+    });
+    ok("one small 'copy the link' control exists, in plain words",
+      shared.exists && /copy link to loadlens/i.test(shared.label || ""), `label "${shared.label}"`);
+    ok("the control copies https://loadlens.net/ to the clipboard",
+      shared.copied === "https://loadlens.net/", `copied "${shared.copied}"`);
+    ok("the copy is confirmed on the normal status line, not a pop-up",
+      /\bcopied\b/i.test(shared.status) && /\bok\b/.test(shared.cls), `"${(shared.status || "").slice(0, 100)}"`);
   }
 
   // 9. reload restores state

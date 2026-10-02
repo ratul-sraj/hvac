@@ -127,6 +127,10 @@ PDF report** and let the report window appear (do not print).
 > engineer must check. The project can also be saved as a JSON file and re-opened on another
 > machine."
 
+And at the very foot of that report — and on the last line of the CSV — point at the credit and say:
+
+> "Every report you send carries the tool's address — here is where it shows."
+
 ### 4:15 – 5:00 — the honest close
 
 > "Two things I want to be clear about. This is a **handbook-level estimate**, not a design

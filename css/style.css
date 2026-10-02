@@ -771,3 +771,30 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   body.reporting .report-bar { display: none !important; }
   body.reporting .report-view { position: static; }
 }
+
+/* --- design-conditions.html — the generated ASHRAE 2021 reference table --------------------------
+   New page only. The shared chrome (nav, footer, prose, .num-table, .table-scroll) comes from
+   css/landing.css; these rules cover the indicative badge, the per-country blocks and the caption.
+   Scoped with .dc- so nothing else on the site is touched. */
+.dc-badge {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid #e8d7a6; background: var(--warn-soft); color: var(--warn);
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.dc-caption {
+  caption-side: top; text-align: left; padding: 8px 10px 6px;
+  color: var(--ink-soft); font-size: 12px;
+}
+.dc-table { min-width: 640px; }
+.dc-table td.l { max-width: 42ch; }
+.dc-country {
+  margin: 0 0 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); overflow: hidden;
+}
+.dc-country > summary {
+  cursor: pointer; padding: 11px 14px; font-weight: 600; color: var(--accent-dark);
+  list-style-position: inside;
+}
+.dc-country > summary:hover { background: var(--accent-soft); }
+.dc-country[open] > summary { border-bottom: 1px solid var(--line); }
+.dc-country .table-scroll { border: 0; border-radius: 0; }
