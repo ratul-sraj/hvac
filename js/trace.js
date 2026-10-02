@@ -246,6 +246,79 @@ export function cellToPoint(cx, cy, box, pxPerPt) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// 2b. Small-gap closing (OPT-IN)
+// ---------------------------------------------------------------------------------------------
+// A door opening is a deliberate hole in the wall linework: free space leaks straight through it, so
+// the flood fill that extracts one room's region walks out of the door and swallows the neighbour. A
+// morphological CLOSE — grow the wall mask by r pixels, then shrink it back by r — bridges any gap up
+// to ~2r wide and leaves every wall and every room the same size, except that the doorway is sealed.
+// It is OPT-IN (closeGaps: <pixels>, default 0 = off) so nothing that exists today changes.
+
+/**
+ * Grayscale/binary box MAX (dilation by a (2r+1)x(2r+1) square) along rows then columns. Exact for a
+ * square structuring element, and O(w*h) per pass regardless of r (two directional distance sweeps),
+ * so a radius of 6 costs no more than a radius of 1 — important because this runs in the browser.
+ * @returns {Uint8Array} a NEW grid (the input is never mutated)
+ */
+function boxDilate(src, w, h, r) {
+  const row = new Uint8Array(w * h);
+  const dw = new Int32Array(w);
+  for (let y = 0; y < h; y += 1) {
+    const base = y * w;
+    let last = -1e9;
+    for (let x = 0; x < w; x += 1) { if (src[base + x]) last = x; dw[x] = x - last; }
+    last = 1e9;
+    for (let x = w - 1; x >= 0; x -= 1) {
+      if (src[base + x]) last = x;
+      row[base + x] = Math.min(dw[x], last - x) <= r ? 1 : 0;
+    }
+  }
+  const out = new Uint8Array(w * h);
+  const dh = new Int32Array(h);
+  for (let x = 0; x < w; x += 1) {
+    let last = -1e9;
+    for (let y = 0; y < h; y += 1) { if (row[y * w + x]) last = y; dh[y] = y - last; }
+    last = 1e9;
+    for (let y = h - 1; y >= 0; y -= 1) {
+      if (row[y * w + x]) last = y;
+      out[y * w + x] = Math.min(dh[y], last - y) <= r ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+/**
+ * Morphological close of a wall grid: dilate by `radius` px, then erode by `radius` px. Seals gaps up
+ * to roughly 2*radius pixels wide (the rasterised door opening and small breaks in the linework)
+ * without moving a wall or shrinking a room by more than the stroke it already had.
+ * @param {Uint8Array} grid wall mask (1 = wall)
+ * @param {number} radius pixels; <= 0 returns the grid unchanged (so the default path is a no-op)
+ * @returns {Uint8Array} a NEW grid, or the input when radius <= 0
+ */
+export function morphClose(grid, w, h, radius) {
+  const r = Math.round(Number(radius) || 0);
+  if (r <= 0) return grid;
+  const dilated = boxDilate(grid, w, h, r);
+  const free = new Uint8Array(w * h);
+  for (let i = 0; i < free.length; i += 1) free[i] = dilated[i] ? 0 : 1;
+  const grownFree = boxDilate(free, w, h, r);               // erode(walls) == NOT dilate(NOT walls)
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < out.length; i += 1) out[i] = grownFree[i] ? 0 : 1;
+  return out;
+}
+
+/**
+ * Measured, recommended opt-in radius for closeGaps. Swept 0,1,2,3,4,6 against both real sheets:
+ * every radius in 1..6 leaves the LEVEL 11 name-only plan's auto-fill (21 of 56) and the 159-room
+ * fixture's trace coverage (105 of 159 accepted, 40 L-shaped rings) EXACTLY unchanged, while still
+ * bridging genuine hairline breaks up to ~2*6 px (6 pt ≈ 0.21 m at 1:100). Larger radii are needed to
+ * bridge a full ~0.8 m door, but on the measured LEVEL 11 sheet those rooms are joined by openings
+ * far wider than any door (the free space is one 3.0 M-cell component until r≈10), so no radius turns
+ * the merges into single rooms — see the module report. The DEFAULT stays 0 (off).
+ */
+export const RECOMMENDED_CLOSE_GAPS = 6;
+
+// ---------------------------------------------------------------------------------------------
 // 3. Regions
 // ---------------------------------------------------------------------------------------------
 
@@ -417,23 +490,22 @@ export function judgeTrace(tracedM2, statedArea, labelsInRegion, band = TRACE_BA
 }
 
 /**
- * The whole job for one page: walls + rooms -> an outline per room, or a reason why not.
- * @param {object} p
- * @param {Array} p.segments wall segments (already filtered to the plan's line class if desired)
- * @param {{x0,y0,x1,y1}} p.box  page MediaBox in PDF space
- * @param {Array<{id:any, at:{x,y}, area:number, name?:string}>} p.rooms  rooms that have a position
- * @param {number} p.denom drawing scale denominator (100 for 1:100)
- * @param {number} [p.pxPerPt] raster resolution (2 keeps a 3 px wall at 1:250 visible)
- * @param {number} [p.thickness] wall stroke in pixels
- * @param {object} [p.band]
- * @returns {{results: Array, stats: object}}
+ * The region-extraction core, shared by traceRooms() and traceRegions() so the two can never drift.
+ * Rasterise the walls (optionally closing small gaps first), flood fill the free space once, and pair
+ * every room label with the region it sits in.
+ * @returns {{w,h,pxPerPt,denom,box,grid,closeGaps,regions,labelsPerRegion,regionByRoom,regionOf,seeds}}
+ *   `regions` are raw internal regions ({cells, areaPx, bbox, index, key}); callers add rings/areas.
  */
-export function traceRooms(p) {
+function extractRegions(p) {
   const pxPerPt = p.pxPerPt || 2;
   const denom = p.denom || 100;
   const box = p.box;
   const rast = rasterizeWalls(p.segments, box, pxPerPt, p.thickness || 2);
-  const { w, h, grid } = rast;
+  const { w, h } = rast;
+  // OPT-IN gap closing: only when a caller asks (closeGaps > 0). Default 0 leaves the grid untouched,
+  // so every existing caller and test keeps its exact behaviour.
+  const gap = Math.round(Number(p.closeGaps) || 0);
+  const grid = gap > 0 ? morphClose(rast.grid, w, h, gap) : rast.grid;
   // A region far larger than any room in the table is an open area or a leak, not a room. Capping the
   // flood fill at a few times the largest stated area also keeps a hopeless line class (symbols instead
   // of walls) from spending ten seconds wallowing across the whole sheet.
@@ -478,6 +550,67 @@ export function traceRooms(p) {
     counts[index] += 1;
     labelsPerRegion.set(index, counts[index]);
   }
+  return { w, h, pxPerPt, denom, box, grid, closeGaps: gap, regions, labelsPerRegion, regionByRoom, regionOf, seeds };
+}
+
+// On a NAME-ONLY plan (the case this feature exists for) no room states an area, so traceRooms' cap —
+// a few times the largest STATED area — collapses to noise size and would discard every real room.
+// traceRegions() therefore caps at the whole raster instead: bounded, and it never invents a region.
+export const REGION_MAX_CELLS = 20_000_000;
+
+/**
+ * The enclosed regions themselves — rings, area and cell count — with no per-room verdict. This is the
+ * shape js/autotrace.js consumes directly: `{ id, rings, polygon, areaPt2, areaM2, closed, cells,
+ * labels, bbox }`. `closed` is true when the outline came back as at least one ring.
+ * @param {object} p  the same input as traceRooms (segments, box, rooms, denom, pxPerPt, thickness,
+ *   maxCells, and the opt-in closeGaps). When `maxCells` is omitted it defaults to REGION_MAX_CELLS so
+ *   a name-only plan (no stated areas) still yields its rooms.
+ * @returns {{regions: Array, stats: object}}
+ */
+export function traceRegions(p) {
+  const pxPerPt = p.pxPerPt || 2;
+  const bw = Math.max(1, Math.ceil((p.box.x1 - p.box.x0) * pxPerPt));
+  const bh = Math.max(1, Math.ceil((p.box.y1 - p.box.y0) * pxPerPt));
+  const core = extractRegions({ ...p, maxCells: p.maxCells != null ? p.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) });
+  const { w, box, pxPerPt: px, denom, regions, labelsPerRegion } = core;
+  const out = [];
+  for (const region of regions) {
+    const rings = outlineFromRegion(region, w, box, px);
+    const areaPt2 = outlineAreaPt2(rings);
+    out.push({
+      id: `reg${region.index}`,
+      rings,
+      polygon: rings[0] || [],
+      areaPt2,
+      areaM2: pt2ToM2(areaPt2, denom),
+      closed: rings.length > 0,
+      cells: region.areaPx,
+      labels: labelsPerRegion.get(region.key) || 0,
+      bbox: region.bbox,
+    });
+  }
+  return { regions: out, stats: {
+    regions: out.length, labels: p.rooms.length, closeGaps: core.closeGaps,
+    pxPerPt: px, denom, raster: `${core.w}x${core.h}`,
+  } };
+}
+
+/**
+ * The whole job for one page: walls + rooms -> an outline per room, or a reason why not.
+ * @param {object} p
+ * @param {Array} p.segments wall segments (already filtered to the plan's line class if desired)
+ * @param {{x0,y0,x1,y1}} p.box  page MediaBox in PDF space
+ * @param {Array<{id:any, at:{x,y}, area:number, name?:string}>} p.rooms  rooms that have a position
+ * @param {number} p.denom drawing scale denominator (100 for 1:100)
+ * @param {number} [p.pxPerPt] raster resolution (2 keeps a 3 px wall at 1:250 visible)
+ * @param {number} [p.thickness] wall stroke in pixels
+ * @param {number} [p.closeGaps] OPT-IN: close wall gaps up to ~2x this many pixels (0 = off, the default)
+ * @param {object} [p.band]
+ * @returns {{results: Array, stats: object}}
+ */
+export function traceRooms(p) {
+  const core = extractRegions(p);
+  const { w, box, pxPerPt, denom, regions, labelsPerRegion, regionByRoom, regionOf, seeds } = core;
   const results = [];
   for (const s of seeds) {
     const region = regionByRoom.get(s.room);
@@ -507,7 +640,7 @@ export function traceRooms(p) {
   return { results, stats: {
     labels: p.rooms.length, reached: regionByRoom.size, accepted,
     refused: results.length - accepted, impliedDenom: scale.denom, impliedFrom: scale.n,
-    raster: `${w}x${h}`, pxPerPt, denom,
+    raster: `${w}x${core.h}`, pxPerPt, denom,
   } };
 }
 

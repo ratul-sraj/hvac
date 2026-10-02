@@ -109,7 +109,7 @@
       "name": "Where do my files go? Is my drawing uploaded anywhere?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Nothing is uploaded to a third party: there is no cloud service, no third-party analytics, no tracking cookies and no account. The site keeps anonymous counts of which buttons are used (no cookie, no id, no personal data, and never your drawing or its contents). In the static version the PDF is read by pdf.js inside your browser; if you ran npm start, the PDF is posted to your own localhost server and parsed there, not stored. Your project is saved in your browser's local storage."
+        "text": "Your file is never sent to a third party. In the static copy (GitHub Pages) and in your own npm start, the reading stays on your computer: pdf.js reads the PDF in your browser, or your own localhost server parses it without storing it. On this site (loadlens.net), the PDF is posted to this site's own server so it can be read faster; it is parsed in memory and is not stored, and nothing from it - no file name, no room name, no drawing content - is logged. There is no third-party analytics, no tracking cookies and no account. The site keeps anonymous counts of which buttons are used and of coarse reader/source properties, plus the four utm campaign tags from the page URL if present - no cookie, no id, no IP address, and never your drawing or its contents. Your project is saved in your browser's local storage."
       }
     },
     {
@@ -341,7 +341,7 @@
                   <p>
             The drawing is kept in this browser, so reloading the page, or coming back tomorrow,
             brings the sheet back with your rooms already drawn on it &mdash; you do not have to find
-            the file again. It is still never uploaded anywhere. If a drawing is very large (over
+            the file again. It is never sent to a third party. If a drawing is very large (over
             40&nbsp;MB) or the browser has no storage room left, the app says so and the sheet is the
             only thing that will not come back.
           </p>
@@ -532,10 +532,11 @@
 
           <summary>Where do my files go? Is my drawing uploaded anywhere?</summary>
           <p>
-            <strong>Nothing is uploaded to a third party.</strong> There is no cloud service, no third-party
-            analytics, no tracking cookies and no account. The only measurement is an anonymous count of
-            which buttons are used &mdash; no cookie, no id, no personal data, and never your drawing or
-            anything from it.
+            <strong>Your file is never sent to a third party.</strong> There is no third-party analytics,
+            no tracking cookies and no account. The only measurement is an anonymous count of which buttons
+            are used and of coarse reader/source properties, plus the four <code>utm_</code> campaign tags
+            from the page URL if an ad sent you here &mdash; no cookie, no id, no IP address, no file name,
+            no room name, and never anything from your drawing.
           </p>
           <ul>
             <li><strong>Static version (GitHub Pages):</strong> the PDF is read by pdf.js inside your own
@@ -543,12 +544,20 @@
               computer and no network request carries it.</li>
             <li><strong>Local server version (you ran <code>npm start</code>):</strong> the PDF is posted to
               <code>http://localhost:3000</code> &mdash; your own machine &mdash; parsed there and not stored.
-              Room schedules and OCR still run in the browser. The page tells you which mode it is in:
-              <em>Reading PDFs in your browser</em> or <em>Reading PDFs on the server</em>.</li>
+              Room schedules and OCR still run in the browser.</li>
+            <li><strong>Hosted version (this site, loadlens.net):</strong> the PDF is posted to
+              <strong>this site's own server</strong> so it can be read faster. It is parsed in memory and is
+              <strong>not stored</strong>, and nothing from it &mdash; no file name, no room name, no drawing
+              content &mdash; is logged. It is not sent to any third party.</li>
             <li><strong>OCR (optional):</strong> the OCR engine (about 11 MB of wasm) is downloaded once from
               this same site, not from a CDN, and the reading happens in your browser. Your file is never
               uploaded to a third party.</li>
           </ul>
+          <p>
+            The page tells you which mode it is in:
+            <em>PDF drawings and CSV / TSV / Excel room schedules: in your browser.</em> or
+            <em>PDF drawings: on the server (faster).</em>
+          </p>
           <p>
             Your project (rooms and settings) is saved in your browser's own local storage so a reload
             restores it. Use <strong>Save project (.json)</strong> if you want a file you can move to another
@@ -675,7 +684,7 @@
   <div class="wrap footer-bottom">
     Simplified ASHRAE / Carrier E-20 style cooling load estimate.
     <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
-    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or on your own server if you run <code>npm start</code>.
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or &mdash; on loadlens.net &mdash; posted to this site's own server so it can be read faster; it is not stored and nothing from it is logged.
   </div>
 </footer>
 

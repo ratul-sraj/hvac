@@ -5,8 +5,8 @@ schedule** or a **scanned sheet (optional OCR)** and estimates the **cooling loa
 of the whole building: sensible and latent heat in watts, tonnes of refrigeration (TR), supply air
 in L/s, fresh-air L/s and the ft²/tonne figure. You check and correct the rooms in a table, set the
 design conditions and the construction assumptions, then export a CSV or a printable report.
-Everything runs on your own computer — nothing is uploaded anywhere on its own, and no login is
-needed.
+Everything runs in your browser or on your own machine — your file is never sent to a third party —
+and no login is needed.
 
 The same page also works the other way: type the rooms in by hand, or start from an empty table,
 if the PDF cannot be read.
@@ -15,14 +15,16 @@ if the PDF cannot be read.
 
 ## 1. How to open it
 
-There are two copies of the same app.
+There are three ways to use the same app: the hosted copy, the static copy, and your own local server.
 
 **A. On the web — https://loadlens.net/ (nothing to install)**
 
 The live copy is at **https://loadlens.net/**, and the calculator is
-**https://loadlens.net/app.html**. Open it and click **Open the calculator**. On this copy the PDF is
-read inside your browser, so it works offline and needs no sign-up. The same static copy is also
-served from GitHub Pages (`ratul-sraj/hvac`); that address is shown in the repository under
+**https://loadlens.net/app.html**. Open it and click **Open the calculator**. On this copy a PDF is
+posted to **this site's own server** so it can be read faster; it is parsed in memory, is
+**not stored**, and nothing from it is logged. It is never sent to a third party, and no sign-up is
+needed. The same app is **also** served as a static copy from GitHub Pages (`ratul-sraj/hvac`) — there
+the PDF never leaves your browser tab at all; that address is shown in the repository under
 **Settings → Pages**.
 
 **B. On your own PC (full version: server reads the PDFs)**
@@ -37,9 +39,11 @@ Then open **http://localhost:3000/** in your browser. Use `PORT=8080 npm start` 
 busy. Press `Ctrl + C` in the terminal to stop it.
 
 When the page is served by this server, the line under "2. Upload a drawing or a room schedule" says
-**"Reading PDFs on the server (faster)"** and the PDF is parsed by Node instead of by your browser.
-If the server is not answering, the same page falls back to reading the PDF in the browser by
-itself and says so. You never have to choose.
+**"PDF drawings: on the server (faster). CSV / TSV / Excel room schedules: in your browser."** and
+the PDF is parsed by Node instead of by your browser. On the static / GitHub Pages copy the same line
+says **"PDF drawings and CSV / TSV / Excel room schedules: in your browser."** If the server is not
+answering, the page falls back to reading the PDF in the browser by itself and says so. You never have
+to choose.
 
 For deploying to a real server (Docker, Render, Railway, Fly.io) see [the deploy guide](DEPLOY.md).
 
@@ -86,7 +90,18 @@ Drag a file onto the dashed box (or click it and choose the file). The drop zone
 You can select several files at once — up to 10 files per upload, max 25 MB each. Two buttons help
 you test:
 
-- **Try sample drawing** loads `samples/sample-plan.pdf` (the copy the site serves), falling back to `tests/samples/sample-plan.pdf`, a synthetic 3-page sample building.
+- **Try sample drawing** loads a **real** floor plan: **LEVEL 11 FLOOR PLAN**, a genuine CAD sheet
+  used under **CC BY-SA 4.0** (the credit is at the foot of the plan panel, section 3; the full entry
+  is in `docs/SAMPLE-CREDITS.md` and on the About page). That sheet prints room **names** but no room
+  **areas**, so its rooms arrive with their areas **unknown** and are **left out of the load** until
+  you give each one an area — type it in the **Area** column, or draw the room's outline on the plan
+  (see [section 3](#3-drawing-rooms-on-the-plan)). The old synthetic 3-page sample is still shipped as
+  the test fixture and can be loaded for the full-building numbers with the unadvertised
+  `app.html?sample=synthetic`.
+- **Try a house plan** loads a second **real** sheet: **BALLARAT Waller Estate Floor plan**, a small
+  house, used under **CC BY-SA 3.0** (credited the same way). Its rooms are more enclosed than the
+  office floor's, so **Fill areas from the drawing** succeeds on more of them — it is the better sample
+  to show what automatic area-filling can do (see the measured note further down).
 - **Add room manually** adds one empty room you can type into.
 
 **Reading a scanned drawing.** A scan or a photo has no text layer, so the normal reader finds
@@ -124,6 +139,36 @@ numbers floor by floor — which is how you normally report a job.
 
 For the sample the totals are: **7,006.8 m² conditioned**, **363.86 TR**, **52,157 L/s supply air**,
 **6,995 L/s fresh air**, about **207 ft²/TR**.
+
+> **Two samples, do not mix them up.** The numbers just above are the **synthetic** 3-page fixture
+> (`tests/samples/sample-plan.pdf`), which is still what the automated tests use; load it with
+> `app.html?sample=synthetic` if you want those exact figures. The **Try sample drawing** button loads
+> the **real** LEVEL 11 FLOOR PLAN instead (credit: Vivianwwj / Wikimedia Commons, CC BY-SA 4.0 —
+> see `docs/SAMPLE-CREDITS.md`). That sheet prints **56 room names and no areas**, so the table comes
+> up with **56 rows, every area blank and nothing included** — the load reads **0.00 TR** and the
+> parser note says plainly *"no printed areas found — 56 room names detected"*. Nothing is invented:
+> you give each room an area first, and only then does it count.
+
+### The real sample: giving the rooms their areas
+
+The LEVEL 11 sheet is a real drawing, and real drawings often carry no room areas. So the honest
+workflow is **area first, then (optionally) a traced outline** — not the other way round:
+
+1. **Give a room an area.** Either type it straight into the **Area** column, or use the plan view:
+   in **Draw shape** mode **drag a rectangle** over the room, and in the chooser set the shape to that
+   room's existing row (the shape's area becomes the room's area). You can also type an area and then
+   tick **In**.
+2. **Tick Include** on the room (or use **Select all → Include** for the ones you want counted).
+   **Rooms included** in the summary goes up and the total load starts to move.
+3. **Then "Trace real outlines" can help.** It reads the plan's own wall lines and gives a room a real
+   outline **only when the traced area agrees with the area you already stated**. It never invents an
+   area: with no area set it says *"No room carries both a position on the sheet and an area, so there
+   is nothing to trace."* So trace after the areas are in, not before.
+
+`Place all rooms on the plan` also needs an area: it sizes each locator box back from the room's own
+area, and with the areas unknown it reports *"56 have no usable area to size a box from"* and leaves
+them in the table only.
+
 
 ### Step 4 — fix the wrong rooms
 
@@ -175,7 +220,7 @@ This panel is what you show when someone asks *"where does the number come from?
   so you can move the work to another computer.
 
 Every export also carries one small, honest line at the end — the tool's own address and the plain
-sentence `free ... your drawing is never uploaded`. In the **CSV** it is a single trailing `#` comment
+sentence `free ... your drawing is never sent to a third party ... not stored and nothing from it is logged`. In the **CSV** it is a single trailing `#` comment
 line (kept free of commas, so it stays a plain comment rather than a quoted field), so the room rows
 above it still parse exactly as before; in the **printed report** it is a small muted line at the very
 foot of the sheet, after the signature block. It is there only so that when you email a load sheet to
@@ -411,6 +456,25 @@ must be — the app tells you what they point to and offers that scale in the dr
 example `1:225 (from the drawing)`). Pick it and press the button again. On a real A1 floor plan this
 was the difference between 2 rooms traced and 78.
 
+**Which layouts trace well — and which do not (measured, not guessed).** Auto-trace (the automatic
+filling of rooms when you import a plan) works when a room is genuinely **enclosed** by walls. Where a
+drawing's rooms are open to each other it does **not** fill them, and that is deliberate: it leaves the
+area blank rather than guess, because a wrong area would corrupt the load. Real results, counted by
+hand:
+
+- **Enclosed / cellular layouts trace best** — a house or villa with a wall between every room, or
+  offices along a closed corridor. A real house plan (**BALLARAT Waller Estate**) fills **3 of 10 rooms
+  by default and 6 of 10 (60%)** with the gap-closing setting the app now uses.
+- **A small villa plan** fills **2 of 10**.
+- **Open-plan office floors trace poorly.** The current demo sample (**LEVEL 11**) fills
+  **21 of 56 rooms (38%)**: big open galleries and lobbies have no wall around them, so many rooms merge
+  into one outline. That figure does **not** improve with any setting we tried.
+
+So expect good results on enclosed, cellular plans and low results on open-plan floors. **A blank is
+deliberate, not a fault.** For the rooms it leaves out, use the manual ways instead: **type the area
+straight into the Area column**, or **draw the room by hand** with **Draw shape** (drag a rectangle, or
+click each corner). See *My room is not a rectangle*. You never need auto-trace to get every room in.
+
 **Moving and removing.** Drag an outline to move it (it keeps its shape exactly) and delete it like any
 other region. Outlines have **no resize handles** — there is no box to drag, and turning an outline back
 into a rectangle would be a lie about the room. To re-measure a room by dragging, draw it yourself or
@@ -439,7 +503,7 @@ a shape is remembered with that room.
 A project saved by an **older version** of LoadLens — one with no drawn shapes in it at all — opens
 untouched: nothing is added to a room that never had a shape, and no area changes.
 
-The drawing itself comes back too. It is kept in this browser (never uploaded), so a reload
+The drawing itself comes back too. It is kept in this browser (never sent to a third party), so a reload
 hands you the sheet again — on the page you were last looking at — with the rooms you drew still
 on it. One exception, and the app tells you when it applies: a drawing larger than 40 MB, or a
 browser with no storage room left, cannot be kept, and then only the sheet is gone; the rooms,

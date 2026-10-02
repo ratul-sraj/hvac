@@ -16,8 +16,23 @@ this PC) — and leave the page at the top. If you want to also show the
 landing / method pages from a static copy, that is a second terminal with
 `python -m http.server 8230 --bind 127.0.0.1` — but the demo below only needs the one page.
 
-Numbers to remember before you speak (real and measured, from the synthetic sample
-`tests/samples/sample-plan.pdf` that ships with the app):
+Numbers to remember before you speak. **There are two samples** — pick the beat you are doing:
+
+- **Try sample drawing (the default)** loads a **real** CAD sheet, **LEVEL 11 FLOOR PLAN**
+  (Wikimedia Commons, **CC BY-SA 4.0**, credit: Vivianwwj — see `docs/SAMPLE-CREDITS.md`). It prints
+  **56 room names and no areas**, so it lands as **56 rows, every area unknown, nothing counted, 0.00 TR**
+  — and you then give rooms their areas. This is the honest "real drawing" demo; the workflow is
+  *area first, then trace*. The exact lines to expect are below.
+- **Try a house plan** loads a second **real** sheet, **BALLARAT Waller Estate Floor plan**
+  (Wikimedia Commons, **CC BY-SA 3.0**, credit: MichaelScott99). Its rooms are more enclosed, so
+  **Fill areas from the drawing** fills **6 of 10** here — the demo beat to use when you want to show
+  automatic area-filling actually working. Say plainly that the office floor fills fewer (21 of 56)
+  because open-plan spaces merge, and that a blank is deliberate.
+- **`app.html?sample=synthetic`** (unadvertised) loads the synthetic 3-page fixture. Its numbers are
+  the full-building ones in the table below — use them when you want a finished 159-room load sheet
+  rather than a live workflow.
+
+The full-building figures (the synthetic fixture `tests/samples/sample-plan.pdf`):
 
 | | |
 |---|---|
@@ -31,6 +46,17 @@ Numbers to remember before you speak (real and measured, from the synthetic samp
 | Load by floor | Ground **154.76 TR**, L1 **106.44 TR**, L2 **102.66 TR** (each includes that floor's fresh-air load) |
 | Biggest room | ATRIUM, Ground Floor, 1,249 m² → 34.6 TR, SHF 0.68 |
 | Safety factor / assumptions | 10 %; Kochi 35 °C DB / 28 °C WB; 24 °C / 50 % RH inside |
+
+The real-sample figures (**Try sample drawing**, the default):
+
+| | |
+|---|---|
+| Drawing | LEVEL 11 FLOOR PLAN, SCALE 1:100 — real vector CAD, CC BY-SA 4.0 |
+| Rooms read from the PDF | **56** (room names only — the sheet prints **no areas**) |
+| Areas known | **0** — every row's Area is blank |
+| Rooms included | **0** → total **0.00 TR** (nothing is invented) |
+| Parser note | *"Page 1: no printed areas found — 56 room names detected … set each area … then tick its Include box."* |
+| Credit line | in the plan panel (section 3): LEVEL 11 FLOOR PLAN by Vivianwwj, Wikimedia Commons, CC BY-SA 4.0 |
 
 ---
 
@@ -56,21 +82,47 @@ a room schedule**. Click nothing yet.
 
 ### 1:00 – 2:15 — load the drawing (this is the moment)
 
-**What to do:** click **Try sample drawing**. Wait — about 10 seconds. Say nothing for a second
-while it fills, then point at the summary cards.
+**What to do:** click **Try sample drawing**. Wait a few seconds. It loads a **real** drawing —
+LEVEL 11 FLOOR PLAN — and the credit line at the foot of the plan panel says exactly whose drawing it
+is. The room table fills, but the summary stays at **0.00 TR**, and the notes box says why.
 
-> "One click. It reads all three pages and here is the load summary: **363.9 tonnes of
-> refrigeration**, **52,157 L/s supply air**, **6,995 L/s fresh air**, **7,006.8 square metres
-> conditioned**, and **207 square feet per tonne**."
+> "One click. This is a real floor plan, from Wikimedia Commons, and it is credited right here at the
+> foot of the plan panel under its licence — because it is somebody else's drawing, not ours. The
+> reader found **56 rooms**:
+> MEETING ROOM, CONFERENCE ROOM, HEARING ROOM, TRANSCRIPT ROOM, a Black Saturday Gallery. But look at
+> the total: **zero tonnes**. This sheet prints the room **names** and no **areas** — which is very
+> common on a real sheet — so the app will not invent one. Every room is in the table with its area
+> blank and left out of the load, and the note says so in plain words: *no printed areas found — 56
+> room names detected … set each area … then tick its Include box*."
 
-Then scroll a little, to the level-wise table, then into the room table:
+Then show the honest next step, live:
 
-> "Under the cards is the floor-wise subtotal: Ground Floor 155 tonnes, Level One 106, Level Two 103
-> — and each floor's figure includes its own fresh-air load. And here is the room list — **159 rooms
-> found, 120 air-conditioned**. The app decided by itself
-> that the toilets, shafts, stores and stairs are not conditioned — they stay in the list but they
-> are out of the totals. Every row is editable: area, height, people, lighting, equipment,
-> orientation, wall and glass area, roof, partitions."
+**What to do:** scroll to section **3. Draw rooms on the plan** (scale **1:100** is already right,
+from the sheet's own "SCALE 1:100"). Stay in **Draw shape** and **drag a rectangle** over one room —
+say a 5 m by 4 m meeting room. In the chooser, set the shape to that room's existing row. Then tick
+**In** on the row.
+
+> "So I give a room its area the way an engineer would — I draw it. Five metres by four, and the app
+> measures **20 square metres** straight off the rectangle at one to a hundred and writes it into that
+> row. Tick Include and it counts — the total moves off zero. Every other room is the same one
+> gesture, or I can type the areas straight from the room schedule."
+
+> "And this is the honest order of operations: get the areas in first — drawn, or typed — and only
+> **then** press **Trace real outlines**. Tracing reads the plan's own wall lines and gives a room a
+> real outline only when the traced area agrees with the area you stated. It never guesses an area.
+> Press it with the areas still blank and it says, correctly, *nothing to trace*."
+
+> **Presenter note — set expectations on tracing.** Auto-trace fills rooms well on enclosed, cellular
+> plans (a real house plan gave **6 of 10 rooms, 60%**, with the gap-closing setting the app now uses;
+> a small villa plan gave **2 of 10**), but poorly on open-plan floors — **this LEVEL 11 sample fills
+> only 21 of 56 rooms (38%)** because its big galleries and lobbies have no walls between them and
+> merge into one outline. That is not a setting you are missing. **A blank is deliberate, not a bug:** a
+> wrong area would corrupt the load, so the room is left for you to type or draw. Mention this rather
+> than hide it — it is the honest answer and it is why the manual ways exist.
+
+**If you want the finished, full-building numbers instead** (159 rooms, 363.86 TR): the synthetic
+fixture is still one URL away — open **`app.html?sample=synthetic`**. Those are the 3-page figures in
+the table at the top; use them only if you want a ready-made load sheet rather than the live workflow.
 
 **If you have 20 seconds more:** scroll back up, type `35` → `38` in the outdoor dry bulb (Kochi →
 Chennai-like) and let them watch the total change. Say:
@@ -79,20 +131,7 @@ Chennai-like) and let them watch the total change. Say:
 
 Put it back to 35 (or click **Reset to defaults**).
 
-**If you have 30 seconds more — the plan view (optional).** The drawing is loaded, so section
-**3. Draw rooms on the plan** is now showing. Set **Drawing scale** to **1:100**, keep the mode on
-**Draw shape**, and drag a rectangle over one room on the plan (about 5 m by 4 m). Its breakdown opens.
-
-> "The reader is not a CAD engine, so it can miss a room. Here I just draw it — a 5 metre by 4 metre
-> room, and the app measures **20 square metres** straight off the rectangle at the scale I set, one
-> to a hundred. It is named, it is in the table, and it is already counted in the load — an extra
-> room on top of the 120 already conditioned, not instead of them. The only boxes on this plan are the
-> ones I place: the rooms it read from the PDF stay in the table. Change the scale and it re-measures
-> everything I drew."
-
 > "Drag for a rectangle, click for an odd shape — same tool."
-
-Leave the drawn room in place (or delete it with the row's **×** before moving on).
 
 **If you have 60 seconds more — a room that is not a box (optional).** Keep the mode on **Draw
 shape** (it is the same tool you just dragged with) and click the corners of an **L-shaped** room on
@@ -147,8 +186,12 @@ chart, no coil selection. For a signed job you still use HAP or Carrier or TRACE
 
 ## The 60-second version
 
-**Do:** open the page → click **Try sample drawing** → wait → click the **TR** header to sort →
-click the **ATRIUM** row → say the numbers → stop.
+> This short version uses the **synthetic full-building fixture** (`app.html?sample=synthetic`) so the
+> numbers land instantly. If you only have the default real sample, say the same pitch from the
+> **0.00 TR → give it areas** angle in the main script instead.
+
+**Do:** open **`app.html?sample=synthetic`** → click **Try sample drawing** → wait → click the **TR**
+header to sort → click the **ATRIUM** row → say the numbers → stop.
 
 > "This app reads a floor plan PDF and calculates the cooling load. It found **159 rooms in three
 > floors** and decided **120 of them are air-conditioned** — **7,006.8 square metres** — for a total of
@@ -171,6 +214,13 @@ ASHRAE 62.1 fresh-air rates. The physics and the formula structure are standard;
 typical practice values, and the whole thing must be checked by an engineer before use. It is not a
 radiant time series calculation run hour by hour, so expect it to be slightly conservative at the
 peak and useless for a load profile.
+
+**Who owns the sample drawing?**
+Not us. The default sample is **LEVEL 11 FLOOR PLAN**, uploaded to Wikimedia Commons by **Vivianwwj**
+and used under **CC BY-SA 4.0**. We ship the file unmodified and credit the author and the licence
+(with a link to both) under the **Try sample drawing** button, on the About page and in
+`docs/SAMPLE-CREDITS.md`. Share-alike applies to the file itself; LoadLens' own code is unaffected.
+The synthetic 3-page fixture (`?sample=synthetic`) is generated by this project and is separate.
 
 **Where do the numbers come from?**
 Everything is visible: the solar gain and wall ETD tables for about 10° north latitude, the
@@ -196,12 +246,15 @@ room schedule as Excel/CSV (`.xlsx`, `.csv`, `.tsv`) and drop that on the page; 
 input of all. Exporting the schedule as PDF also works — the same reader reads the text layer.
 
 **Is the data uploaded anywhere?**
-No. Running it locally with `npm start`, the PDF goes to your own machine's Node server on
-localhost and nothing leaves the PC. Opened as the static GitHub Pages copy, the PDF never leaves
-the browser tab at all — the PDF engine is bundled inside the page. There is no database, no
-account, and the server keeps nothing after the response. What it does send is an anonymous count
-of which buttons get used — no cookie, no user id, no personal data, and never the drawing or
-anything from it. Plus no third-party analytics and no ads in the page.
+Your file is never sent to a third party. Running it locally with `npm start`, the PDF goes to your
+own machine's Node server on localhost and nothing leaves the PC. Opened as the static GitHub Pages
+copy, the PDF never leaves the browser tab at all — the PDF engine is bundled inside the page. On the
+hosted site (**loadlens.net**) the PDF is posted to **this site's own server** so it can be read
+faster; it is parsed in memory, is **not stored**, and nothing from it is logged. There is no database,
+no account, and the server keeps nothing after the response. What it does send is an anonymous count of
+which buttons get used and of coarse reader/source properties, plus the four `utm_` campaign tags from
+the page URL if present — no cookie, no user id, no IP address, no file name, no room name, and never
+the drawing or anything from it. Plus no third-party analytics and no ads in the page.
 
 **Can it be wrong about a room?**
 Yes, and it says so. It found 159 rooms here and flagged one parser note (a label with no area).

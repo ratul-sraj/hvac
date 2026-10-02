@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LoadLens — Cooling Load Calculator from a Floor Plan PDF</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta name="description" content="Free HVAC cooling load calculator: read a floor plan PDF or room schedule and get room-wise TR, L/s and watts in your browser. No sign-up, nothing uploaded.">
+<meta name="description" content="Free HVAC load calculator: read a floor plan PDF or schedule and get room-wise TR, L/s and watts in your browser. No sign-up, nothing sent to a third party.">
 <link rel="canonical" href="https://loadlens.net/">
 <meta property="og:url" content="https://loadlens.net/">
 <meta property="og:image" content="https://loadlens.net/favicon.svg">
@@ -68,11 +68,13 @@
           <a class="btn btn-lg btn-ghost" href="method.html">See the method</a>
         </div>
         <p class="hero-note">
-          Runs in your browser. Nothing is uploaded to a third party &mdash; or run
-          <code>npm start</code> for faster server-side reading. Live at
+          Free with no sign-up. Your drawing is never sent to a third party &mdash; on loadlens.net it is
+          posted to this site's own server so it can be read faster, and it is not stored. Or run
+          <code>npm start</code> on your own machine. Live at
           <a href="https://loadlens.net/">loadlens.net</a>.
         </p>
         <ul class="badges">
+          <li><strong>Free</strong> &middot; no sign-up</li>
           <li>TR &middot; L/s &middot; per-room W</li>
           <li>Editable room table</li>
           <li>CSV + printable report</li>
@@ -284,10 +286,33 @@
   <div class="wrap footer-bottom">
     Simplified ASHRAE / Carrier E-20 style cooling load estimate.
     <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
-    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or on your own server if you run <code>npm start</code>.
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or &mdash; on loadlens.net &mdash; posted to this site's own server so it can be read faster; it is not stored and nothing from it is logged.
   </div>
 </footer>
 
 <script src="js/nav.js" defer></script>
+<script>
+// Carry the ad campaign with the visitor. An ad links to this page with ?utm_..., so the four
+// utm_ parameters are copied onto the calculator link(s) when this page loads. js/usage.js reads
+// them on app.html — without this, a click-through from an ad would reach the calculator with no
+// campaign and the ad row would read as (none).
+(function () {
+  var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'];
+  var params = new URLSearchParams(window.location.search);
+  var keep = [];
+  for (var i = 0; i < keys.length; i++) {
+    var v = params.get(keys[i]);
+    if (v) keep.push(encodeURIComponent(keys[i]) + '=' + encodeURIComponent(v));
+  }
+  if (!keep.length) return;
+  var qs = keep.join('&');
+  var links = document.querySelectorAll('a[href]');
+  for (var j = 0; j < links.length; j++) {
+    var href = links[j].getAttribute('href');
+    if (!href || !/(^|\/)app\.html([?#]|$)/.test(href)) continue;
+    links[j].setAttribute('href', href.split('#')[0].split('?')[0] + '?' + qs);
+  }
+})();
+</script>
 </body>
 </html>

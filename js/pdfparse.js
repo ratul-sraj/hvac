@@ -159,6 +159,7 @@ function itemSpan(it) {
   const w = Number.isFinite(it.w) && it.w > 0 ? it.w : Math.max(h * 0.5, it.str.length * h * 0.5);
   return { x0: it.x, x1: it.x + w, h };
 }
+const itemCenterX = (it) => { const s = itemSpan(it); return (s.x0 + s.x1) / 2; };
 
 // ---------------------------------------------------------------- row grouping (schedules)
 
@@ -300,6 +301,42 @@ function parseSchedule(items, levelByPage, warnings) {
 
 // ---------------------------------------------------------------- label tags
 
+/** Group leftover name-only lines into printed room names.
+ *  A line continues the name above it only when it is a SINGLE word sitting within a line-height
+ *  below and centred on that line — exactly how a wrapped room name reads ("ROOM" under
+ *  "COMMUNICATION", "STORE" under "SECURE"). A whole name ("BLACK SATURDAY GALLERY") starts its own
+ *  tag: it is multi-word, so it can never be swallowed as a continuation of a neighbour. */
+function clusterNameTags(candidates) {
+  const list = [...candidates].sort((a, b) => a.page - b.page || a.y - b.y || a.x - b.x);
+  const used = new Set();
+  const tags = [];
+  for (const c of list) {
+    if (used.has(c)) continue;
+    used.add(c);
+    const lines = [c];
+    let anchor = c;
+    for (;;) {
+      const ah = anchor.h || 8;
+      const acx = itemCenterX(anchor);
+      let next = null, bestDy = Infinity;
+      for (const o of list) {
+        if (used.has(o) || o.page !== anchor.page) continue;
+        const dy = o.y - anchor.y;
+        if (dy <= 0.5 || dy > 1.5 * ah) continue;
+        if (/\s/.test(clampStr(o.str))) continue;                 // only a single short word continues
+        if (Math.abs(itemCenterX(o) - acx) > Math.max(1.2 * ah, 8)) continue;
+        if (dy < bestDy) { bestDy = dy; next = o; }
+      }
+      if (!next) break;
+      used.add(next);
+      lines.push(next);
+      anchor = next;
+    }
+    tags.push(lines);
+  }
+  return tags;
+}
+
 /** Rooms from drawing room tags: NAME line(s), NUMBER, AREA stacked top-to-bottom. */
 function parseLabels(items, levelByPage, warnings, usedSet) {
   const areas = [];
@@ -400,6 +437,48 @@ function parseLabels(items, levelByPage, warnings, usedSet) {
     }));
   }
 
+  // ---- name-only rooms ----------------------------------------------------
+  // A sheet that prints room NAMES but no AREA figures used to come back empty: every candidate
+  // line needs an area label under it to become a room. Real drawings often print names only (and a
+  // scan's small area text may not survive), so when a page has (almost) no areas its leftover name
+  // candidates are clustered into rooms of their own. Such a room's area is explicitly UNKNOWN:
+  // `area: null` plus `areaUnknown: true`. null can never be misread as a measured 0, and js/calc.js
+  // reads a null area as "no area" (areaOk = false), so an unknown area contributes no load at all.
+  const areasOnPage = new Map();
+  for (const a of areas) areasOnPage.set(a.it.page, (areasOnPage.get(a.it.page) || 0) + 1);
+  const candsOnPage = new Map();
+  for (const c of candidates) candsOnPage.set(c.page, (candsOnPage.get(c.page) || 0) + 1);
+  const fewAreas = (page) => {
+    const na = areasOnPage.get(page) || 0, nc = candsOnPage.get(page) || 0;
+    return nc > 0 && na < Math.max(1, Math.floor(nc * 0.2));
+  };
+  const leftovers = candidates.filter((c) => !usedSet.has(c) && fewAreas(c.page));
+  for (const lines of clusterNameTags(leftovers)) {
+    let number = "";
+    const parts = [];
+    lines.forEach((c, i) => {
+      const t = clampStr(c.str);
+      if (!t || DUCT_RE.test(t) || SHEET_RE.test(t) || JUNK_NAME_RE.test(t)) return;
+      // a bare number below the name is the room number, never part of the name
+      if (!number && i > 0 && NUMBER_TOKEN_RE.test(t.replace(/[\s.]/g, ""))) {
+        number = t.replace(/[\s.]/g, "");
+        return;
+      }
+      const norm = t.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const joined = parts.join(" ").toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (norm && joined && joined.includes(norm)) return;
+      parts.push(t);
+    });
+    const name = clampStr(parts.join(" "));
+    if (!name || !/[A-Za-z]{2}/.test(name)) continue;   // a lone number / dimension is not a room
+    const top = lines[0];
+    for (const c of lines) usedSet.add(c);
+    rooms.push(makeRoom({
+      name, number, areaUnknown: true, level: levelByPage.get(top.page) || "", source: "label", page: top.page,
+      at: top.atPdf ? { x: +top.atPdf.x.toFixed(2), y: +top.atPdf.y.toFixed(2) } : undefined,
+    }));
+  }
+
   for (const [page, n] of [...orphan].sort((x, y) => x[0] - y[0]))
     warnings.push(`Page ${page}: ${n} area label${n > 1 ? "s" : ""} without a room name`);
   const nePages = [...new Set(notEnclosedItems.map((it) => it.page))].sort();
@@ -410,18 +489,21 @@ function parseLabels(items, levelByPage, warnings, usedSet) {
 
 // ---------------------------------------------------------------- assembly
 
-function makeRoom({ name, number, area, length, width, level, source, page, at }) {
+function makeRoom({ name, number, area, length, width, level, source, page, at, areaUnknown }) {
   const a = num(area) || (num(length) && num(width) ? +(num(length) * num(width)).toFixed(2) : 0);
   const room = {
     id: "",
     name,
     level: level || "",
-    area: +a.toFixed(2),
+    // An unknown area is `null` (never a fabricated 0 that could read as measured): the app shows a
+    // blank cell, js/calc.js treats it as "no area" and adds no load, and `areaUnknown` marks it.
+    area: areaUnknown ? null : +a.toFixed(2),
     type: guessSpaceType(name),
-    include: includeRoom(name, a, source),
+    include: areaUnknown ? false : includeRoom(name, a, source),
     source,
     page,
   };
+  if (areaUnknown) room.areaUnknown = true;
   if (at && Number.isFinite(at.x) && Number.isFinite(at.y)) room.at = { x: at.x, y: at.y };
   if (number) room.number = String(number);
   if (num(length)) room.length = num(length);
@@ -430,13 +512,18 @@ function makeRoom({ name, number, area, length, width, level, source, page, at }
 }
 
 function finalize(rooms, warnings) {
-  // dedupe exact duplicates (same page + name + area)
+  // dedupe exact duplicates (same page + name + area). Two unknown-area rooms carry no area to tell
+  // them apart, so the spot the sheet prints them at (at) is the key instead — the same name drawn
+  // in two different places stays two rooms.
   const seen = new Set();
   const out = [];
   for (const r of rooms) {
-    const key = `${r.page}|${r.name.toLowerCase()}|${r.area.toFixed(2)}`;
+    const where = r.area == null
+      ? (r.at ? `@${r.at.x.toFixed(1)},${r.at.y.toFixed(1)}` : "")
+      : r.area.toFixed(2);
+    const key = `${r.page}|${r.name.toLowerCase()}|${where}`;
     if (seen.has(key)) {
-      warnings.push(`Page ${r.page}: duplicate room label ignored ("${r.name}" ${r.area} m²)`);
+      warnings.push(`Page ${r.page}: duplicate room label ignored ("${r.name}" ${r.area == null ? "(area unknown)" : r.area + " m\u00b2"})`);
       continue;
     }
     seen.add(key);
@@ -486,6 +573,16 @@ export function parseText(items) {
   rooms.push(...parseLabels(labelItems, levelByPage, warnings, usedSet));
 
   const finalized = finalize(rooms, warnings);
+  // Say plainly how many rooms came from names alone with no printed area, and what to do about it.
+  // Same warnings channel the rest of the parser uses, so the app surfaces it with no new plumbing.
+  const unknownByPage = new Map();
+  for (const r of finalized) if (r.areaUnknown) unknownByPage.set(r.page, (unknownByPage.get(r.page) || 0) + 1);
+  for (const [page, n] of [...unknownByPage].sort((a, b) => a[0] - b[0]))
+    warnings.push(
+      `Page ${page}: no printed areas found - ${n} room name${n > 1 ? "s" : ""} detected. ` +
+      `Their areas are unknown, so they are left out of the load; set each area by tracing the plan ` +
+      `or typing it in the table, then tick its Include box.`
+    );
   if (!finalized.length) warnings.push("no rooms found in this PDF");
   return { rooms: finalized, warnings };
 }

@@ -182,6 +182,17 @@ export function num(v, d = 0) {
 // Keep a value inside a sane band. Used so no single typed cell can drive a room negative.
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+// The safety allowance is a percentage added to every room's sensible and latent heat. It is a raw
+// project field, so it can arrive non-numeric or wildly wrong from an imported/edited project: a
+// non-numeric value used to turn the WHOLE project total into NaN, and a negative value silently
+// REDUCED the load. Both are impossible for a safety allowance, so it is sanitised exactly like the
+// neighbouring numeric settings (see safeConditions): a parseable number, clamped to a sane band.
+export const SAFETY_MIN = 0;    // a safety factor can never reduce a load
+export const SAFETY_MAX = 100;  // a 100 % allowance is already extreme; anything above is a typo
+export function safeSafetyPct(proj) {
+  return clamp(num((proj || {}).safety, DEFAULT_PROJECT.safety), SAFETY_MIN, SAFETY_MAX);
+}
+
 // Project settings with every default filled in (older saved projects and partial test projects
 // must not produce NaN).
 function withDefaults(proj) { return { ...DEFAULT_PROJECT, ...(proj || {}) }; }
@@ -225,6 +236,10 @@ export function projectWarnings(proj = DEFAULT_PROJECT) {
   if (!(Number.isFinite(supplyDt) && supplyDt > 0))
     out.push(`Supply air \u0394T ${n(supplyDt)} K is not above 0 K \u2014 the supply air flow cannot be calculated, ` +
       `so it is shown as "-".`);
+  const safety = num(p.safety, DEFAULT_PROJECT.safety);
+  if (!(safety >= SAFETY_MIN && safety <= SAFETY_MAX))
+    out.push(`Safety factor ${n(safety)} % is outside ${SAFETY_MIN}\u2013${SAFETY_MAX} % \u2014 using ` +
+      `${safeSafetyPct(p)} % (a safety allowance can never reduce a load).`);
   return out;
 }
 
@@ -318,7 +333,7 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
   const oaSens = 1.23 * oaLs * dT;
   const oaLat = 3010 * oaLs * dW;
 
-  const sf = 1 + p.safety / 100;
+  const sf = 1 + safeSafetyPct(p) / 100;
   const rsh = roomSensible * sf, rlh = roomLatent * sf;
   const total = rsh + rlh + oaSens + oaLat;
   // supply flow needs a positive supply-air ΔT to divide by; when it is zero or negative the honest
@@ -360,7 +375,7 @@ export function calcProject(rooms, proj = DEFAULT_PROJECT) {
       rooms: inc.length, area, areaSqft: area * 10.7639,
       totalW: sum("totalW"), tr, ls: sum("supplyLs"), oaLs: sum("oaLs"), cfm: sum("cfm"), oaCfm: sum("oaCfm"),
       rsh: sum("rsh"), rlh: sum("rlh"),
-      safetyW: sum("safetyW"), safetyPct: num(p.safety),
+      safetyW: sum("safetyW"), safetyPct: safeSafetyPct(p),
       sqftPerTr: tr ? (area * 10.7639) / tr : 0,
       wOut: c.wo, wIn: c.wi,
       outRh: rhFromDbW(c.db, c.wo),

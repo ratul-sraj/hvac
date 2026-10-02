@@ -30,6 +30,9 @@ jobs:
           mkdir _site
           cp -r *.html robots.txt sitemap.xml favicon.svg css js vendor _site/
           mkdir -p _site/samples && cp tests/samples/*.pdf tests/samples/*.csv tests/samples/*.xlsx _site/samples/ 2>/dev/null || true
+          # the real, credited demo drawings (CC BY-SA, see docs/SAMPLE-CREDITS.md) — named, not a wildcard
+          cp samples/level-11-floor-plan.pdf _site/samples/
+          cp samples/waller-estate-floor-plan.pdf _site/samples/
           ls -la _site _site/samples
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5

@@ -133,7 +133,7 @@ export function toCsv(project, calcResult) {
   // block, and the wording deliberately carries no comma, so the line stays a genuine unquoted '#'
   // comment — a parser that reads the data rows (they start with 'yes,' / 'no,') is untouched, and a
   // human opening the file in Excel sees it clearly as a note. See docs/USER-GUIDE.md.
-  const credit = [['# Calculated with LoadLens - loadlens.net - free and runs in your browser. Your drawing is never uploaded.']];
+  const credit = [['# Calculated with LoadLens - loadlens.net - free and runs in your browser. Your drawing is never sent to a third party; on loadlens.net it is posted to this site\'s own server so it can be read faster. It is not stored and nothing from it is logged.']];
   const body = meta.concat(rows, credit).map((r) => r.map(csvCell).join(',')).join('\r\n');
   return '\ufeff' + body + '\r\n';
 }
@@ -233,7 +233,7 @@ export function buildReportHtml(project, calcResult, opts = {}) {
       <td>${fmt(g.area, 1)}</td>
       <td>${fmt(g.areaSqft, 0)}</td>
       <td>${fmt(g.tr, 2)}</td>
-      <td>${g.supplyOk === false ? '-' : fmt(g.ls, 0)}</td>
+      <td>${g.supplyOk === false ? '-' : fmt(g.cfm, 0)}</td>
       <td>${fmt(g.oaCfm, 0)}</td>
     </tr>`).join('');
 
@@ -362,7 +362,7 @@ ${skippedNote}
     <tr class="grand">
       <td class="l">Grand total</td><td>${included.length}</td>
       <td>${fmt(totals.area, 1)}</td><td>${fmt(totals.areaSqft, 0)}</td>
-      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(totals.ls, 0) : '-'}</td><td>${fmt(totals.oaCfm, 0)}</td>
+      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(totals.cfm, 0) : '-'}</td><td>${fmt(totals.oaCfm, 0)}</td>
     </tr>
   </tfoot>
 </table>
@@ -398,7 +398,7 @@ ${skippedNote}
 <p class="muted">LoadLens &mdash; <a href="https://loadlens.net/">loadlens.net</a> &middot;
 Source on GitHub: <a href="https://github.com/ratul-sraj/hvac">github.com/ratul-sraj/hvac</a></p>
 
-<p class="credit">Calculated with LoadLens - loadlens.net &middot; free, runs in your browser, your drawing is never uploaded.</p>
+<p class="credit">Calculated with LoadLens - loadlens.net &middot; free, runs in your browser, your drawing is never sent to a third party. On loadlens.net it is posted to this site's own server so it can be read faster; it is not stored and nothing from it is logged.</p>
 </body>
 </html>`;
   return html;

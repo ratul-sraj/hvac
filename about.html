@@ -164,16 +164,65 @@
     </div>
   </section>
 
+  <section class="section" id="sample-credit">
+    <div class="wrap prose">
+      <h2>Sample drawing credit</h2>
+      <p>
+        The drawings behind <strong>Try sample drawing</strong> and <strong>Try a house plan</strong>
+        are not ours.
+        <br>
+        <strong>Try sample drawing</strong> loads <strong>LEVEL 11 FLOOR PLAN</strong> (a Level 11
+        office floor plan, printed at <strong>SCALE 1:100</strong>), uploaded to Wikimedia Commons by
+        the user <strong>Vivianwwj</strong>, used under the
+        <a href="https://creativecommons.org/licenses/by-sa/4.0/">Creative Commons
+        Attribution-ShareAlike 4.0</a> licence (CC BY-SA 4.0).
+        <br>
+        <strong>Try a house plan</strong> loads <strong>BALLARAT Waller Estate Floor plan</strong>,
+        uploaded to Wikimedia Commons by the user <strong>MichaelScott99</strong>, used under the
+        <a href="https://creativecommons.org/licenses/by-sa/3.0/">Creative Commons
+        Attribution-ShareAlike 3.0</a> licence (CC BY-SA 3.0). Both licences require us to name the
+        author and the licence &mdash; which is what this page is for.
+      </p>
+      <p><strong>Office sheet — LEVEL 11 FLOOR PLAN</strong></p>
+      <ul>
+        <li>File: <em>LEVEL 11 FLOOR PLAN.pdf</em>, Wikimedia Commons.</li>
+        <li>Author / uploader: Vivianwwj (own work, uploaded 2015).</li>
+        <li>Licence: CC BY-SA 4.0 &mdash; <a href="https://creativecommons.org/licenses/by-sa/4.0/">the licence text</a>.</li>
+        <li>Source page: <a href="https://commons.wikimedia.org/wiki/File:LEVEL_11_FLOOR_PLAN.pdf">the Commons file page</a>.</li>
+      </ul>
+      <p><strong>House sheet — BALLARAT Waller Estate</strong></p>
+      <ul>
+        <li>File: <em>BALLARAT Waller Estate Floor plan.pdf</em>, Wikimedia Commons.</li>
+        <li>Author / uploader: MichaelScott99 (own work, uploaded 2014-05-09).</li>
+        <li>Licence: CC BY-SA 3.0 &mdash; <a href="https://creativecommons.org/licenses/by-sa/3.0/">the licence text</a>.</li>
+        <li>Source page: <a href="https://commons.wikimedia.org/wiki/File:BALLARAT_Waller_Estate_Floor_plan.pdf">the Commons file page</a>.</li>
+      </ul>
+      <p>
+        Each drawing stays under its own licence (share-alike applies to the file: CC BY-SA 4.0 for
+        the office sheet, CC BY-SA 3.0 for the house sheet). LoadLens' own code is unaffected. We did
+        not draw them and do not claim them: they are real plans a real engineer would recognise,
+        which is exactly why they are a better first thing to see than a cartoon. The office sheet
+        prints room <em>names</em> but no room <em>areas</em>, so its rooms arrive with their areas
+        unknown and out of the load; the house sheet is a smaller, more enclosed plan. You give each
+        room an area before it counts — by typing it, or with <em>Fill areas from the drawing</em>.
+        The full credit also lives in the project's <code>docs/SAMPLE-CREDITS.md</code>.
+      </p>
+    </div>
+  </section>
+
   <section class="section">
     <div class="wrap prose">
       <h2>Where your files go</h2>
       <p>
-        Nowhere you do not control. In the static version the PDF is read by pdf.js inside your own browser
-        tab and never leaves the computer. In the local server version it is posted to
+        Your file is never sent to a third party. In the static version the PDF is read by pdf.js inside
+        your own browser tab and never leaves the computer. In the local server version it is posted to
         <code>http://localhost:3000</code> &mdash; your own machine &mdash; parsed there, and not stored.
-        There is no cloud service, no third-party analytics, no tracking cookies and no account.
-        The only measurement is an anonymous count of which buttons are used &mdash; no cookie, no id,
-        no personal data, and never your drawing or its contents.
+        On this site (<strong>loadlens.net</strong>) the PDF is posted to this site's own server so it can
+        be read faster; it is parsed in memory and is <strong>not stored</strong>, and nothing from it is
+        logged. There is no third-party analytics, no tracking cookies and no account. The only measurement
+        is an anonymous count of which buttons are used and of coarse reader/source properties, plus the
+        four <code>utm_</code> campaign tags from the page URL if present &mdash; no cookie, no id, no IP
+        address, no file name, no room name, and never your drawing or its contents.
       </p>
       <div class="callout tip">
         <h3>Contributing</h3>
@@ -217,7 +266,7 @@
   <div class="wrap footer-bottom">
     Simplified ASHRAE / Carrier E-20 style cooling load estimate.
     <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
-    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or on your own server if you run <code>npm start</code>.
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or &mdash; on loadlens.net &mdash; posted to this site's own server so it can be read faster; it is not stored and nothing from it is logged.
   </div>
 </footer>
 

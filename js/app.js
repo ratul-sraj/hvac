@@ -3,7 +3,7 @@
 
 import {
   COUNTRIES, CLIMATES, ORIENTS, SPACE_TYPES, DEFAULT_PROJECT,
-  normalizeRoom, calcRoom, calcProject, guessSpaceType,
+  normalizeRoom, calcRoom, calcProject, guessSpaceType, NON_AC_WORDS,
 } from './calc.js';
 import { buildReportHtml, toCsv, fmt, groupByLevel, breakdown, esc, typeLabel } from './report.js';
 import { parsePdf } from './pdfparse.js';
@@ -18,6 +18,10 @@ import {
 // SAME scale conversion the placed rectangles use) and the simplicity test that lets the app refuse
 // a self-crossing or zero-area shape. No DOM, so it is loaded with the app, not on demand.
 import { polyAreaM2, ringIsUsable, ringBBox, roundRing } from './polyshape.js';
+// The stairwell rule for the "Fill areas" control: js/autotrace.js owns it, and the control needs it
+// synchronously to decide whether a blank named room is worth offering (a stairwell never is). The
+// matcher itself is still loaded on demand, with the tracer.
+import { isStairwellName } from './autotrace.js';
 // The location -> design-conditions table and its resolver (js/climates.js): pure data + a pure
 // lookup, loaded with the app. The auto-detect wiring below uses it; nothing here touches the DOM.
 import { resolveClimate, countryFromTimezone, countryFromLocale, locationKey } from './climates.js';
@@ -43,6 +47,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', im
 const MISSING_SCHEDULE = 'the room-schedule reader (js/schedule.js) is not in this build';
 const MISSING_OCR = 'the OCR reader (js/ocr.js) is not in this build';
 const MISSING_TRACE = 'the outline tracer (js/trace.js) is not in this build';
+const MISSING_AUTOTRACE = 'the area filler (js/autotrace.js) is not in this build';
 
 // vendored tesseract files, served from the site (no CDN at runtime)
 const OCR_VENDOR = new URL('../vendor/tesseract/', import.meta.url).href;
@@ -50,6 +55,7 @@ const OCR_VENDOR = new URL('../vendor/tesseract/', import.meta.url).href;
 let scheduleMod = null, scheduleTried = false;
 let ocrMod = null, ocrTried = false;
 let traceMod = null, traceTried = false;
+let autotraceMod = null, autotraceTried = false;
 
 async function loadScheduleModule() {
   if (!scheduleMod && !scheduleTried) {
@@ -79,6 +85,17 @@ async function loadTraceModule() {
   }
   if (!traceMod || typeof traceMod.traceRooms !== 'function') throw new Error(MISSING_TRACE);
   return traceMod;
+}
+
+/** js/autotrace.js — pure geometry: traced regions + named rooms -> confident areas, or a reason why
+ *  not. Loaded on demand like the tracer, so a build without it still runs the calculator. */
+async function loadAutotraceModule() {
+  if (!autotraceMod && !autotraceTried) {
+    autotraceTried = true;
+    try { autotraceMod = await import('./autotrace.js'); } catch (e) { autotraceMod = null; }
+  }
+  if (!autotraceMod || typeof autotraceMod.matchRoomsToRegions !== 'function') throw new Error(MISSING_AUTOTRACE);
+  return autotraceMod;
 }
 
 /* ------------------------------------------------------------------ */
@@ -151,6 +168,8 @@ const el = {
   planPlaceClear: $('#planPlaceClear'),
   planTraceOutlines: $('#planTraceOutlines'),
   planTraceClear: $('#planTraceClear'),
+  planFillAreas: $('#planFillAreas'),
+  planFillUndo: $('#planFillUndo'),
   planShapeAssign: $('#planShapeAssign'),
   planShapeAssignRoom: $('#planShapeAssignRoom'),
   planShapeAssignGo: $('#planShapeAssignGo'),
@@ -644,9 +663,23 @@ async function autoDetectClimate() {
 
 function sameRoom(a, b) {
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  return norm(a.name) === norm(b.name)
-    && String(a.level || '') === String(b.level || '')
-    && Math.abs((parseFloat(a.area) || 0) - (parseFloat(b.area) || 0)) < 0.05;
+  if (norm(a.name) !== norm(b.name)) return false;
+  if (String(a.level || '') !== String(b.level || '')) return false;
+  const aa = parseFloat(a.area) || 0, ba = parseFloat(b.area) || 0;
+  if (Math.abs(aa - ba) >= 0.05) return false;
+  // Two rooms with NO area cannot be told apart by name + level alone. A plan that prints room NAMES
+  // but no AREAS (the LEVEL 11 sample: six rooms called MEETING ROOM, seven called MONITOR) would have
+  // all but one of each name dropped here as a "duplicate" — silently losing real rooms and making the
+  // parser's own "56 room names detected" note contradict the table. When neither room carries an area,
+  // fall back to the point that names it on the sheet (room.at), so distinct rooms stay distinct while
+  // re-loading the SAME drawing still de-duplicates (the label sits at the same point). Rooms with an
+  // area, or with no position, keep the original name + level + area behaviour.
+  if (aa === 0 && ba === 0 && a.at && b.at
+    && Number.isFinite(a.at.x) && Number.isFinite(a.at.y)
+    && Number.isFinite(b.at.x) && Number.isFinite(b.at.y)) {
+    return Math.abs(a.at.x - b.at.x) < 0.5 && Math.abs(a.at.y - b.at.y) < 0.5;
+  }
+  return true;
 }
 
 function addRooms(rooms, opts = {}) {
@@ -742,6 +775,18 @@ function sourceLabel(src) {
   return SOURCE_LABEL[String(src || '').toLowerCase()] || '';
 }
 
+/** The badge that says this room's AREA was filled from the drawing's own outlines (the "Fill areas
+ *  from the drawing" control), not typed by the user or printed on the sheet. It disappears the
+ *  moment the user edits the area by hand. */
+function areaBadge(raw) {
+  if (!raw || !raw.areaFromDrawing) return '';
+  const a = Number(raw.area);
+  const title = Number.isFinite(a) && a > 0
+    ? `area filled from the drawing's own outline: ${fmt(a, 1)} m² — check it against the plan`
+    : "area filled from the drawing's own outline";
+  return ` <span class="row-badge is-autofill" title="${esc(title)}">area from drawing</span>`;
+}
+
 /** The little badge that says what shape this room has on the plan: a real outline traced from the
  *  drawing's own linework, or a box (placed locator or hand-drawn). Nothing when it has neither.
  *  The title spells out traced-vs-stated, because that difference is the whole point of the trace. */
@@ -815,7 +860,7 @@ function rowHtml(idx, calc) {
     <td class="c-num"><input type="text" data-field="number" value="${esc(raw.number || '')}"
       placeholder="-" aria-label="Room number of ${esc(nm)}"></td>
     <td class="l c-name"><input type="text" data-field="name" value="${esc(raw.name || '')}"
-      placeholder="Room name" aria-label="Room name">${shapeBadge(raw)}</td>
+      placeholder="Room name" aria-label="Room name">${areaBadge(raw)}${shapeBadge(raw)}</td>
     <td class="c-type"><select data-field="type" aria-label="Space type of ${esc(nm)}">
       ${Object.keys(SPACE_TYPES).map((k) =>
         `<option value="${k}"${room.type === k ? ' selected' : ''}>${esc(SPACE_TYPES[k].label)}</option>`).join('')}
@@ -953,7 +998,7 @@ function renderSummary(calc) {
         <td>${fmt(g.areaSqft, 0)}</td>
         <td>${fmt(g.tr, 2)}</td>
         <td>${g.supplyOk === false ? '-' : fmt(g.ls, 0)}</td>
-        <td>${fmt(g.oaCfm, 0)}</td>
+        <td>${fmt(g.oaLs, 0)}</td>
         <td>${fmt(g.tr ? g.areaSqft / g.tr : 0, 0)}</td>
       </tr>`).join('') +
       `<tr class="total-row">
@@ -1073,6 +1118,9 @@ function onTableInput(ev) {
   } else {
     const v = t.value.trim();
     if (v === '') delete room[field]; else room[field] = v;
+    // The user has typed the area themselves, so it is no longer "from the drawing" — drop the mark
+    // (and the badge) rather than keep claiming a provenance that is no longer true.
+    if (field === 'area') { delete room.areaFromDrawing; delete room.areaSource; }
   }
   saveSoon();
   if (field === 'include' || field === 'roof' || field === 'type') renderAll();
@@ -1138,6 +1186,7 @@ function renderAll() {
   renderWarnings();
   if (state.ui.openId) renderDetail(currentCalc());
   if (plan.overlay) plan.overlay.render();
+  planSyncFillButton();
 }
 
 // Everything that must be refreshed after a project setting changed.
@@ -1587,12 +1636,62 @@ async function handleFiles(fileList) {
   finishUpload(added, skipped, failed, notes, serverError, readers, scanned, ocrEmpty);
 }
 
-async function loadSample() {
+/* Which drawing 'Try sample drawing' loads.
+ *
+ * The DEFAULT is a real, credited CAD sheet — LEVEL 11 FLOOR PLAN, from Wikimedia Commons under
+ * CC BY-SA 4.0 (the credit sits under the button; the full entry is in docs/SAMPLE-CREDITS.md and on
+ * about.html). It is genuine vector linework, which is what a first-time visitor should see.
+ *
+ * `?sample=synthetic` loads the synthetic tests/samples/sample-plan.pdf fixture instead. That hook is
+ * deliberately unadvertised: the browser suite uses it so its 159-room / 363.86 TR baselines stay
+ * exact now that the button no longer loads the synthetic plan. */
+const SAMPLE_REAL = ['samples/level-11-floor-plan.pdf'];
+const SAMPLE_HOUSE = ['samples/waller-estate-floor-plan.pdf'];
+const SAMPLE_SYNTHETIC = ['samples/sample-plan.pdf', 'tests/samples/sample-plan.pdf'];
+
+/* Each sample is somebody else's drawing used under its licence, so whichever one is loaded is named
+ * in the credit line under the plan panel. The synthetic plan is ours (a built-in test drawing). */
+const SAMPLE_CREDITS = {
+  office: 'The sample drawing is a real plan: <strong>LEVEL 11 FLOOR PLAN</strong> by Vivianwwj on ' +
+    '<a href="https://commons.wikimedia.org/wiki/File:LEVEL_11_FLOOR_PLAN.pdf">Wikimedia Commons</a>, ' +
+    'used under the <a href="https://creativecommons.org/licenses/by-sa/4.0/">Creative Commons ' +
+    'Attribution-ShareAlike 4.0</a> licence',
+  house: 'The sample drawing is a real plan: <strong>BALLARAT Waller Estate</strong> by MichaelScott99 ' +
+    'on <a href="https://commons.wikimedia.org/wiki/File:BALLARAT_Waller_Estate_Floor_plan.pdf">Wikimedia Commons</a>, ' +
+    'used under the <a href="https://creativecommons.org/licenses/by-sa/3.0/">Creative Commons ' +
+    'Attribution-ShareAlike 3.0</a> licence',
+  synthetic: 'The drawing shown is a synthetic test plan built for LoadLens (not a real building)',
+};
+
+function sampleChoice(which) {
+  let key = which;
+  if (!key) {
+    try { key = new URLSearchParams(location.search).get('sample'); } catch (err) { key = null; }
+  }
+  key = String(key || '').toLowerCase();
+  if (key === 'synthetic') return 'synthetic';
+  if (key === 'house' || key === 'waller') return 'house';
+  return 'office';
+}
+function samplePaths(which) {
+  const choice = sampleChoice(which);
+  if (choice === 'synthetic') return SAMPLE_SYNTHETIC;
+  if (choice === 'house') return SAMPLE_HOUSE;
+  return SAMPLE_REAL;
+}
+function setSampleCredit(which) {
+  const el = document.getElementById('sampleCredit');
+  if (!el) return;
+  const credit = SAMPLE_CREDITS[sampleChoice(which)];
+  if (credit) el.innerHTML = credit + ' &middot; <a href="about.html#sample-credit">full credit</a>.';
+}
+
+async function loadSample(which) {
   if (state.ui.busy) return;
   state.ui.busy = true;
   setStatus(null);
   setProgress('Downloading the sample drawing ...', 5);
-  const paths = ['samples/sample-plan.pdf', 'tests/samples/sample-plan.pdf'];
+  const paths = samplePaths(which);
   let buf = null, used = '';
   let lastErr = null;
   for (const path of paths) {
@@ -1625,6 +1724,7 @@ async function loadSample() {
   }
   try {
     openPlan(buf, { name: used });   // show the sample drawing straight away
+    setSampleCredit(which);          // and name whichever drawing this is, under its licence
     setProgress(`Reading ${used} ...`, 15);
     const out = await parseOne(buf, used, 0, 1);
     const r = addRooms(out.rooms);
@@ -1634,9 +1734,22 @@ async function loadSample() {
     setProgress(null);
     renderAll();
     saveSoon();
-    setStatus('ok', r.added
-      ? `Sample drawing loaded: ${r.added} room(s) added${r.skipped ? `, ${r.skipped} duplicate(s) skipped` : ''}. Please check the areas.`
-      : 'The sample drawing was read but no rooms were found. Please add rooms manually.');
+    // A drawing that prints room NAMES but no AREAS comes in with every area unknown and every room
+    // out of the load (the parser also pushes its own note into the warning box). Say the headline and
+    // the exact next step rather than a hollow "please check the areas".
+    const unknown = out.rooms.filter((x) => x && x.areaUnknown).length;
+    if (r.added && unknown >= r.added) {
+      noteCalcEmpty('sample');
+      setStatus('warn',
+        `Sample drawing loaded: ${r.added} room(s). This drawing prints no room areas, so every room ` +
+        `came in with its area unknown and is left out of the load. Give each room an area — type it ` +
+        `in the Area column, or drag a rectangle over the room on the plan and set it to that room's ` +
+        `row — then tick its Include box. Click a row to open its Load breakdown.`);
+    } else {
+      setStatus('ok', r.added
+        ? `Sample drawing loaded: ${r.added} room(s) added${r.skipped ? `, ${r.skipped} duplicate(s) skipped` : ''}. Please check the areas.`
+        : 'The sample drawing was read but no rooms were found. Please add rooms manually.');
+    }
   } catch (err) {
     setProgress(null);
     setStatus('err', `The sample drawing could not be read (${(err && err.message) || err}).`);
@@ -2028,9 +2141,12 @@ function nextFrame() {
 /** Disable the plan buttons while a trace runs (it blocks the main thread for a second or two). */
 function planTraceBusy(on) {
   state.ui.traceBusy = !!on;
-  for (const b of [el.planPlaceAll, el.planPlaceClear, el.planTraceOutlines, el.planTraceClear]) {
+  for (const b of [el.planPlaceAll, el.planPlaceClear, el.planTraceOutlines, el.planTraceClear,
+    el.planFillAreas, el.planFillUndo]) {
     if (b) b.disabled = !!on;
   }
+  // A finished fill/undo restores the Undo button's own enabled state (disabled == "nothing to undo").
+  if (!on) planSyncFillButton();
 }
 
 /** Read the plan's own linework and give every room it can verify a real outline. */
@@ -2332,6 +2448,263 @@ function planTraceClear() {
   setStatus('ok', `Removed ${removed} traced outline(s). Their boxes, if any, and the load are unchanged.`, 'plan');
 }
 
+/* ---- "Fill areas from the drawing" -------------------------------------------------------------
+ * A sheet that prints room NAMES but no AREAS (the real LEVEL 11 sample) parses into rooms with
+ * `area: null`. The plan's own linework still encloses those rooms, so js/trace.js turns the walls
+ * into regions and js/autotrace.js matches them to the names — filling an area ONLY where a single
+ * name sits inside a single closed, sane-sized outline. The app never guesses which of several names
+ * owns an outline, never overwrites an area a room already had, and never touches a stairwell: a
+ * skipped room stays blank. One Undo step restores exactly the areas it replaced. */
+
+/** True when a room carries a usable area (the same test the filler uses). */
+function roomHasArea(r) {
+  return Number.isFinite(Number(r && r.area)) && Number(r.area) > 0;
+}
+
+/** Named rooms that have no area yet and are not stairwells: the rooms this feature can fill.
+ *  Stairwells are never conditioned (the owner's rule), so they are never even offered. */
+function fillableRooms() {
+  return state.rooms.filter((r) => r && r.name && !roomHasArea(r) && !isStairwellName(r.name));
+}
+
+/** The words a building-services engineer reads for one autotrace skip code (js/autotrace.js CODES).
+ *  Never a count — the count comes from the run itself, never from this table. */
+const FILL_REASON_WORDS = {
+  shared: 'one outline holds several room names',
+  'bad-area': 'the traced shape did not look like a room',
+  'no-outline': 'no traced outline contains the name',
+  'no-position': 'the plan gives no position for the name',
+  open: 'the outline is not closed',
+  overlap: 'the outline overlaps another traced outline',
+  'on-edge': 'the room name sits on the outline',
+  already: 'the room already had an area',
+  stairwell: 'a stairwell, which is never cooled',
+  unused: 'no room name sits inside the outline',
+};
+function fillReasonWords(code) {
+  return FILL_REASON_WORDS[code] || 'the outline could not be verified';
+}
+
+/** "33 because one outline holds several room names, 2 because the traced shape did not look like a
+ *  room." — built from the run's OWN reason counts (never hardcoded), most common first, at most
+ *  three named reasons. */
+function fillReasonSummary(reasonCount) {
+  const entries = [...reasonCount.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return '';
+  const parts = entries.slice(0, 3).map(([code, n]) => `${n} because ${fillReasonWords(code)}`);
+  const rest = entries.slice(3).reduce((a, [, n]) => a + n, 0);
+  let s = parts.join(', ');
+  if (rest) s += `, ${rest} for other reasons`;
+  return s + '.';
+}
+
+// The last fill run, for Undo: [{ id, area, include, areaUnknown }]. A single step is enough.
+let lastFill = null;
+
+/** Keep the fill buttons honest: offer the control when there are blank named rooms, and enable
+ *  Undo only when a fill actually changed something. */
+function planSyncFillButton() {
+  const btn = el.planFillAreas;
+  if (btn) {
+    const n = fillableRooms().length;
+    btn.dataset.nothingToFill = n ? '0' : '1';
+    btn.setAttribute('aria-disabled', n ? 'false' : 'true');
+    btn.title = n
+      ? `Give ${n} named room${n === 1 ? '' : 's'} an area measured from the plan's own outlines`
+      : 'Every room already has an area, so there is nothing to fill from the drawing.';
+  }
+  if (el.planFillUndo) el.planFillUndo.disabled = !(lastFill && lastFill.length);
+}
+
+/** Undo the last "Fill areas from the drawing": put back exactly the areas (and Include flags) the
+ *  fill replaced, and drop the "from the drawing" mark. */
+function planUndoFill() {
+  if (!lastFill || !lastFill.length) {
+    setStatus('warn', 'There is nothing to undo: no areas have been filled from the drawing.', 'plan');
+    return;
+  }
+  const n = lastFill.length;
+  for (const s of lastFill) {
+    const room = roomById(s.id);
+    if (!room) continue;
+    if (s.area === null || s.area === undefined) delete room.area; else room.area = s.area;
+    if (s.include === undefined) delete room.include; else room.include = s.include;
+    if (s.areaUnknown) room.areaUnknown = true; else delete room.areaUnknown;
+    delete room.areaFromDrawing;
+    delete room.areaSource;
+  }
+  lastFill = null;
+  renderAll();
+  saveNow();
+  planSyncFillButton();
+  setStatus('ok', `Undone: ${n} area${n === 1 ? '' : 's'} put back exactly as they were, ` +
+    `and the load is back to what it was.`, 'plan');
+}
+
+/** Apply the confident assignments to the rooms, remember the previous values for Undo, and report
+ *  honestly what was filled and what was left alone. */
+function planApplyFill(assignments, reasonCount, info) {
+  const toFill = info.fillable;
+  const filled = [];
+  for (const [id, a] of assignments) {
+    const room = roomById(id);
+    if (!room) continue;
+    if (roomHasArea(room)) continue;      // paranoid re-check: never overwrite a real area
+    filled.push({
+      id,
+      area: room.area === undefined ? null : room.area,
+      include: room.include,
+      areaUnknown: room.areaUnknown === true,
+    });
+    room.area = a.areaM2;
+    delete room.areaUnknown;
+    // Mark it so the table can say where the area came from, and so a later run/undo behave.
+    room.areaFromDrawing = true;
+    room.areaSource = 'drawing';
+    // A room with no area was left out of the load. Now it has one, switch it on by the SAME rule the
+    // parser uses for a room that HAS an area (so a toilet/stairwell stays out) — otherwise filling
+    // areas would change no total at all, which is the whole point of the feature.
+    room.include = !NON_AC_WORDS.test(room.name || '');
+  }
+  lastFill = filled.length ? filled : null;
+  renderAll();
+  saveNow();
+  planSyncFillButton();
+
+  if (!filled.length) {
+    const why = fillReasonSummary(reasonCount) || 'no blank room matched one closed outline of the plan.';
+    setStatus('warn', `No area could be filled from the drawing: ${why} Nothing was changed.`, 'plan');
+    return;
+  }
+  const left = Math.max(0, toFill - filled.length);
+  const tail = left > 0 ? ` ${left} left alone — ${fillReasonSummary(reasonCount)}` : '';
+  const pages = info.pagesSkipped
+    ? ` ${info.pagesSkipped} page(s) had no readable linework.` : '';
+  setStatus('ok', `Filled ${filled.length} area${filled.length === 1 ? '' : 's'} from the drawing ` +
+    `(using ${info.passKey === 'mixed' ? 'the plan’s own wall lines' : passLabel([info.passKey])}).${tail}${pages} ` +
+    `They now count in the load, unless the name means a space that is not cooled. Undo puts them back.`, 'plan');
+}
+
+/** Read the plan's own linework and give the blank named rooms an area — but only where the match is
+ *  unambiguous. Never overwrites an area, never touches a stairwell, never invents a number. */
+async function planFillAreas() {
+  if (state.ui.traceBusy) return;
+  if (!state.rooms.length) {
+    setStatus('warn', 'There are no rooms to fill yet. Load a drawing or add rooms first.', 'plan');
+    return;
+  }
+  const fillable = fillableRooms();
+  if (!fillable.length) {
+    setStatus('warn', 'Every room already has an area, so there is nothing to fill from the drawing. ' +
+      'An area is filled only when a single room name sits inside one closed outline the plan itself draws.', 'plan');
+    return;
+  }
+  if (!plan.viewer || plan.unavailable) {
+    setStatus('warn', 'Open a drawing in the plan view first, then fill the blank areas from its outlines.', 'plan');
+    return;
+  }
+
+  planTraceBusy(true);
+  try {
+    // A project saved before the parser recorded WHERE the sheet names each room has no `at`; recover
+    // the positions exactly as Place all rooms / Trace real outlines do.
+    if (!state.rooms.some((r) => r.at && Number.isFinite(r.at.x) && Number.isFinite(r.at.y))) {
+      const n = await rehydratePositions();
+      if (n) saveSoon();
+    }
+
+    const denom = planScaleDenom();
+    let trace, auto;
+    try { trace = await loadTraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err), 'plan'); return; }
+    try { auto = await loadAutotraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err), 'plan'); return; }
+
+    planHideScaleFix();
+    setStatus(null, "Reading the plan's linework to fill the blank areas… this can take a few seconds on a big sheet.", 'plan');
+    await nextFrame();
+
+    try {
+      const rec = await drawingBytesForTrace();
+      if (!rec) {
+        setStatus('warn', 'The drawing is not kept in this browser any more, so its linework cannot be read. ' +
+          'Upload it again and try.', 'plan');
+        return;
+      }
+      const doc = await pdfjs.getDocument({ data: rec.bytes.slice(0), verbosity: 0 }).promise;
+      try {
+        const fillIds = new Set(fillable.map((r) => r.id));
+        const pages = [...new Set(fillable.map((r) => Number(r.page) || 1))].sort((a, b) => a - b);
+        const assignments = new Map();     // roomId -> { areaM2, regionId }
+        const reasonCount = new Map();
+        let pagesRead = 0, pagesSkipped = 0, regionsTotal = 0, passKey = null;
+
+        for (const p of pages) {
+          if (p < 1 || p > doc.numPages) { pagesSkipped += 1; continue; }
+          const pg = await doc.getPage(p);
+          const v = pg.view;
+          const box = { x0: v[0], y0: v[1], x1: v[2], y1: v[3] };
+          const opList = await pg.getOperatorList();
+          const segs = lineSegmentsForPage(opList.fnArray, opList.argsArray, pdfjs.OPS, trace);
+          if (!segs.length || !segmentsInBox(segs, box, 2)) { pagesSkipped += 1; continue; }
+
+          // EVERY room on the page goes in, not only the blank ones: "exactly one name inside the
+          // outline" must be judged against every name, so a region holding a blank room AND a named
+          // room is refused (shared) rather than wrongly handed to the blank one.
+          const pageRooms = state.rooms.filter((r) => (Number(r.page) || 1) === p);
+          const roomInput = pageRooms.map((r) => ({
+            id: r.id, name: r.name, at: r.at,
+            area: roomHasArea(r) ? Number(r.area) : null,
+            include: r.include,
+          }));
+
+          // Try the few most common line classes plus every line and keep whichever fills the most
+          // blank rooms — the same by-result choice the outline tracer makes (on a real MEP sheet the
+          // symbol hatch can outnumber the walls).
+          const cands = trace.styleCounts(segs).slice(0, 3)
+            .map(([key]) => ({ key, segs: trace.filterByStyle(segs, key) }));
+          cands.push({ key: 'all lines', segs });
+          let best = null;
+          for (const c of cands) {
+            const regions = trace.traceRegions({
+              segments: c.segs, box, rooms: roomInput, denom,
+              pxPerPt: TRACE_PX_PER_PT, thickness: TRACE_THICKNESS,
+              closeGaps: trace.RECOMMENDED_CLOSE_GAPS,
+            }).regions;
+            const out = auto.matchRoomsToRegions({ rooms: roomInput, regions });
+            const n = out.assignments.filter((a) => fillIds.has(a.roomId)).length;
+            if (!best || n > best.n) best = { key: c.key, regions, out, n };
+          }
+          pagesRead += 1;
+          regionsTotal += best.regions.length;
+          if (!passKey) passKey = best.key;
+          else if (passKey !== best.key) passKey = 'mixed';
+
+          const assignBy = new Map(best.out.assignments.map((a) => [a.roomId, a]));
+          const skipBy = new Map(best.out.skipped.filter((s) => s.kind === 'room').map((s) => [s.id, s.code]));
+          for (const r of pageRooms) {
+            if (!fillIds.has(r.id)) continue;
+            const a = assignBy.get(r.id);
+            if (a) { assignments.set(r.id, { areaM2: a.areaM2, regionId: a.regionId }); continue; }
+            const code = skipBy.get(r.id) || 'no-outline';
+            reasonCount.set(code, (reasonCount.get(code) || 0) + 1);
+          }
+        }
+
+        planApplyFill(assignments, reasonCount, {
+          fillable: fillable.length, pagesRead, pagesSkipped, regionsTotal, passKey, denom,
+        });
+      } finally {
+        try { await doc.destroy(); } catch (e) { /* ignore */ }
+      }
+    } catch (err) {
+      console.warn('[fill] filling areas failed:', (err && err.message) || err);
+      setStatus('err', `Filling the areas from the drawing failed (${(err && err.message) || err}). ` +
+        `The rooms and the load are unchanged.`, 'plan');
+    }
+  } finally {
+    planTraceBusy(false);
+  }
+}
+
 /** A level for a room drawn on page N: the levels the parser found, in the order it found them,
  *  usually correspond to the pages in order. Best effort — the user can retype it in the editor. */
 function planLevelForPage(page) {
@@ -2474,6 +2847,15 @@ function planDrawRoom(rect, info) {
     setStatus('ok', `${room.name} added — ${room.length} × ${room.width} m, ${room.area} m² at 1:${denom}. ` +
       `Set its name, orientation and glazing below; the load already uses it.`, 'plan');
     planSelectRoom(room);
+  } else if (res.skipped) {
+    // addRooms de-duplicates on name + level + area, so a draw that lands on an existing room used to
+    // vanish with no message. Say it plainly, and point at the shape tool (which can REPLACE a room's
+    // area) instead of drawing the same rectangle twice.
+    setStatus('warn', `That rectangle was not added: a room with the same name, level and area ` +
+      `(${room.area} m²) is already in the table. Draw a different size, or give the shape to that ` +
+      `room with "Set the shape" to replace its area.`, 'plan');
+  } else {
+    setStatus('warn', 'That rectangle was not added. Draw it again, or add the room by hand.', 'plan');
   }
 }
 
@@ -2499,6 +2881,10 @@ function planCreateShapeRoom(shape) {
       `Set its name, orientation and glazing below; the load already uses it.`, 'plan');
     planSetMode('select');       // hand the user the new geometry, ready to reshape
     planSelectRoom(room);
+  } else if (res.skipped) {
+    setStatus('warn', `That drawn shape was not added as a new room: a room with the same name, level ` +
+      `and area (${fmt(room.area, 1)} m²) is already in the table. Pick that room in the chooser and ` +
+      `press "Set the shape" to replace its area instead.`, 'plan');
   }
 }
 
@@ -2510,7 +2896,7 @@ function planCreateShapeRoom(shape) {
 function planApplyScale(denom) {
   const n = Number(denom) || DEFAULT_SCALE_DENOM;
   state.project.planScale = n;
-  let changed = 0;
+  let changed = 0, keptTrace = 0;
   for (const r of state.rooms) {
     if (!isDrawnRoom(r) || isPlacedRoom(r)) continue;
     if (isDrawnPolyRoom(r)) {
@@ -2521,6 +2907,12 @@ function planApplyScale(denom) {
       changed += 1;
       continue;
     }
+    // A TRACED OUTLINE also has a `poly`. Moving one in Select mode writes `room.rect` = the ring's
+    // bounding box while leaving `source !== 'drawn'` (see setRoomRing), so this else-branch used to
+    // treat that bbox as the room's own rectangle and OVERWRITE `room.area` with areaFromRect(bbox) —
+    // silently changing an L-shaped traced room's area (and load) when the user only changed scale.
+    // A traced room's area is the plan's own figure, so it is never re-measured from a box here.
+    if (Array.isArray(r.poly) && r.poly.length > 2) { keptTrace += 1; continue; }
     const dims = dimsFromRect(r.rect, n);
     r.scaleDenom = n;
     r.area = round2(areaFromRect(r.rect, n));
@@ -2530,10 +2922,13 @@ function planApplyScale(denom) {
   }
   renderAll();
   saveSoon();
+  const keptNote = keptTrace
+    ? ` ${keptTrace} traced outline(s) kept their own area.`
+    : '';
   setStatus('ok', changed
     ? `Drawing scale 1:${n} — ${changed} drawn room(s) re-measured from their own shapes ` +
-      `(a rectangle from its box, a drawn shape from its ring).`
-    : `Drawing scale set to 1:${n}. Rooms you draw are measured at this scale.`, 'plan');
+      `(a rectangle from its box, a drawn shape from its ring).${keptNote}`
+    : `Drawing scale set to 1:${n}. Rooms you draw are measured at this scale.${keptNote}`, 'plan');
 }
 
 /* ------------------------------------------------------------------ */
@@ -2734,11 +3129,31 @@ function planSetMode(mode) {
  *     used, so the room, its area, its table row and the load are all unchanged.
  */
 const PLAN_DRAG_PX = 6;      // a press that travels beyond this (view px) is a drag, not a click
-let planGesture = null;      // { startView, startPdf, page, drag } while a press is in flight
+// At 1:20/1:50 a 3×3 pt rectangle rounds to 0.00 m². Such a rectangle is not a room: it would add a
+// junk zero row (and a bogus outline), so it is refused with a status message instead.
+const MIN_ROOM_AREA_M2 = 0.01;
+let planGesture = null;      // { startView, startPdf, page, drag, pointerId, droppedDraft }
 let planSpaceHeld = false;   // Space is the pan modifier, exactly as it is in the overlay
 
 function planGestureSpaceKey(e) {
   return e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
+}
+
+// The same text-entry rule js/overlay.js uses (isTextEntry): Space must never start a pan, and must
+// never let the overlay start a polygon, while the user is typing — including while typing in the
+// room-name box. Holding Space there used to set the pan flag and made the app skip the gesture while
+// the overlay still started a polygon, so the two disagreed about the same keystroke.
+const PLAN_TEXT_INPUT_TYPES = new Set([
+  'text', 'search', 'url', 'tel', 'email', 'password', 'number',
+  'date', 'datetime-local', 'month', 'week', 'time',
+]);
+function planIsTextEntry(node) {
+  if (!node || node === document) return false;
+  const tag = String(node.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (node.isContentEditable === true) return true;
+  if (tag !== 'INPUT') return false;
+  return PLAN_TEXT_INPUT_TYPES.has(String(node.getAttribute('type') || 'text').toLowerCase());
 }
 
 function planGestureViewport() {
@@ -2795,51 +3210,102 @@ function planClearPreview() {
 function planGestureDown(e) {
   if (plan.unavailable || !plan.overlay) return;
   if (state.ui.planMode !== 'shape') return;
+  if (planGesture) return;    // a press is already in flight: a second finger must not restart it
   if (e.pointerType === 'mouse' && e.button !== 0) return;   // middle-drag pans, owned by the overlay
   if (planSpaceHeld) return;                                 // Space + drag pans, owned by the overlay
   const vp = planGestureViewport();
   const p = planGesturePoint(e);
   if (!vp || !p) return;
   // Deliberately NOT stopped: the overlay still needs the press for the click (polygon) gesture.
-  planGesture = { startView: p, startPdf: viewPointToPdf(vp, p), page: plan.page || 1, drag: false };
+  // Pointer capture is NOT taken here: capturing on the press would retarget the pointerup to
+  // #planView and the overlay (a CHILD of it) would never see the click, so every polygon vertex
+  // would be lost. Capture is taken the moment the press becomes a DRAG instead (see planGestureMove).
+  // `draftBefore`: whether a polygon was ALREADY in progress when this press landed. This handler is
+  // a CAPTURE-phase listener on an ancestor of the overlay, so it runs BEFORE the overlay's own
+  // pointerdown — which starts a 1-vertex draft on EVERY press in Draw shape mode. Reading hasDraft()
+  // here, and not later in the move, is what tells a real multi-corner shape from the throwaway
+  // 1-vertex draft this very press just created.
+  planGesture = {
+    startView: p, startPdf: viewPointToPdf(vp, p), page: plan.page || 1,
+    drag: false, pointerId: e.pointerId,
+    draftBefore: !!(plan.overlay && typeof plan.overlay.hasDraft === 'function' && plan.overlay.hasDraft()),
+  };
+}
+
+/** Release the pointer captured when the press became a drag (idempotent; safe with no capture). */
+function planReleaseCapture(id) {
+  try { el.planView.releasePointerCapture(id); } catch (err) { /* never captured, or already gone */ }
 }
 
 function planGestureMove(e) {
-  if (!planGesture) return;
+  const g = planGesture;
+  if (!g) return;
+  // A SECOND finger (or pen) must not corrupt the rectangle: only the pointer that started the
+  // gesture may move it.
+  if (e.pointerId !== g.pointerId) return;
+  // No button (or contact) is down any more: this is a stale gesture whose pointerup was missed,
+  // not a drag. Ignoring it stops a phantom rubber band following later hovers.
+  if (e.buttons === 0) return;
   const p = planGesturePoint(e);
   if (!p) return;
-  if (!planGesture.drag) {
-    const far = Math.max(Math.abs(p.x - planGesture.startView.x), Math.abs(p.y - planGesture.startView.y));
+  if (!g.drag) {
+    const far = Math.max(Math.abs(p.x - g.startView.x), Math.abs(p.y - g.startView.y));
     if (far <= PLAN_DRAG_PX) return;   // still a click: leave it to the overlay
     // A drag: it is a RECTANGLE. Drop the corner the overlay just placed at the press, take the
     // gesture over (so the overlay sees no more of it), and rubber-band the box ourselves.
-    planGesture.drag = true;
+    g.drag = true;
+    // Switching the overlay's mode discards EVERY vertex of a polygon the user was drawing, so note
+    // whether a real polygon was already in progress before the mode change wipes it, and warn when
+    // the drag finishes. `draftBefore` (read at the press, before the overlay's own startShape) tells
+    // a real shape from the throwaway 1-vertex draft every press in Draw shape mode creates.
+    g.droppedDraft = !!g.draftBefore;
     if (typeof plan.overlay.setMode === 'function') plan.overlay.setMode('shape');
+    // NOW capture the pointer. A drag that leaves the plan area would otherwise never deliver its
+    // pointerup here: the rubber band would freeze, the gesture would never clear, and every later
+    // hover would draw a phantom band. Capture is taken only once the press is a DRAG, so a plain
+    // click still reaches the overlay and polygon drawing is unaffected. Best effort: a browser
+    // without pointer capture keeps the old behaviour.
+    try { el.planView.setPointerCapture(g.pointerId); } catch (err) { /* no capture available */ }
     e.stopPropagation();
   } else {
     e.stopPropagation();
   }
   const vp = planGestureViewport();
   if (!vp) return;
-  planShowPreview(normalizeRect(planGesture.startPdf, viewPointToPdf(vp, p)));
+  planShowPreview(normalizeRect(g.startPdf, viewPointToPdf(vp, p)));
 }
 
 function planGestureUp(e) {
   const g = planGesture;
   if (!g) return;
+  if (e.pointerId !== g.pointerId) return;   // another pointer lifting must not end this gesture
   planGesture = null;
+  planReleaseCapture(e.pointerId);
   if (!g.drag) return;   // a click: the overlay has already turned it into a polygon corner
   e.stopPropagation();
   planClearPreview();
   const vp = planGestureViewport();
   const p = planGesturePoint(e);
   if (!vp || !p) return;
+  const denom = planScaleDenom();
   const rect = normalizeRect(g.startPdf, viewPointToPdf(vp, p));
-  if (rectIsUsable(rect)) planDrawRoom({ ...rect, page: g.page }, { page: g.page });
-  // too small to be a room: discard silently, exactly as the old Draw room mode did.
+  const replaced = g.droppedDraft
+    ? 'That drag replaced the shape you were drawing — its corners were dropped. '
+    : '';
+  if (rectIsUsable(rect) && areaFromRect(rect, denom) >= MIN_ROOM_AREA_M2) {
+    planDrawRoom({ ...rect, page: g.page }, { page: g.page });
+    if (replaced) setStatus('warn', replaced + 'A small rectangle was added in its place.', 'plan');
+    return;
+  }
+  // Too small to be a room at this scale: say so rather than discarding silently (it would have
+  // added a junk 0.00 m² row), and always say so when the drag also threw away a drawn shape.
+  setStatus('warn', replaced +
+    `That drag was too small to make a room (under ${MIN_ROOM_AREA_M2} m² at 1:${denom}). Nothing was added.`, 'plan');
 }
 
-function planGestureCancel() {
+function planGestureCancel(e) {
+  if (planGesture && e && typeof e.pointerId === 'number' && e.pointerId !== planGesture.pointerId) return;
+  if (planGesture) planReleaseCapture(planGesture.pointerId);
   planGesture = null;
   planClearPreview();
 }
@@ -2854,7 +3320,12 @@ function planWireGestures() {
   el.planView.addEventListener('pointerup', planGestureUp, true);
   el.planView.addEventListener('pointercancel', planGestureCancel, true);
   window.addEventListener('keydown', (e) => {
-    if (planGestureSpaceKey(e)) planSpaceHeld = true;
+    // Space is the pan modifier — but never while the user is typing (the room-name box, a table
+    // cell). Without this guard, holding Space to type a space set the pan flag, so the app skipped
+    // the press while the overlay still started a polygon: the two disagreed about one keystroke.
+    if (planGestureSpaceKey(e) && !planIsTextEntry(document.activeElement) && !planIsTextEntry(e.target)) {
+      planSpaceHeld = true;
+    }
     if (e.key === 'Escape' && planGesture) planGestureCancel();
   });
   window.addEventListener('keyup', (e) => { if (planGestureSpaceKey(e)) planSpaceHeld = false; });
@@ -2893,6 +3364,8 @@ function planWire() {
   if (el.planPlaceClear) el.planPlaceClear.addEventListener('click', planClearPlaced);
   if (el.planTraceOutlines) el.planTraceOutlines.addEventListener('click', planTraceOutlines);
   if (el.planTraceClear) el.planTraceClear.addEventListener('click', planTraceClear);
+  if (el.planFillAreas) el.planFillAreas.addEventListener('click', planFillAreas);
+  if (el.planFillUndo) el.planFillUndo.addEventListener('click', planUndoFill);
   planWireGestures();
 }
 
@@ -3200,7 +3673,8 @@ function wire() {
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   });
 
-  $('#btnSample').addEventListener('click', loadSample);
+  $('#btnSample').addEventListener('click', () => loadSample());
+  if ($('#btnSampleHouse')) $('#btnSampleHouse').addEventListener('click', () => loadSample('house'));
 
   $('#btnManual').addEventListener('click', () => {
     const room = { id: newId(), name: 'New Room', level: state.ui.level === 'all' ? '' : state.ui.level, area: 20, height: 3, type: 'office', include: true, source: 'manual' };
@@ -3358,4 +3832,4 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, plan, planDrawShape, planCommitShape, planShowShapeChooser };
+window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser };

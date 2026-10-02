@@ -4,7 +4,7 @@ import {
   segmentsFromOperatorList, dominantStyle, filterByStyle,
   rasterizeWalls, pointToCell, cellToPoint, regionAt, regionHasCell,
   outlineFromRegion, polygonAreaPt2, outlineAreaPt2, pt2ToM2, metresPerPt,
-  judgeTrace, traceRooms, impliedDenom, pickWallLines, styleCounts, TRACE_BAND,
+  judgeTrace, traceRooms, traceRegions, morphClose, impliedDenom, pickWallLines, styleCounts, TRACE_BAND,
 } from '../js/trace.js';
 
 let pass = 0;
@@ -269,6 +269,83 @@ const OPS = {
     `${out.results[0].reason} (${ms} ms)`);
   ok('and it is refused with the too-big code', out.results[0].code === 'too-big', `code ${out.results[0].code}`);
   ok('and the flood fill does not run away across it', ms < 4000, `${ms} ms`);
+}
+
+// ------------------------------------------------------------------ gap closing (OPT-IN) + traceRegions
+// A two-room, one-door sheet: two equal rooms share a middle wall that has a door gap in it. By
+// default the flood fill walks through the door and swallows both, so neither room can be verified.
+// With closeGaps on, the doorway is bridged and each room becomes its own clean outline.
+function twoRoomsDoor(x, y, side, doorPt) {
+  const s = [];
+  const push = (x1, y1, x2, y2) => s.push({ x1, y1, x2, y2, width: 1, color: [136, 136, 136] });
+  push(x, y, x + 2 * side, y);                       // bottom
+  push(x + 2 * side, y, x + 2 * side, y + side);     // right
+  push(x + 2 * side, y + side, x, y + side);         // top
+  push(x, y + side, x, y);                           // left
+  const mx = x + side;                               // shared middle wall, with a centred door gap
+  push(mx, y, mx, y + (side - doorPt) / 2);
+  push(mx, y + (side + doorPt) / 2, mx, y + side);
+  return s;
+}
+{
+  // morphClose: seal a gap, fill nothing far from it, never mutate the input, no-op at radius 0.
+  const w = 32, h = 40;
+  const g = new Uint8Array(w * h);
+  for (let x = 0; x < w; x += 1) if (x < 14 || x > 16) g[20 * w + x] = 1;   // a wall row with a 3 px gap
+  ok('morphClose(0) returns the very same grid (the default path is a no-op)', morphClose(g, w, h, 0) === g);
+  const tooSmall = morphClose(g, w, h, 1);
+  ok('radius 1 does NOT bridge a 3 px gap (2*radius < gap)', tooSmall[20 * w + 15] === 0);
+  const closed = morphClose(g, w, h, 2);
+  ok('radius 2 bridges the 3 px gap', closed[20 * w + 14] === 1 && closed[20 * w + 15] === 1 && closed[20 * w + 16] === 1);
+  ok('closing does not fill free space far from the wall', closed[0] === 0 && closed[(h - 1) * w + (w - 1)] === 0);
+  ok('closing never mutates the input grid', g[20 * w + 15] === 0);
+}
+{
+  const side = sideFor(25);
+  const segs = twoRoomsDoor(10, 20, side, 3);          // a ~3 pt (6 px) door between two 25 m² rooms
+  const b = box(2 * side + 40, side + 40);
+  const rooms = [
+    { id: 'L', name: 'OFFICE', area: 25, at: { x: 10 + side / 2, y: 20 + side / 2 } },
+    { id: 'R', name: 'STORE', area: 25, at: { x: 10 + side + side / 2, y: 20 + side / 2 } },
+  ];
+  const open = traceRooms({ segments: segs, box: b, rooms, denom: DENOM, pxPerPt: 2, thickness: 2 });
+  ok('two rooms joined only by a door read as ONE shared region by default',
+    open.stats.accepted === 0 && open.results.every((r) => r.code === 'shared'),
+    open.results.map((r) => `${r.id}:${r.code}`).join(', '));
+  const sealed = traceRooms({ segments: segs, box: b, rooms, denom: DENOM, pxPerPt: 2, thickness: 2, closeGaps: 3 });
+  ok('closeGaps turns them into two clean, accepted outlines',
+    sealed.stats.accepted === 2 && sealed.results.every((r) => r.ok && r.rings.length === 1),
+    `accepted ${sealed.stats.accepted}/2`);
+
+  const rOpen = traceRegions({ segments: segs, box: b, rooms, denom: DENOM, pxPerPt: 2, thickness: 2 });
+  const rSealed = traceRegions({ segments: segs, box: b, rooms, denom: DENOM, pxPerPt: 2, thickness: 2, closeGaps: 3 });
+  ok('traceRegions reports 1 region by default and 2 once the door is closed',
+    rOpen.stats.regions === 1 && rSealed.stats.regions === 2,
+    `default ${rOpen.stats.regions}, closed ${rSealed.stats.regions}`);
+}
+{
+  // traceRegions: the regions carry rings and areas a consumer can use directly (no rebuilding).
+  const side = sideFor(25);
+  const rooms = [{ id: 'a', name: 'OFFICE', area: 25, at: { x: 10 + side / 2, y: 20 + side / 2 } }];
+  const out = traceRegions({ segments: roomWalls(10, 20, side), box: box(200, 200), rooms, denom: DENOM, pxPerPt: 2, thickness: 2 });
+  ok('traceRegions returns exactly one region with a closed outline',
+    out.stats.regions === 1 && out.regions[0].closed === true && out.regions[0].rings.length >= 1 && out.regions[0].rings[0].length >= 4,
+    `${out.stats.regions} region(s)`);
+  ok('a region carries rings, a polygon, cells and both area forms',
+    Array.isArray(out.regions[0].polygon) && out.regions[0].polygon.length >= 4
+      && out.regions[0].areaPt2 > 0 && out.regions[0].cells > 0 && out.regions[0].labels === 1);
+  ok('the region area is the known 25 m² rectangle, within the wall stroke',
+    near(out.regions[0].areaM2, 25, 2.5), `${out.regions[0].areaM2.toFixed(2)} m²`);
+  ok('the reported areaM2 equals pt2M2 of areaPt2 at 1:100',
+    near(out.regions[0].areaM2, pt2ToM2(out.regions[0].areaPt2, DENOM), 1e-9));
+}
+{
+  // The default path is byte-for-byte what it was: no closeGaps key and closeGaps:0 give the same
+  // result, and the raster grid is handed straight through (morphClose is never entered).
+  const side = sideFor(25);
+  const p = { segments: roomWalls(10, 20, side), box: box(200, 200), rooms: [{ id: 'a', area: 25, at: { x: 10 + side / 2, y: 20 + side / 2 } }], denom: DENOM, pxPerPt: 2, thickness: 2 };
+  ok('traceRooms with no closeGaps is byte-identical to closeGaps:0',
+    JSON.stringify(traceRooms(p)) === JSON.stringify(traceRooms({ ...p, closeGaps: 0 })));
 }
 
 console.log(`\n${pass}/${pass + fail} trace checks passed`);

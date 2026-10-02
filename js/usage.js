@@ -1,6 +1,6 @@
 // LoadLens usage counting — anonymous, cookieless, no identifiers.
 //
-// LoadLens tells every visitor that their drawing is never uploaded. This module
+// LoadLens tells every visitor that their drawing is never sent to a third party. This module
 // must not quietly contradict that, so it deliberately sends almost nothing:
 //
 //   * the name of one of a fixed set of real actions (EVENTS below),
@@ -47,9 +47,33 @@ export const PROP_VALUES = {
 /** The only URL parameters this module reads or forwards. */
 export const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'];
 
-// Short, plain campaign tokens only: letters, digits and . _ ~ - . This rejects a
-// URL, a sentence, an email or anything else that could identify a person.
+// The strict token shape the SERVER accepts (also used by lib/event.js via the Lambda). The
+// browser normalises a campaign name into this shape before it is sent, so a real campaign name
+// with spaces, a '+', mixed case or an over-long value still attributes instead of vanishing.
 export const UTM_RE = /^[A-Za-z0-9._~-]{1,64}$/;
+
+// Characters that never appear in a campaign token but do appear in pasted free text, an email
+// address, markup or a URL fragment. A value carrying one is refused outright rather than
+// normalised — that is the "genuinely unsafe input" the reader is promised.
+const UTM_UNSAFE_RE = /[<>@"'`\\/{}[\]|^:;,?&#%=!*()$]/;
+// Everything else that is not a plain token character is treated as a separator.
+const UTM_SEP_RE = /[^A-Za-z0-9._~-]+/g;
+
+/**
+ * Turn a raw utm_* value into a stable campaign token, or '' when it should be dropped.
+ * Lower-cases and trims so "Kerala" and "kerala" land in ONE bucket; turns runs of spaces, '+'
+ * and other separators into a single '-'; truncates to the 64-character limit instead of discarding
+ * an over-long campaign name. A value that looks like pasted text (an email, markup, a sentence)
+ * is still rejected. Pure and exported so it can be unit-tested.
+ */
+export function normaliseUtm(value) {
+  if (typeof value !== 'string') return '';
+  const raw = value.trim();
+  if (!raw || raw.length > 512) return '';
+  if (UTM_UNSAFE_RE.test(raw)) return '';
+  const token = raw.toLowerCase().replace(UTM_SEP_RE, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64).replace(/-+$/g, '');
+  return UTM_RE.test(token) ? token : '';
+}
 
 const ENDPOINT = '/api/event';
 const MAX_BYTES = 900; // far below the Lambda's 1 KB cap
@@ -74,7 +98,8 @@ export function parseUtms(input) {
   }
   for (const key of UTM_KEYS) {
     const value = params.get(key);
-    if (value && UTM_RE.test(value)) out[key] = value;
+    const token = normaliseUtm(value);
+    if (token) out[key] = token;
   }
   return out;
 }
@@ -108,8 +133,8 @@ export function buildPayload(name, props, utms) {
 
   const u = utms === undefined ? currentUtms() : (utms || {});
   for (const key of UTM_KEYS) {
-    const value = u && u[key];
-    if (typeof value === 'string' && UTM_RE.test(value)) payload[key] = value;
+    const token = normaliseUtm(u && u[key]);
+    if (token) payload[key] = token;
   }
   return payload;
 }

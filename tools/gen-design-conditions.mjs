@@ -247,6 +247,11 @@ function build() {
     )
     .concat(india.fallback ? [tr("India", { kind: "fallback", name: "", row: india.fallback })] : []);
 
+  // Every indicative row on the page comes from the India indicative set above (all other country
+  // blocks render sourced rows only). The honest counter and the generator's own assertion both use
+  // this number; the assertion below re-counts data-sourced="false" so the two can never drift.
+  const indicativeTotal = indiaIndicative.length;
+
   // ---- in-page index of region anchors ----
   const indexLinks = REGIONS.map(
     (region) =>
@@ -370,15 +375,15 @@ function build() {
         <h2>Find your city</h2>
         <p class="muted">
           Type any part of a <strong>city</strong>, <strong>country</strong> or <strong>station</strong>
-          name. The list filters as you type \u2014 no network call, and with JavaScript off the full list
-          stays on the page below.
+          name. The list filters as you type \u2014 <strong>sourced and indicative rows alike</strong>
+          \u2014 no network call, and with JavaScript off the full list stays on the page below.
         </p>
       </div>
       <div class="dc-search">
         <label for="dc-search">Search cities</label>
         <input id="dc-search" class="dc-search-input" type="search" autocomplete="off" spellcheck="false"
           placeholder="Search by city, country or station">
-        <p class="dc-count" id="dc-count" role="status" aria-live="polite">Showing ${sourcedCitiesTotal} of ${sourcedCitiesTotal} sourced cities</p>
+        <p class="dc-count" id="dc-count" role="status" aria-live="polite">Showing ${sourcedCitiesTotal} of ${sourcedCitiesTotal} sourced cities and ${indicativeTotal} of ${indicativeTotal} indicative rows</p>
       </div>
       <nav class="dc-index" aria-label="Regions">
         <span class="muted">Jump to:</span>
@@ -408,7 +413,7 @@ ${table(indiaIndicative, "India \u2014 indicative estimates (no station within a
       <h2>Calculate a cooling load for your own floor plan</h2>
       <p>
         LoadLens reads a floor plan PDF or an Excel / CSV room schedule, applies these design conditions,
-        and returns the room-wise cooling load in TR, L/s and watts \u2014 in your browser, nothing uploaded.
+        and returns the room-wise cooling load in TR, L/s and watts \u2014 in your browser; your drawing is never sent to a third party.
       </p>
       <a class="btn btn-lg" href="app.html">Calculate a cooling load for your own floor plan</a>
     </div>
@@ -451,16 +456,25 @@ ${table(indiaIndicative, "India \u2014 indicative estimates (no station within a
 </footer>
 
 <script>
-// In-page filter over the sourced cities. No network, no framework. If this script never runs,
-// every row is already in the HTML and the list stays complete.
+// In-page filter over EVERY row — sourced cities and the indicative estimates alike. No network,
+// no framework. If this script never runs, every row is already in the HTML and the list stays
+// complete. The counter is honest: it reports sourced and indicative matches separately, and no row
+// that matches is hidden (the old filter only knew about sourced rows, so typing an indicative city
+// like Kochi hid it and the counter said "0 of N sourced cities").
 (function () {
   var box = document.getElementById('dc-search');
   if (!box) return;
   var count = document.getElementById('dc-count');
-  var rows = [].slice.call(document.querySelectorAll('tr.dc-src'));
+  var rows = [].slice.call(document.querySelectorAll('tr.dc-row'));
   var countries = [].slice.call(document.querySelectorAll('[data-dc-country]'));
   var regions = [].slice.call(document.querySelectorAll('[data-dc-region]'));
-  var total = rows.length;
+  var sourced = [];
+  var totalSourced = 0, totalIndicative = 0;
+  for (var s = 0; s < rows.length; s++) {
+    var isSrc = rows[s].getAttribute('data-sourced') === 'true';
+    sourced.push(isSrc);
+    if (isSrc) totalSourced++; else totalIndicative++;
+  }
 
   function norm(s) {
     return (s || '').toLowerCase().normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '');
@@ -469,23 +483,24 @@ ${table(indiaIndicative, "India \u2014 indicative estimates (no station within a
 
   function apply() {
     var q = norm(box.value.replace(/^\\s+|\\s+$/g, ''));
-    var shown = 0;
+    var shownSourced = 0, shownIndicative = 0;
     for (var i = 0; i < rows.length; i++) {
       var hit = !q || hay[i].indexOf(q) !== -1;
       if (hit) rows[i].removeAttribute('hidden'); else rows[i].setAttribute('hidden', '');
-      if (hit) shown++;
+      if (hit) { if (sourced[i]) shownSourced++; else shownIndicative++; }
     }
     for (var j = 0; j < countries.length; j++) {
       var c = countries[j];
-      if (q && !c.querySelector('tr.dc-src:not([hidden])')) c.setAttribute('hidden', '');
+      if (q && !c.querySelector('tr.dc-row:not([hidden])')) c.setAttribute('hidden', '');
       else c.removeAttribute('hidden');
     }
     for (var k = 0; k < regions.length; k++) {
       var s = regions[k];
-      if (q && !s.querySelector('tr.dc-src:not([hidden])')) s.setAttribute('hidden', '');
+      if (q && !s.querySelector('tr.dc-row:not([hidden])')) s.setAttribute('hidden', '');
       else s.removeAttribute('hidden');
     }
-    if (count) count.textContent = 'Showing ' + shown + ' of ' + total + ' sourced cities';
+    if (count) count.textContent = 'Showing ' + shownSourced + ' of ' + totalSourced +
+      ' sourced cities and ' + shownIndicative + ' of ' + totalIndicative + ' indicative rows';
   }
 
   box.addEventListener('input', apply);
@@ -507,6 +522,12 @@ ${table(indiaIndicative, "India \u2014 indicative estimates (no station within a
   if (renderedTrue !== sourcedCitiesTotal) {
     throw new Error(
       `sourced row drift: table has ${sourcedCitiesTotal} sourced cities, page has ${renderedTrue} sourced rows`
+    );
+  }
+  const renderedFalse = (html.match(/data-sourced="false"/g) || []).length;
+  if (renderedFalse !== indicativeTotal) {
+    throw new Error(
+      `indicative row drift: generator says ${indicativeTotal} indicative rows, page has ${renderedFalse}`
     );
   }
   const printed = html.match(/Showing (\d+) of (\d+) sourced cities/);

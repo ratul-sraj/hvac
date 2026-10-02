@@ -6,6 +6,11 @@ import puppeteer from "puppeteer-core";
 
 const URL_ = process.argv[2] || "http://127.0.0.1:3000/app.html";
 const BASE = new URL(".", URL_).href;   // directory the pages live in
+// The sample button now loads the REAL, credited LEVEL 11 FLOOR PLAN by default, which prints no room
+// areas — so its rooms come in with unknown areas and a different count. This suite's baselines (159
+// rooms, 363.86 TR, the 3-page plan) belong to the SYNTHETIC fixture, which is loaded through the
+// unadvertised ?sample=synthetic hook. Drive the fixture through that hook so the numbers stay exact.
+const SYNTH = URL_ + (URL_.includes("?") ? "&" : "?") + "sample=synthetic";
 const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const OUT = "tests/qa";
 fs.mkdirSync(OUT, { recursive: true });
@@ -72,8 +77,8 @@ page.on("requestfailed", (r) => failedRequests.push(`${r.url()} ${r.failure()?.e
 
 try {
   // 1. load
-  const resp = await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
-  ok("site loads", resp && resp.status() === 200, `HTTP ${resp && resp.status()} in ${URL_}`);
+  const resp = await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 60000 });
+  ok("site loads", resp && resp.status() === 200, `HTTP ${resp && resp.status()} in ${SYNTH}`);
   ok("title", (await page.title()).includes("LoadLens"), await page.title());
 
   // 2. no console errors on load
@@ -393,7 +398,7 @@ if (!sampleMissing) {
     const repAttr = "Calculated with LoadLens - loadlens.net";
     const repAttrCount = (report.text.match(/Calculated with LoadLens - loadlens\.net/g) || []).length;
     ok("the report carries the LoadLens credit exactly once, in plain honest words",
-      repAttrCount === 1 && /free, runs in your browser, your drawing is never uploaded/.test(report.text),
+      repAttrCount === 1 && /free, runs in your browser, your drawing is never (uploaded|sent to a third party)/.test(report.text),
       `${repAttrCount} occurrence(s)`);
     const repTr = (report.text.match(/Total cooling load ([0-9.]+) TR/) || [])[1];
     const screenTrRep = await page.$eval("#summaryCards", (e) => {
@@ -503,7 +508,7 @@ if (!sampleMissing) {
   // The suite may have reloaded the page since the sample was first opened, and a reload has no
   // drawing in memory — so make this block stand on its own: be on the calculator, load the sample.
   if (!/app\.html/.test(page.url())) {
-    await page.goto(BASE + "app.html", { waitUntil: "load", timeout: 90000 });
+    await page.goto(SYNTH, { waitUntil: "load", timeout: 90000 });
   }
   if (!(await page.$("#planCanvas"))) {
     await page.click("#btnSample").catch(() => {});
@@ -2174,7 +2179,7 @@ if (!sampleMissing) {
   //      on a fresh sample with no edits, so it cannot disturb the edit-heavy flows above.
   {
     await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
-    await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 60000 });
     // the fresh load's geo chip renders asynchronously and can shift #btnSample between the scroll and
     // the click, so settle first and fall back to a direct click if the geometry click misses.
     await page.evaluate(() => document.getElementById("btnSample").scrollIntoView({ block: "center" }));
@@ -2207,6 +2212,387 @@ if (!sampleMissing) {
     ok("the sample total is 363.86 TR on load and after a reload",
       Math.abs(trFresh - 363.86) < 0.01 && Math.abs(trAgain - 363.86) < 0.01,
       `${trFresh} TR -> ${trAgain} TR after reload`);
+  }
+
+  // 11c. the DEFAULT sample is the real, credited LEVEL 11 FLOOR PLAN (CC BY-SA 4.0, see
+  //      docs/SAMPLE-CREDITS.md). It prints room NAMES but no AREAS, so every room must arrive with an
+  //      unknown area, flagged, and out of the load — and the app must SAY so, without inventing a
+  //      single tonne. Checked on the plain page (no ?sample= hook), because that is what the button
+  //      loads for a visitor.
+  {
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.goto(BASE + "app.html", { waitUntil: "networkidle2", timeout: 60000 });
+    await page.evaluate(() => document.getElementById("btnSample").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 400));
+    await page.click("#btnSample").catch(() => {});
+    const loaded = await page.waitForFunction(
+      () => document.querySelectorAll("#roomsBody tr").length >= 40,
+      { timeout: 120000, polling: 400 }).then(() => true).catch(() => false);
+    if (!loaded) await page.evaluate(() => document.getElementById("btnSample").click());
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length >= 40,
+      { timeout: 120000, polling: 400 });
+
+    const realRooms = await page.$$eval("#roomsBody tr", (rows) => rows.length);
+    ok("the default sample (real LEVEL 11 plan) loads a large room list", realRooms >= 40,
+      `${realRooms} room rows`);
+
+    // every area cell blank and every Include box unticked — nothing was made up
+    const cells = await page.$$eval("#roomsBody tr", (rows) => rows.map((tr) => {
+      const a = tr.querySelector('input[data-field="area"]');
+      const i = tr.querySelector('input[data-field="include"]');
+      return { area: a ? a.value : null, inc: !!(i && i.checked) };
+    }));
+    const blank = cells.filter((c) => c.area === "").length;
+    const ticked = cells.filter((c) => c.inc).length;
+    ok("every real-sample room arrives with an unknown (blank) area", blank === realRooms,
+      `${blank}/${realRooms} area cells blank`);
+    ok("no real-sample room is included in the load until an area is set", ticked === 0,
+      `${ticked} room(s) ticked`);
+
+    // the honest "no printed areas" note is visible (the <li> lives in #warnList; read its
+    // textContent, because a closed <details> does not RENDER its body, so innerText is empty)
+    const warn = await page.evaluate(() => {
+      const b = document.getElementById("warnBox");
+      const l = document.getElementById("warnList");
+      return {
+        hidden: !b || b.classList.contains("hidden"),
+        text: l ? l.textContent.replace(/\s+/g, " ") : "",
+      };
+    });
+    ok("the 'no printed areas' warning is visible for the real sample",
+      !warn.hidden && /no printed areas found/i.test(warn.text) && /\d+\s+room name/i.test(warn.text),
+      warn.text.slice(0, 200));
+
+    // nothing invented a load: 0.00 TR and 0 rooms counted
+    const realTr = await page.$eval("#summaryCards", (e) => {
+      const m = e.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+      return m ? parseFloat(m[1]) : NaN;
+    });
+    const incl = await page.$eval("#summaryCards", (e) => {
+      const m = e.innerText.replace(/\s+/g, " ").match(/Rooms included (\d+)/);
+      return m ? parseInt(m[1], 10) : NaN;
+    });
+    ok("the real sample invents no load (0.00 TR, 0 rooms included)", realTr === 0 && incl === 0,
+      `${realTr} TR, ${incl} room(s) included`);
+    await page.screenshot({ path: `${OUT}/live-real-sample.png`, fullPage: false });
+  }
+
+  // ------------------------------------------------------------------ //
+  // 11d. "Fill areas from the drawing" on the REAL name-only sample.    //
+  //      The control measures an area from the plan's own outlines only //
+  //      where one room name sits inside one closed shape; the status   //
+  //      must quote the REAL counts; Undo must put them back exactly.   //
+  // ------------------------------------------------------------------ //
+  {
+    await page.evaluate(() => document.getElementById("planFillAreas").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 400));
+
+    const fillControl = await page.evaluate(() => {
+      const b = document.getElementById("planFillAreas");
+      return b ? { text: b.textContent.trim(), aria: b.getAttribute("aria-disabled"), title: b.title } : null;
+    });
+    ok("the plan panel offers 'Fill areas from the drawing'",
+      !!fillControl && /fill areas from the drawing/i.test(fillControl.text),
+      fillControl ? JSON.stringify(fillControl) : "button missing");
+    ok("the control is offered while named rooms have no area",
+      !!fillControl && fillControl.aria === "false" && /named room/i.test(fillControl.title),
+      fillControl ? `aria-disabled=${fillControl.aria}; "${fillControl.title}"` : "");
+
+    await page.click("#planFillAreas");
+    await page.waitForFunction(
+      () => /Filled \d+ area/.test((document.getElementById("planStatus") || {}).textContent || ""),
+      { timeout: 120000, polling: 400 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+
+    const fill = await page.evaluate(() => {
+      const st = ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim();
+      const badges = document.querySelectorAll('#roomsBody tr .row-badge.is-autofill').length;
+      const cards = document.getElementById("summaryCards").innerText.replace(/\s+/g, " ");
+      return {
+        status: st,
+        badges,
+        tr: Number((cards.match(/Total cooling load ([0-9.]+) TR/) || [])[1]),
+        incl: Number((cards.match(/Rooms included (\d+)/) || [])[1]),
+        levels: [...document.querySelectorAll("#levelBody tr")].map((r) =>
+          [...r.querySelectorAll("td")].map((c) => c.textContent.trim())),
+      };
+    });
+    ok("the auto-trace status line reports the REAL filled count and reasons",
+      /Filled 21 areas from the drawing/.test(fill.status)
+        && /33 because one outline holds several room names/.test(fill.status)
+        && /2 because the traced shape did not look like a room/.test(fill.status),
+      fill.status);
+    ok("the filled rooms are marked in the table as coming from the drawing",
+      fill.badges === 21, `${fill.badges} badge(s)`);
+    ok("filling the areas moves the totals (the point of the feature)",
+      fill.tr > 0 && fill.incl >= 1 && fill.incl <= 21, `${fill.tr} TR, ${fill.incl} room(s) included of 21 filled`);
+
+    // the level-wise fresh-air column is ONE unit (L/s) down the column: its rows sum to its Total
+    const fresh = fill.levels
+      .map((cells) => cells.length >= 7 ? Number(String(cells[6]).replace(/,/g, "")) : NaN)
+      .filter((n) => Number.isFinite(n));
+    const rowsFresh = fresh.slice(0, -1);
+    const totalFresh = fresh[fresh.length - 1];
+    ok("the level-wise Fresh-air rows sum to their Total in the same unit",
+      fresh.length >= 2 && Math.abs(rowsFresh.reduce((a, b) => a + b, 0) - totalFresh) <= 2,
+      `rows ${rowsFresh.join("+")} vs total ${totalFresh}`);
+
+    await page.click("#planFillUndo");
+    await new Promise((r) => setTimeout(r, 500));
+    const undone = await page.evaluate(() => {
+      const st = ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim();
+      const cards = document.getElementById("summaryCards").innerText.replace(/\s+/g, " ");
+      return {
+        status: st,
+        badges: document.querySelectorAll('#roomsBody tr .row-badge.is-autofill').length,
+        tr: Number((cards.match(/Total cooling load ([0-9.]+) TR/) || [])[1]),
+        blank: [...document.querySelectorAll('#roomsBody tr input[data-field="area"]')].filter((i) => i.value === "").length,
+      };
+    });
+    ok("Undo puts every area back and the load returns to 0.00 TR",
+      undone.badges === 0 && undone.tr === 0 && undone.blank === 56,
+      `${undone.badges} badge(s), ${undone.tr} TR, ${undone.blank} blank areas`);
+    ok("Undo says what it put back", /Undone: 21 areas/.test(undone.status), undone.status);
+  }
+
+  // ------------------------------------------------------------------ //
+  // 11e. the SYNTHETIC fixture: every room has an area, so there is    //
+  //      nothing to fill — and the fixture baseline must not move.     //
+  // ------------------------------------------------------------------ //
+  {
+    await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.evaluate(() => document.getElementById("btnSample").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 400));
+    await page.click("#btnSample").catch(() => {});
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+
+    const synthBefore = await page.evaluate(() => ({
+      rooms: document.querySelectorAll("#roomsBody tr").length,
+      tr: Number((document.getElementById("summaryCards").innerText.replace(/\s+/g, " ")
+        .match(/Total cooling load ([0-9.]+) TR/) || [])[1]),
+    }));
+    ok("the synthetic fixture still loads 159 rooms at 363.86 TR",
+      synthBefore.rooms === 159 && Math.abs(synthBefore.tr - 363.86) < 0.01,
+      `${synthBefore.rooms} rooms, ${synthBefore.tr} TR`);
+
+    await page.evaluate(() => document.getElementById("planFillAreas").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 400));
+    const nothingBtn = await page.$eval("#planFillAreas", (e) => ({ aria: e.getAttribute("aria-disabled"), title: e.title }));
+    ok("with every area already known, the control says there is nothing to fill",
+      nothingBtn.aria === "true" && /nothing to fill/i.test(nothingBtn.title), JSON.stringify(nothingBtn));
+
+    await page.click("#planFillAreas");
+    await new Promise((r) => setTimeout(r, 600));
+    const afterFill = await page.evaluate(() => {
+      const cards = document.getElementById("summaryCards").innerText.replace(/\s+/g, " ");
+      return {
+        status: ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim(),
+        rooms: document.querySelectorAll("#roomsBody tr").length,
+        tr: Number((cards.match(/Total cooling load ([0-9.]+) TR/) || [])[1]),
+        badges: document.querySelectorAll('#roomsBody tr .row-badge.is-autofill').length,
+      };
+    });
+    ok("the auto-trace on the fixture reports nothing to fill and changes nothing",
+      /nothing to fill from the drawing/i.test(afterFill.status)
+        && afterFill.rooms === 159 && Math.abs(afterFill.tr - 363.86) < 0.01 && afterFill.badges === 0,
+      `${afterFill.status.slice(0, 90)} | ${afterFill.tr} TR, ${afterFill.rooms} rooms`);
+  }
+
+  // ------------------------------------------------------------------ //
+  // 11f. app-side fixes, exercised in the real browser: a scale change  //
+  //      must not rewrite a traced room's area; a drag released outside  //
+  //      must not strand the tool; a second finger must not corrupt the  //
+  //      rectangle; a drag that replaces a polygon must say so; a tiny   //
+  //      rectangle must be refused with a message; a duplicate draw must //
+  //      say why nothing appeared.                                      //
+  // ------------------------------------------------------------------ //
+  {
+    const planStatusText = () => page.evaluate(() =>
+      ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim());
+    const pvRect = () => page.$eval("#planView", (e) => {
+      const r = e.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    });
+
+    // ---- (3) a scale change must leave a TRACED room alone, and still rescale a DRAWN one ----
+    await page.evaluate(() => {
+      const h = window.webhvac;
+      // a traced L-shaped room: a bounding-box rect AND a poly, area = the plan's stated figure
+      h.state.rooms.push({ id: "tracedL", name: "TRACED L", level: "L", area: 50, include: true, source: "pdf",
+        poly: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 5 }, { x: 5, y: 5 }, { x: 5, y: 20 }, { x: 0, y: 20 }],
+        polyPage: 1, rect: { page: 1, x: 0, y: 0, w: 20, h: 20 }, scaleDenom: 100 });
+      // a hand-drawn ring: its area comes from the ring, so a scale change must re-measure it
+      h.state.rooms.push({ id: "drawnP", name: "DRAWN P", level: "L", area: 40, include: true, source: "drawn",
+        poly: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
+        polyPage: 1, rect: { page: 1, x: 0, y: 0, w: 10, h: 10 }, scaleDenom: 100 });
+      h.renderAll();
+    });
+    await page.select("#planScale", "50");
+    await new Promise((r) => setTimeout(r, 500));
+    const at50 = await page.evaluate(() => {
+      const rs = window.webhvac.state.rooms;
+      return { traced: rs.find((r) => r.id === "tracedL").area, drawn: rs.find((r) => r.id === "drawnP").area };
+    });
+    await page.select("#planScale", "100");
+    await new Promise((r) => setTimeout(r, 500));
+    const at100 = await page.evaluate(() => {
+      const rs = window.webhvac.state.rooms;
+      return { traced: rs.find((r) => r.id === "tracedL").area, drawn: rs.find((r) => r.id === "drawnP").area };
+    });
+    ok("changing the drawing scale leaves a traced outline's area alone",
+      at50.traced === 50 && at100.traced === 50,
+      `traced area 50 -> ${at50.traced} at 1:50, ${at100.traced} at 1:100`);
+    ok("a hand-drawn shape still re-measures at the new scale (area scales with 1/denom²)",
+      at100.drawn > 0 && Math.abs(at50.drawn - at100.drawn / 4) <= at100.drawn * 0.02,
+      `drawn ${at100.drawn} at 1:100 -> ${at50.drawn} at 1:50 (expected ~${(at100.drawn / 4).toFixed(3)})`);
+
+    // a clean plan view for the gesture checks
+    await page.click("#planModeShape");
+    await page.evaluate(() => {
+      const v = document.getElementById("planView");
+      v.scrollLeft = 0; v.scrollTop = 0; v.scrollIntoView({ block: "center" });
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    let pv = await pvRect();
+    const rowsNow = () => page.$$eval("#roomsBody tr", (t) => t.length);
+    const vpScale = await page.evaluate(() => window.webhvac.plan.viewer.getViewport().scale);
+
+    // ---- (7) a tiny rectangle at 1:20 must be refused with a message, not a 0.00 m² row ----
+    await page.select("#planScale", "20");
+    await new Promise((r) => setTimeout(r, 400));
+    const rowsBeforeTiny = await rowsNow();
+    const step = Math.max(8, Math.ceil(6 * vpScale));
+    await page.mouse.move(pv.x + 220, pv.y + 220);
+    await page.mouse.down();
+    await page.mouse.move(pv.x + 220 + step, pv.y + 220 + step, { steps: 3 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 700));
+    const tiny = { rows: await rowsNow(), status: await planStatusText() };
+    ok("a tiny rectangle at 1:20 is refused with a message, not a junk 0.00 m² room",
+      tiny.rows === rowsBeforeTiny && /too small to make a room/i.test(tiny.status),
+      `${rowsBeforeTiny} -> ${tiny.rows} rows; "${tiny.status.slice(0, 100)}"`);
+
+    // ---- (4a) a drag released OUTSIDE the plan must not strand the gesture ----
+    await page.select("#planScale", "100");
+    await new Promise((r) => setTimeout(r, 400));
+    await page.mouse.move(pv.x + 180, pv.y + 180);
+    await page.mouse.down();
+    await page.mouse.move(pv.x + 320, pv.y + 300, { steps: 5 });
+    await page.mouse.move(pv.x + pv.w / 2, pv.y - 30, { steps: 4 });   // leave the plan area
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 600));
+    const bandsAfterOutside = await page.$$eval(".plan-draft-box", (n) => n.length);
+    await page.mouse.move(pv.x + 420, pv.y + 320, { steps: 3 });        // a plain hover, no button
+    await new Promise((r) => setTimeout(r, 300));
+    const bandsAfterHover = await page.$$eval(".plan-draft-box", (n) => n.length);
+    ok("a drag released outside the plan clears the rubber band",
+      bandsAfterOutside === 0, `${bandsAfterOutside} band(s) left behind`);
+    ok("a hover after such a drag draws no phantom rubber band",
+      bandsAfterHover === 0, `${bandsAfterHover} band(s) on hover`);
+
+    // ---- (4b) a second finger must not corrupt the rectangle ----
+    const twoFinger = await page.evaluate(() => {
+      const view = document.getElementById("planView");
+      const svg = document.querySelector(".plan-overlay");
+      const r = svg.getBoundingClientRect();
+      const A = { x: r.left + 160, y: r.top + 160 };
+      const B = { x: r.left + 300, y: r.top + 250 };
+      const C = { x: r.left + 460, y: r.top + 460 };
+      const D = { x: r.left + 700, y: r.top + 640 };
+      const fire = (type, id, p, buttons) => view.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: id, pointerType: "touch",
+        isPrimary: id === 11, clientX: p.x, clientY: p.y, buttons,
+      }));
+      fire("pointerdown", 11, A, 1);
+      fire("pointermove", 11, B, 1);
+      fire("pointerdown", 12, C, 1);      // second finger
+      fire("pointermove", 12, D, 1);      // must be ignored
+      fire("pointerup", 12, D, 0);        // must NOT end the first finger's gesture
+      fire("pointerup", 11, B, 0);
+      const vp = window.webhvac.plan.viewer.getViewport();
+      const toPdf = (p) => { const [x, y] = vp.convertToPdfPoint(p.x - r.left, p.y - r.top); return { x, y }; };
+      return { a: toPdf(A), b: toPdf(B), d: toPdf(D) };
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const fingerRoom = await page.evaluate(() => {
+      const rs = window.webhvac.state.rooms;
+      const r = rs[rs.length - 1];
+      return r && r.rect ? { w: r.rect.w, h: r.rect.h, name: r.name } : null;
+    });
+    const expectW = Math.abs(twoFinger.b.x - twoFinger.a.x);
+    const expectH = Math.abs(twoFinger.b.y - twoFinger.a.y);
+    const badW = Math.abs(twoFinger.d.x - twoFinger.a.x);
+    ok("a two-finger touch makes the FIRST finger's rectangle, not a garbage one",
+      !!fingerRoom && Math.abs(fingerRoom.w - expectW) < 0.6 && Math.abs(fingerRoom.h - expectH) < 0.6
+        && Math.abs(fingerRoom.w - badW) > 5,
+      fingerRoom ? `rect ${fingerRoom.w}x${fingerRoom.h}; wanted ~${expectW.toFixed(2)}x${expectH.toFixed(2)} (garbage would be ~${badW.toFixed(2)})` : "no room drawn");
+
+    // ---- (5) a drag that replaces an in-progress polygon must say so ----
+    await page.click("#planModeShape");
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 400));
+    pv = await pvRect();
+    const base = { x: pv.x + 240, y: pv.y + 240 };
+    await page.mouse.click(base.x, base.y);
+    await page.mouse.click(base.x + 70, base.y);
+    await page.mouse.click(base.x + 70, base.y + 70);
+    await new Promise((r) => setTimeout(r, 300));
+    const draftRings = await page.$$eval(".plan-draft-ring", (n) => n.length);
+    ok("a multi-corner polygon is in progress before the drag", draftRings >= 1, `${draftRings} draft ring(s)`);
+    await page.mouse.move(base.x + 140, base.y + 140);
+    await page.mouse.down();
+    await page.mouse.move(base.x + 300, base.y + 260, { steps: 5 });
+    await page.mouse.move(base.x + 380, base.y + 330, { steps: 5 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 700));
+    const polyStatus = await planStatusText();
+    ok("a drag that replaces an in-progress polygon says the corners were dropped",
+      /replaced the shape you were drawing/i.test(polyStatus), polyStatus.slice(0, 150));
+
+    // ---- (9) a draw dropped as a duplicate must say something ----
+    // Draw once, rename it to the name the NEXT draw will be auto-named, then draw the SAME
+    // rectangle again: addRooms de-duplicates on name + level + area, so it must say so.
+    await page.click("#planModeShape");
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 400));
+    pv = await pvRect();
+    const rowsBeforeDup = await rowsNow();
+    await page.mouse.move(pv.x + 450, pv.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(pv.x + 620, pv.y + 340, { steps: 6 });
+    await page.mouse.move(pv.x + 700, pv.y + 400, { steps: 6 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 800));
+    const rowsAfterFirst = await rowsNow();
+    const dupId = await page.$eval("#roomsBody tr:last-child", (tr) => tr.getAttribute("data-id"));
+    const dupLevel = await page.$eval(`#roomsBody tr[data-id="${dupId}"] input[data-field="level"]`, (i) => i.value);
+    // the name planDrawRoom will give the NEXT room: (drawn, non-placed rooms) + 1
+    const dupName = await page.evaluate(() => {
+      const drawn = window.webhvac.state.rooms
+        .filter((r) => r && r.rect && typeof r.rect.x === "number" && !(r.rect.placed === true)).length;
+      return `Drawn room ${drawn + 1}`;
+    });
+    await page.$eval(`#roomsBody tr[data-id="${dupId}"] input[data-field="name"]`, (i, nm) => {
+      i.value = nm;
+      i.dispatchEvent(new Event("input", { bubbles: true }));
+      i.dispatchEvent(new Event("change", { bubbles: true }));
+    }, dupName);
+    await new Promise((r) => setTimeout(r, 300));
+    await page.mouse.move(pv.x + 450, pv.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(pv.x + 620, pv.y + 340, { steps: 6 });
+    await page.mouse.move(pv.x + 700, pv.y + 400, { steps: 6 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 800));
+    const rowsAfterDup = await rowsNow();
+    const dupStatus = await planStatusText();
+    ok("a draw dropped as a duplicate is explained, not silently lost",
+      rowsAfterFirst === rowsBeforeDup + 1 && rowsAfterDup === rowsAfterFirst
+        && /already in the table/i.test(dupStatus),
+      `${rowsBeforeDup} -> ${rowsAfterFirst} -> ${rowsAfterDup} rows; "${dupStatus.slice(0, 120)}" (renamed to "${dupName}", level "${dupLevel}")`);
   }
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample

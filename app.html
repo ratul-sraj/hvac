@@ -196,6 +196,7 @@
 
     <div class="row wrap-row">
       <button type="button" id="btnSample" class="btn">Try sample drawing</button>
+      <button type="button" id="btnSampleHouse" class="btn btn-ghost">Try a house plan</button>
       <button type="button" id="btnManual" class="btn btn-ghost">Add room manually</button>
       <button type="button" id="btnClear" class="btn btn-danger-ghost">Clear all rooms</button>
     </div>
@@ -229,6 +230,9 @@
       plan's own wall lines and gives the rooms it can trust a real outline shape — a room whose shape
       the plan does not enclose, or whose traced area does not agree with the stated one, keeps its
       box. <em>Remove outlines</em> takes those shapes away again and leaves the boxes alone.
+      A drawing that prints room <em>names</em> but no <em>areas</em>: <em>Fill areas from the drawing</em>
+      measures an area from the plan's own outline, but only when exactly one room name sits inside one
+      closed shape — it says what it filled and what it left alone, and <em>Undo fill</em> puts it back.
       <em>Remove placed rooms</em> takes those
       boxes away again and never touches the rooms you drew yourself. Click a box in
       <em>Select / edit</em> to open that room's breakdown. In
@@ -264,6 +268,10 @@
         <button type="button" class="btn btn-small" id="planTraceOutlines">Trace real outlines</button>
         <button type="button" class="btn btn-small btn-ghost" id="planTraceClear">Remove outlines</button>
       </div>
+      <div class="plan-group plan-place-actions">
+        <button type="button" class="btn btn-small" id="planFillAreas">Fill areas from the drawing</button>
+        <button type="button" class="btn btn-small btn-ghost" id="planFillUndo" disabled>Undo fill</button>
+      </div>
     </div>
 
     <!-- Answers to the plan buttons, so a plan result is seen wherever the user is looking: the
@@ -292,6 +300,17 @@
 
     <div id="planView" class="plan-view"></div>
     <p id="planHint" class="muted small plan-hint" aria-live="polite"></p>
+
+    <!-- Which drawing you are looking at. The sample is somebody else's drawing, used under its
+         licence, so we name it and link the licence here in the plan panel. Fuller credit:
+         about.html#sample-credit and docs/SAMPLE-CREDITS.md. -->
+    <p class="hint sample-credit" id="sampleCredit">
+      The sample drawing is a real plan: <strong>LEVEL 11 FLOOR PLAN</strong> by Vivianwwj on
+      <a href="https://commons.wikimedia.org/wiki/File:LEVEL_11_FLOOR_PLAN.pdf">Wikimedia Commons</a>,
+      used under the
+      <a href="https://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0</a>
+      licence &middot; <a href="about.html#sample-credit">full credit</a>.
+    </p>
   </section>
 
   <!-- ---------------- summary ---------------- -->

@@ -15,6 +15,13 @@ Read the success bar at the bottom BEFORE spending.
 
 - Do NOT start ads until the funnel beacon is deployed (it is queued behind the current build). Without it you learn nothing.
 
+- **Use FRESH campaign names.** Every campaign row already in the log (`ll_validate`, and the
+  `g-oct2` / `m-oct2` names below if you have already clicked a link) is a SMOKE TEST from
+  building and checking the beacon. If you reuse an existing name your real ad rows are added to
+  those test rows and the campaign reads as a mixture. The URLs below already use fresh names —
+  `g-oct2` for Google, `m-oct2` for Meta. If either name is already in the log, bump it (e.g.
+  `g-oct3`).
+
 
 ## Google Search campaign settings (exact)
 
@@ -48,9 +55,24 @@ Read the success bar at the bottom BEFORE spending.
 | Creative | 20-30 s screen recording: sample PDF -> 159 rooms -> 363.86 TR |
 
 
+## How the tracking link works
+
+Every ad link points straight at **`app.html`**, because `app.html` is the only page that loads the
+tracker (`js/usage.js`). A link that lands on the home page instead still works — the home page now
+copies the four `utm_*` tags onto its own "Open the calculator" link, so a click-through is
+attributed — but landing on `app.html` is the shortest path, and it is what the URLs below do.
+
+For the **Meta** ads, use the same URL with `utm_source=facebook` and `utm_campaign=m-oct2`:
+
+`https://loadlens.net/app.html?utm_source=facebook&utm_medium=cpc&utm_campaign=m-oct2&utm_content=hook1`
+
+(swap `hook1` for `hook2` / `hook3`.) `node tools/funnel.mjs` then shows one row per
+`utm_campaign`, so Google (`g-oct2`) and Meta (`m-oct2`) are read separately.
+
+
 ## Hook 1 — straight pitch
 
-**Landing page (with tracking):** `https://loadlens.net/?utm_source=google&utm_medium=cpc&utm_campaign=ll_validate&utm_content=hook1`
+**Landing page (with tracking):** `https://loadlens.net/app.html?utm_source=google&utm_medium=cpc&utm_campaign=g-oct2&utm_content=hook1`
 
 **Keywords (phrase/exact):** `cooling load calculation`, `heat load calculation`, `hvac load calculation`, `cooling load calculator`, `heat load calculation software`, `room wise cooling load`, `cooling load calculation from floor plan`
 
@@ -61,7 +83,7 @@ Read the success bar at the bottom BEFORE spending.
 - Free HVAC Load Calculator  (25)
 - Floor Plan PDF to TR  (20)
 - Room-wise TR, W and L/s  (23)
-- No Signup, Nothing Uploaded  (27)
+- No Signup, No Third Parties  (27)
 
 **Descriptions** (limit 90)
 
@@ -70,7 +92,7 @@ Read the success bar at the bottom BEFORE spending.
 
 ## Hook 2 — privacy
 
-**Landing page (with tracking):** `https://loadlens.net/?utm_source=google&utm_medium=cpc&utm_campaign=ll_validate&utm_content=hook2`
+**Landing page (with tracking):** `https://loadlens.net/app.html?utm_source=google&utm_medium=cpc&utm_campaign=g-oct2&utm_content=hook2`
 
 **Keywords (phrase/exact):** `hvac load calculation software`, `cooling load calculation software`, `hvac design software`, `heat load software for engineers`
 
@@ -80,17 +102,17 @@ Read the success bar at the bottom BEFORE spending.
 - Your Drawing Never Leaves  (25)
 - Client Plans Stay Private  (25)
 - Load Calc in Your Browser  (25)
-- Nothing Is Uploaded  (19)
+- Nothing Sent to Third Parties  (29)
 - For Consultants and MEP Teams  (29)
 
 **Descriptions** (limit 90)
 
-- Everything runs in your browser. The drawing is never uploaded to any server. Free to use.  (90)
+- Everything runs in your browser. Your drawing is never sent to a third party. Free to use.  (88)
 - Load calculation that keeps client drawings on your own computer. TR, L/s and watts.  (84)
 
 ## Hook 3 — design conditions
 
-**Landing page (with tracking):** `https://loadlens.net/design-conditions.html?utm_source=google&utm_medium=cpc&utm_campaign=ll_validate&utm_content=hook3`
+**Landing page (with tracking):** `https://loadlens.net/app.html?utm_source=google&utm_medium=cpc&utm_campaign=g-oct2&utm_content=hook3`
 
 **Keywords (phrase/exact):** `ashrae design conditions`, `ishrae design conditions`, `outdoor design conditions`, `design dry bulb temperature`
 

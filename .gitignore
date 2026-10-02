@@ -1,5 +1,10 @@
 node_modules/
-/samples/
+# /samples/ is the served sample set. It is ignored so a private drawing dropped there for local
+# testing can never be committed — EXCEPT the real, properly-licensed demo drawings, which must be
+# tracked so a GitHub Pages / CI build can publish them. Everything else in samples/ stays ignored.
+/samples/*
+!/samples/level-11-floor-plan.pdf
+!/samples/waller-estate-floor-plan.pdf
 tests/qa/
 _*.mjs
 tests/_*.mjs

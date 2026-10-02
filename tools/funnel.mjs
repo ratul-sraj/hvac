@@ -18,6 +18,9 @@
 // If there is no data yet — or the CLI cannot reach CloudWatch — it prints zeros
 // and exits 0. It never throws.
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_LOG_GROUP = "/aws/lambda/loadlens-api";
 const PAGE_LIMIT = 10000; // filter-log-events caps a page at 10,000 events
@@ -29,6 +32,7 @@ function parseArgs(argv) {
     logGroup: process.env.LAMBDA_LOG_GROUP || DEFAULT_LOG_GROUP,
     region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ap-south-1",
     json: false,
+    file: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -38,6 +42,8 @@ function parseArgs(argv) {
     else if (a.startsWith("--log-group=")) opts.logGroup = a.slice(12);
     else if (a === "--region") opts.region = argv[++i];
     else if (a.startsWith("--region=")) opts.region = a.slice(9);
+    else if (a === "--file") opts.file = argv[++i];
+    else if (a.startsWith("--file=")) opts.file = a.slice(7);
     else if (a === "--json") opts.json = true;
     else if (a === "-h" || a === "--help") { printHelp(); process.exit(0); }
   }
@@ -48,11 +54,12 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(`tools/funnel.mjs — the anonymous LoadLens ad funnel from CloudWatch Logs
 
-  node tools/funnel.mjs [--days N] [--log-group NAME] [--region R] [--json]
+  node tools/funnel.mjs [--days N] [--log-group NAME] [--region R] [--file PATH] [--json]
 
   --days N        window to read, ending now (default 1)
   --log-group     CloudWatch log group (default ${DEFAULT_LOG_GROUP})
   --region        AWS region (default AWS_REGION or ap-south-1)
+  --file PATH     read the log lines from a local file instead of CloudWatch (offline / tests)
   --json          also print the raw counts as JSON
 `);
 }
@@ -105,44 +112,61 @@ function readUsageLines(opts, startMs, endMs) {
 }
 
 /* ------------------------------ counting -------------------------------- */
+// Every event this tool knows. share_link_copied sits with the other outcome events (it is a real
+// sign the tool was useful). calc_empty is NOT a success step — it is a failure signal (a
+// calculation that produced no included rooms, including a failed upload) and is reported on its
+// own so it can never be read as part of the funnel.
 const FUNNEL = [
   { step: "arrived",   events: ["app_open"] },
   { step: "engaged",   events: ["sample_loaded", "plan_parsed", "schedule_imported"] },
   { step: "worked",    events: ["trace_run", "rooms_placed"] },
-  { step: "converted", events: ["export_csv", "report_opened"] },
+  { step: "converted", events: ["export_csv", "report_opened", "share_link_copied"] },
 ];
-const ALL_EVENTS = [
-  "app_open", "sample_loaded", "plan_parsed", "schedule_imported", "trace_run",
-  "rooms_placed", "export_csv", "report_opened", "share_link_copied", "calc_empty",
-];
-const EXTRA_EVENTS = ["share_link_copied", "calc_empty"];
+const FAILURE_EVENTS = ["calc_empty"];
+
+// ONE source of truth. The known-event list and the event -> step map are both derived from FUNNEL
+// and FAILURE_EVENTS, so an event can no longer be listed as known while belonging to no step. The
+// old code did FUNNEL.find(...).step and threw a TypeError on exactly that mismatch — which is what
+// share_link_copied and calc_empty did — printing nothing at all.
+const STEP_OF = new Map(FUNNEL.flatMap((f) => f.events.map((e) => [e, f.step])));
+const ALL_EVENTS = [...new Set([...FUNNEL.flatMap((f) => f.events), ...FAILURE_EVENTS])];
+const COLUMNS = [...FUNNEL.map((f) => f.step), "failed"];
 
 const utm = (obj, key) => (obj && typeof obj[key] === "string" && obj[key]) || "(none)";
+const emptyRow = () => Object.fromEntries(COLUMNS.map((c) => [c, 0]));
 
 function tally(lines) {
   const perEvent = Object.fromEntries(ALL_EVENTS.map((e) => [e, 0]));
   const stepCount = Object.fromEntries(FUNNEL.map((f) => [f.step, 0]));
-  const campaigns = new Map(); // campaign -> { step -> count }
+  const failures = Object.fromEntries(FAILURE_EVENTS.map((e) => [e, 0]));
+  const campaigns = new Map(); // campaign -> { <step> | failed -> count }
   const contents = new Map();
-  let malformed = 0, total = 0;
+  const unknownNames = new Set();
+  let malformed = 0, unknown = 0, total = 0;
 
   for (const line of lines) {
     let ev;
     try { ev = JSON.parse(line); } catch { malformed++; continue; }
     if (!ev || ev.evt !== "usage" || typeof ev.e !== "string") { malformed++; continue; }
-    if (!ALL_EVENTS.includes(ev.e)) { malformed++; continue; }
+    if (!ALL_EVENTS.includes(ev.e)) {
+      // A usage line naming an event this tool does not know. Counted and named, never a crash.
+      unknown++; unknownNames.add(String(ev.e).slice(0, 40));
+      continue;
+    }
     total++;
     perEvent[ev.e] += 1;
-    const step = FUNNEL.find((f) => f.events.includes(ev.e)).step;
-    stepCount[step] += 1;
+    const step = STEP_OF.get(ev.e);
+    if (step) stepCount[step] += 1;
+    else failures[ev.e] += 1;
+    const column = step || "failed";
 
     for (const [map, key] of [[campaigns, "utm_campaign"], [contents, "utm_content"]]) {
       const k = utm(ev, key);
-      if (!map.has(k)) map.set(k, Object.fromEntries(FUNNEL.map((f) => [f.step, 0])));
-      map.get(k)[step] += 1;
+      if (!map.has(k)) map.set(k, emptyRow());
+      map.get(k)[column] += 1;
     }
   }
-  return { perEvent, stepCount, campaigns, contents, malformed, total };
+  return { perEvent, stepCount, failures, campaigns, contents, unknownNames, malformed, unknown, total };
 }
 
 /* ------------------------------- report --------------------------------- */
@@ -151,7 +175,7 @@ const pad = (s, n) => String(s).padEnd(n);
 const padL = (s, n) => String(s).padStart(n);
 
 function printReport(t, opts, window) {
-  const { perEvent, stepCount, campaigns, contents, malformed, total } = t;
+  const { perEvent, stepCount, failures, campaigns, contents, unknownNames, malformed, unknown, total } = t;
 
   console.log(`LoadLens usage funnel — last ${opts.days} day(s)`);
   console.log(`  log group : ${opts.logGroup}   region: ${opts.region}`);
@@ -172,7 +196,18 @@ function printReport(t, opts, window) {
   console.log("Events");
   for (const e of ALL_EVENTS) console.log(`  ${pad(e, 18)} ${padL(perEvent[e], 7)}`);
   if (malformed) console.log(`  ${pad("(unparsable)", 18)} ${padL(malformed, 7)}`);
+  if (unknown) console.log(`  ${pad("(unknown event)", 18)} ${padL(unknown, 7)}`);
   console.log(`  ${pad("(total lines)", 18)} ${padL(total, 7)}`);
+  console.log("");
+
+  // calc_empty is a failure signal, not a funnel step: printed on its own so a rising count can
+  // never be mistaken for a success. It means arrivals that reached a calculation and found nothing.
+  console.log("Failure signals (NOT part of the funnel)");
+  for (const e of FAILURE_EVENTS) console.log(`  ${pad(e, 18)} ${padL(failures[e], 7)}`);
+  const failureTotal = FAILURE_EVENTS.reduce((s, e) => s + failures[e], 0);
+  if (failureTotal && stepCount.arrived) {
+    console.log(`  ${pad("", 18)} ${padL("", 7)}${pct(failureTotal, stepCount.arrived)} of arrivals`);
+  }
   console.log("");
 
   const breakdown = (title, map) => {
@@ -180,19 +215,24 @@ function printReport(t, opts, window) {
     const keys = [...map.keys()].sort((a, b) => {
       if (a === "(none)") return 1;
       if (b === "(none)") return -1;
-      const av = FUNNEL.reduce((s, f) => s + map.get(a)[f.step], 0);
-      const bv = FUNNEL.reduce((s, f) => s + map.get(b)[f.step], 0);
+      const av = COLUMNS.reduce((s, c) => s + map.get(a)[c], 0);
+      const bv = COLUMNS.reduce((s, c) => s + map.get(b)[c], 0);
       return bv - av;
     });
-    console.log(`  ${pad("value", 24)}${FUNNEL.map((f) => padL(f.step, 11)).join("")}`);
+    console.log(`  ${pad("value", 24)}${COLUMNS.map((c) => padL(c, 11)).join("")}`);
     for (const k of keys) {
       const row = map.get(k);
-      console.log(`  ${pad(k.slice(0, 23), 24)}${FUNNEL.map((f) => padL(row[f.step], 11)).join("")}`);
+      console.log(`  ${pad(k.slice(0, 23), 24)}${COLUMNS.map((c) => padL(row[c], 11)).join("")}`);
     }
     console.log("");
   };
   breakdown("By utm_campaign", campaigns);
   breakdown("By utm_content", contents);
+
+  if (unknown) {
+    console.log(`! ${unknown} log line(s) named an event this tool does not know: ${[...unknownNames].join(", ")}`);
+    console.log("  (they are counted as unknown above, not silently dropped — add them to FUNNEL if they are real)\n");
+  }
 
   if (total === 0) {
     console.log("No usage events in this window yet. Nothing is broken — that just means");
@@ -201,35 +241,56 @@ function printReport(t, opts, window) {
 }
 
 /* -------------------------------- main ---------------------------------- */
+// CloudWatch prefixes each line with "<timestamp>\t<requestId>\tINFO\t"; keep the JSON object only.
+const stripPrefix = (message) => {
+  const raw = String(message == null ? "" : message).trim();
+  const brace = raw.indexOf("{");
+  return brace >= 0 ? raw.slice(brace) : raw;
+};
+
+function readLocalLines(file) {
+  try {
+    return { ok: true, lines: fs.readFileSync(file, "utf8").split(/\r?\n/).filter((l) => l.trim()) };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e), lines: [] };
+  }
+}
+
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const end = Date.now();
   const start = end - opts.days * 24 * 60 * 60 * 1000;
 
-  const read = readUsageLines(opts, start, end);
-  const lines = [];
-  for (const ev of read.events) {
-    if (!ev || typeof ev.message !== "string") continue;
-    // CloudWatch prefixes the line with "<timestamp>\t<requestId>\tINFO\t";
-    // keep only the JSON object itself.
-    const raw = ev.message.trim();
-    const brace = raw.indexOf("{");
-    lines.push(brace >= 0 ? raw.slice(brace) : raw);
+  let lines;
+  let readOk = true;
+  let readError = "";
+  if (opts.file) {
+    // --file: read the lines from a local file instead of CloudWatch (offline reading and tests).
+    const local = readLocalLines(opts.file);
+    lines = local.lines.map(stripPrefix);
+    readOk = local.ok;
+    readError = local.error;
+  } else {
+    const read = readUsageLines(opts, start, end);
+    readOk = read.ok;
+    readError = read.error;
+    lines = read.events.filter((ev) => ev && typeof ev.message === "string").map((ev) => stripPrefix(ev.message));
   }
   const t = tally(lines);
 
-  if (!read.ok) {
-    console.log(`! could not read CloudWatch Logs: ${read.error}`);
-    console.log("  (showing zeros — check your AWS credentials / region, then try again)\n");
+  if (!readOk) {
+    console.log(`! could not read the log source: ${readError}`);
+    console.log("  (showing zeros — check the --file path, or your AWS credentials / region, then try again)\n");
   }
 
   if (opts.json) {
     console.log(JSON.stringify({
       days: opts.days, logGroup: opts.logGroup, region: opts.region,
       window: { start, end },
-      steps: t.stepCount, events: t.perEvent,
+      steps: t.stepCount, events: t.perEvent, failures: t.failures,
       campaigns: Object.fromEntries(t.campaigns), contents: Object.fromEntries(t.contents),
-      malformed: t.malformed, total: t.total,
+      malformed: t.malformed, unknown: t.unknown, unknownEvents: [...t.unknownNames],
+      total: t.total,
     }, null, 2));
     console.log("");
   }
@@ -238,4 +299,7 @@ function main() {
   process.exit(0); // always success: an empty window is not an error
 }
 
-main();
+export { FUNNEL, FAILURE_EVENTS, ALL_EVENTS, STEP_OF, COLUMNS, tally, printReport, parseArgs, readUsageLines, stripPrefix };
+
+// Only run the CLI when this file is executed directly; importing it (tests) must not touch AWS.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

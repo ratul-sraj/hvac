@@ -109,6 +109,13 @@ else
       for _f in sample-plan.pdf schedule-sample.pdf schedule.csv schedule.xlsx room-types.csv; do
         [ -f "$REPO_ROOT/tests/samples/$_f" ] && cp "$REPO_ROOT/tests/samples/$_f" "$STAGE_DIR/samples/"
       done
+      # The REAL, credited demo drawings (CC BY-SA, see docs/SAMPLE-CREDITS.md), served from repo
+      # samples/ and loaded by the sample button. Named explicitly for the same reason as the fixtures
+      # above — a `*.pdf` wildcard would sweep in a private drawing.
+      [ -f "$REPO_ROOT/samples/level-11-floor-plan.pdf" ] && \
+        cp "$REPO_ROOT/samples/level-11-floor-plan.pdf" "$STAGE_DIR/samples/"
+      [ -f "$REPO_ROOT/samples/waller-estate-floor-plan.pdf" ] && \
+        cp "$REPO_ROOT/samples/waller-estate-floor-plan.pdf" "$STAGE_DIR/samples/"
       # Belt and braces: refuse to upload if anything private slipped into the staging folder.
       if ls "$STAGE_DIR/samples" 2>/dev/null | grep -qiE 'headquarters|^hq_p'; then
         die "refusing to publish: a private drawing is staged under samples/ — fix the list in this script"

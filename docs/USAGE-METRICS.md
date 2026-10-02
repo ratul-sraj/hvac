@@ -3,8 +3,8 @@
 LoadLens counts a small, fixed set of real actions so a few rupees of Google/Meta
 ads can be read: how many people **arrived**, how many did something real, and
 how many reached an **export**. It is deliberately the smallest thing that can
-answer those questions, because *"your drawing is never uploaded"* is a promise
-the tool must keep.
+answer those questions, because the promise that a drawing is never sent to a third
+party — and never stored or logged — is one the tool must keep.
 
 ## What is measured
 
@@ -21,8 +21,8 @@ hover, idle or "time on page" event.
 | **worked** | `rooms_placed` | "place all rooms on the plan" placed at least one box |
 | **converted** | `export_csv` | the CSV was downloaded |
 | **converted** | `report_opened` | the printable report was opened |
-| (extra) | `share_link_copied` | the "Copy link to LoadLens" button succeeded |
-| (extra) | `calc_empty` | a calculation produced **zero** included rooms (once per page load) |
+| **converted** | `share_link_copied` | the "Copy link to LoadLens" button succeeded |
+| (failure signal) | `calc_empty` | a calculation produced **zero** included rooms (once per page load) |
 
 ## What is sent
 
@@ -59,11 +59,19 @@ sends **nothing**.
 ## Where it goes
 
 `POST /api/event` is handled in `lambda/index.mjs` (before the Express app sees
-it). It writes **one JSON line per event** to CloudWatch Logs:
+it). It writes **one JSON line per accepted event** to CloudWatch Logs:
 
 ```
 {"evt":"usage","e":"app_open","utm_source":"google","utm_campaign":"kerala-hvac"}
 ```
+
+That `evt:"usage"` line is the only line that carries event data — and it is the only
+thing this pipeline stores. The same log group also holds each Lambda invocation's own
+AWS `START` / `END` / `REPORT` lines, and — when request logging is on (`LOG_REQUESTS`,
+the default; see `lib/config.js`) — one line per HTTP request (method, path, status,
+duration). **None of those other lines carry an IP address, a user agent, a referrer or
+a request body.** `tools/funnel.mjs` filters the group down to the `evt:"usage"` lines,
+so only the event counts below are ever read out.
 
 Anything that is not one of the ten events, is bigger than ~1 KB, or does not
 parse is answered with a bare **`204 No Content`** (no body, nothing leaked) and
@@ -81,7 +89,10 @@ node tools/funnel.mjs --days 1 --json # also dump the raw counts as JSON
 It prints the funnel (arrived → engaged → worked → converted) with each step as a
 percentage of the one before, a per-event table, and a breakdown by
 `utm_campaign` and by `utm_content` so ad groups can be compared side by side.
-It works when there is no data yet: it prints zeros and exits `0`.
+`share_link_copied` counts in the converted step; `calc_empty` is printed separately
+as a **failure signal** (a rise in it means arrivals that reached a calculation and
+found nothing) so it can never be read as a success. It works when there is no data
+yet: it prints zeros and exits `0`.
 
 Under the hood it runs the AWS CLI exactly like the rest of `infra/` — this is
 the exact command it uses (paginated with `--next-token` when there is more):

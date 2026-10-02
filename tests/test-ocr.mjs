@@ -23,9 +23,12 @@
 // drawing checks as skipped. Nothing in this file may turn a missing private fixture into a FAIL.
 //
 // HONEST NUMBERS (measured, printed by this test, asserted as-is):
-//   headquarters-scanned.pdf (a dense A1 drawing sheet)  -> 0 rooms. OCR reads the room names
-//       ("RECEPTION") but mangles the area tags ("96.0 m²" -> "96) m"), and js/pdfparse.js
-//       needs an area to make a room. Asserting 0 is the truth, not a bug in this file.
+//   headquarters-scanned.pdf (a dense A1 drawing sheet) -> rooms built from the OCR'd NAMES, with
+//       every area explicitly UNKNOWN. OCR reads the room names ("RECEPTION") but mangles the area
+//       tags ("96.0 m²" -> "96) m"), so the parser emits those rooms with area: null /
+//       areaUnknown: true, leaves them out of the load until an area is set, and says so in a
+//       warning. The room count is therefore asserted as a FLOOR (HQ_MIN_ROOMS) rather than an
+//       exact value, because OCR wobbles run to run.
 //   schedule-scanned.pdf (a legible scanned schedule)    -> rooms ARE built: Node route 4 of the
 //       5 rows (Office 27 m², Conference 48 m², Server 12 m², Store 2.5 m²), browser route 3
 //       (the repeated-header guard in js/pdfparse.js used to drop rows that mention a header word
@@ -57,8 +60,9 @@ const SCHEDULE_JPEG = path.join(QA, "schedule-scan.jpg");
 const BLANK_PDF = path.join(QA, "blank-scanned.pdf");
 const HARNESS = path.join(QA, "ocr-test-harness.html");
 
-// measured on this machine (see the header comment) — asserted, never invented
-const HQ_MEASURED_ROOMS = 0;
+// measured on this machine (see the header comment) — asserted as a FLOOR, never invented:
+// a scanned sheet now yields rooms from the names OCR reads even when every area tag is mangled.
+const HQ_MIN_ROOMS = 20;
 // the legible schedule reads slightly differently in the two routes: at native JPEG resolution
 // the area unit comes out "m?" (harmless) but in the browser, rendering the PDF at ~4000 px, it
 // comes out "m2" — and js/pdfparse.js drops any row whose name contains "Room" when "M2" also
@@ -235,16 +239,20 @@ if (fs.existsSync(SCAN_JPEG)) {
     return `${r.rawWords.length} raw words -> ${r.items.length} items in ${(ms / 1000).toFixed(1)} s`;
   });
 
-  await check("js/pdfparse.js parseText() on those OCR items -> the measured 0 rooms", async () => {
+  await check("js/pdfparse.js parseText() on those OCR items -> rooms from the names, every area unknown", async () => {
     const r = globalThis.__hq;
     const { rooms, warnings } = parseText(r.items);
-    assert.equal(rooms.length, HQ_MEASURED_ROOMS,
-      `measured ${rooms.length} rooms on the scanned drawing; the test asserts ${HQ_MEASURED_ROOMS}`);
-    assert.ok(warnings.length > 0, "parseText explains itself");
-    // the honest reason: a room needs an AREA, and OCR loses the "96.0 m²" tags
+    assert.ok(rooms.length >= HQ_MIN_ROOMS,
+      `expected at least ${HQ_MIN_ROOMS} rooms from the OCR'd names, measured ${rooms.length}`);
+    assert.ok(rooms.every((x) => x.area === null || x.areaUnknown === true),
+      "no area is invented for a room whose area tag OCR could not read");
+    assert.ok(rooms.every((x) => x.include === false || x.area != null),
+      "a room with an unknown area is not silently included in the load");
+    assert.ok(warnings.some((w) => /no printed areas/i.test(w)),
+      "a warning explains that no printed areas were found and what to do");
     const areaish = r.items.filter((i) => /^[0-9]/.test(i.str) && /m/i.test(i.str));
-    return `0 rooms — OCR read ${r.items.length} words (e.g. RECEPTION) but the area tags come out mangled ` +
-      `(${areaish.slice(0, 4).map((i) => `"${i.str}"`).join(", ") || "no number+unit token survives"}), and a room needs an area`;
+    return `${rooms.length} rooms from ${r.items.length} OCR words, every area unknown and flagged; ` +
+      `the mangled area tags (${areaish.slice(0, 3).map((i) => `"${i.str}"`).join(", ") || "none"}) were not guessed at`;
   });
 } else {
   skip("Node OCR reads the scanned drawing with the vendored traineddata", NO_SCANNED);
@@ -326,8 +334,10 @@ await check("js/ocr.js runs in a real browser: ocrPdf() on the scanned drawing",
   assert.deepEqual(out.usedOcr, [1], "the scan was detected and OCR'd");
   assert.equal(out.rotations[1], 0, "the sheet renders upright (pdf.js undoes /Rotate), so no rotation was needed");
   assert.ok(out.items > 20, `expected > 20 OCR items, got ${out.items}`);
-  assert.equal(out.rooms.length, HQ_MEASURED_ROOMS,
-    `measured ${out.rooms.length} rooms in the browser; the test asserts ${HQ_MEASURED_ROOMS}`);
+  assert.ok(out.rooms.length >= HQ_MIN_ROOMS,
+    `expected at least ${HQ_MIN_ROOMS} rooms in the browser, measured ${out.rooms.length}`);
+  assert.ok(out.rooms.every((x) => x.area === null || x.areaUnknown === true),
+    "no area is invented in the browser either: a room OCR could not measure has an unknown area");
   assert.ok(out.warnings.some((w) => /OCR/i.test(w)), "a warning says the page was read with OCR");
   assert.ok(out.phases.includes("render") && out.phases.includes("ocr"), "progress phases: " + out.phases.join(","));
 
