@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LoadLens end card</title>
+<style>
+  html, body { margin: 0; padding: 0; }
+  /* A standalone poster card (not a chat widget): it owns its own colours and size on purpose. */
+  .card {
+    width: 1080px; height: 1080px; box-sizing: border-box;
+    background: linear-gradient(160deg, #0f2f22 0%, #123a2b 55%, #0d2419 100%);
+    color: #fff; font-family: "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 0 90px;
+  }
+  .mark { font-size: 108px; font-weight: 700; letter-spacing: -2px; margin: 0 0 6px; }
+  .dot { color: #7ee0b0; }
+  .url { font-size: 56px; font-weight: 600; color: #9fe0c0; margin: 0 0 54px; letter-spacing: 1px; }
+  .rule { width: 220px; height: 4px; background: #7ee0b0; border-radius: 2px; margin: 0 0 54px; opacity: .8; }
+  .free { font-size: 46px; font-weight: 600; margin: 0 0 22px; }
+  .note { font-size: 30px; line-height: 1.5; color: #c9e6d9; margin: 0; max-width: 780px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <p class="mark">LoadLens<span class="dot">.</span></p>
+    <p class="url">loadlens.net</p>
+    <div class="rule"></div>
+    <p class="free">Free &middot; no sign-up</p>
+    <p class="note">Cooling load from a floor plan PDF &mdash; run in your browser.<br>
+      Your drawing is never sent to a third party.</p>
+  </div>
+</body>
+</html>

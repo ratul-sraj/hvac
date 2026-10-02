@@ -7,6 +7,11 @@ it for you).
 
 **Before you start (30 seconds of setup)**
 
+**The recorded ad** (for ads and for the landing page) is scripted, not hand-recorded:
+`bash tools/reel/shoot.sh` records the live site and encodes `infra/.tmp/reel/loadlens-ad.mp4`
+(1080×1080, house plan first, then the office sheet). Re-run it after any UI change; it also drops
+`still-*.jpg` frames to use as ad images.
+
 ```bash
 cd D:/webhvac
 npm start
