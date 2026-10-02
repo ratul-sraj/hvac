@@ -76,6 +76,8 @@ CT_HTML="text/html; charset=utf-8"
 CT_CSS="text/css; charset=utf-8"
 CT_JS="text/javascript; charset=utf-8"
 CT_SVG="image/svg+xml"
+CT_TEXT="text/plain; charset=utf-8"
+CT_XML="application/xml; charset=utf-8"
 CT_GZIP="application/gzip"
 
 if [ -n "$FROM_DIR" ]; then
@@ -91,7 +93,7 @@ else
 
   # Same file set as .github/workflows/pages.yml.
   COPIED=0
-  for item in *.html favicon.svg css js vendor; do
+  for item in *.html robots.txt sitemap.xml favicon.svg css js vendor; do
     [ -e "$item" ] || { log_warn "missing from the repo: $item"; continue; }
     cp -r "$item" "$STAGE_DIR/" && COPIED=$((COPIED + 1))
   done
@@ -151,6 +153,23 @@ if [ -f "$SRC/favicon.svg" ]; then
     --content-type "$CT_SVG" --cache-control "$CACHE_SHORT" --no-progress
   log_ok "favicon.svg -> cache-control: $CACHE_SHORT"
 fi
+
+# robots.txt and sitemap.xml live at the root. Without an explicit include here the root sync
+# (which is *.html only) silently drops them, and CloudFront then answers the missing key with
+# /index.html — a 200 that serves the landing page instead of the sitemap. Crawlers see HTML.
+for _f in robots.txt sitemap.xml; do
+  if [ -f "$SRC/$_f" ]; then
+    case "$_f" in
+      *.xml) _ct="$CT_XML" ;;
+      *)     _ct="$CT_TEXT" ;;
+    esac
+    aws s3 sync "$SRC_NATIVE" "s3://$BUCKET" --exclude "*" --include "$_f" \
+      --content-type "$_ct" --cache-control "$CACHE_SHORT" --no-progress
+    log_ok "$_f -> $_ct, cache-control: $CACHE_SHORT"
+  else
+    log_warn "$_f not found — crawlers will not be told about the site"
+  fi
+done
 
 # css/
 if [ -d "$SRC/css" ]; then
@@ -236,14 +255,14 @@ else
     log_info "If 30-cloudfront.sh has not been run yet, that is expected."
     log_info "Set DISTRIBUTION_ID=... or run:  bash infra/30-cloudfront.sh"
   else
-    log_step "Invalidating / , /index.html , /*.html , /js/* , /css/* , /samples/* on $DIST_ID"
+    log_step "Invalidating / , /index.html , /*.html , /js/* , /css/* , /samples/* , /robots.txt , /sitemap.xml on $DIST_ID"
     # /js/* and /css/* MUST be here: their filenames are not content-hashed, so an edge that cached
     # an earlier copy keeps serving it (this hid a fixed js/app.js behind a stale edge copy).
     INVALIDATION_ID="$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" \
-      --paths "/" "/index.html" "/*.html" "/js/*" "/css/*" "/samples/*" \
+      --paths "/" "/index.html" "/*.html" "/js/*" "/css/*" "/samples/*" "/robots.txt" "/sitemap.xml" \
       --query 'Invalidation.Id' --output text --no-cli-pager)"
-    log_ok "invalidation $INVALIDATION_ID requested (6 path groups)"
-    log_info "The first 1,000 invalidation paths each month are free; this uses 6."
+    log_ok "invalidation $INVALIDATION_ID requested (8 path groups)"
+    log_info "The first 1,000 invalidation paths each month are free; this uses 8."
   fi
 fi
 

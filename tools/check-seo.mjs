@@ -22,7 +22,10 @@ import { CLIMATE_TABLE } from "../js/climates.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const BASE = (process.argv[2] || "http://127.0.0.1:3000").replace(/\/+$/, "");
+// Accept an optional base URL as the first NON-FLAG argument, so `--live` (and any future flag)
+// can be passed without being mistaken for the base and breaking every fetch in the suite.
+const positional = process.argv.slice(2).find((a) => !a.startsWith("-"));
+const BASE = (positional || "http://127.0.0.1:3000").replace(/\/+$/, "");
 const SITE = "https://loadlens.net";
 const TITLE_MAX = 60;
 const DESC_MIN = 120;
@@ -277,6 +280,50 @@ if (dc && dc.status === 200) {
     /href="app\.html"[^>]*>\s*Calculate a cooling load for your own floor plan/i.test(dc.html), "CTA present");
 } else {
   ok("design-conditions.html: is served (HTTP 200)", false, dc ? `HTTP ${dc.status}` : "no response");
+}
+
+// ---- optional: --live verifies the DEPLOYED site, not just the local files -----
+// Local files can be perfect while the deploy pipeline silently drops them: the root S3 sync
+// uploads *.html only, and CloudFront answers a missing key with /index.html — so a request for
+// /sitemap.xml returns HTTP 200 and HTML. Checking the status code alone would call that a pass.
+if (process.argv.includes("--live")) {
+  const LIVE = process.env.LIVE_BASE || "https://loadlens.net/";
+  console.log(`\n--- live checks against ${LIVE} ---`);
+  const get = async (p) => {
+    try {
+      const r = await fetch(new URL(p, LIVE), { redirect: "follow", signal: AbortSignal.timeout(30000) });
+      return { status: r.status, type: r.headers.get("content-type") || "", body: await r.text() };
+    } catch (e) { return null; }
+  };
+
+  const sm = await get("sitemap.xml");
+  ok(`live /sitemap.xml is served`, !!sm && sm.status === 200, sm ? `HTTP ${sm.status}` : "no response");
+  ok(`live /sitemap.xml is really XML, not the app's HTML fallback`,
+    !!sm && /^\s*<\?xml|<urlset/i.test(sm.body) && !/<!DOCTYPE html>/i.test(sm.body),
+    sm ? (sm.type || "no content-type") + ", body starts: " + JSON.stringify(sm.body.slice(0, 40)) : "no response");
+  const liveLocs = sm ? (sm.body.match(/<loc>/g) || []).length : 0;
+  ok(`live /sitemap.xml lists the pages (${liveLocs})`, liveLocs >= 6, `${liveLocs} <loc> entries`);
+
+  const rb = await get("robots.txt");
+  ok(`live /robots.txt is served`, !!rb && rb.status === 200, rb ? `HTTP ${rb.status}` : "no response");
+  ok(`live /robots.txt is really robots, not the HTML fallback`,
+    !!rb && /^\s*(user-agent|sitemap)\s*:/im.test(rb.body) && !/<!DOCTYPE html>/i.test(rb.body),
+    rb ? "body starts: " + JSON.stringify(rb.body.slice(0, 40)) : "no response");
+  ok(`live /robots.txt points at the sitemap`, !!rb && /sitemap\s*:\s*https?:\/\//i.test(rb.body), "sitemap line present");
+
+  const home = await get("");
+  ok(`live landing page carries the Google verification meta tag`,
+    !!home && /<meta\s+name="google-site-verification"\s+content="[^"]+"/i.test(home.body),
+    home ? "tag present" : "no response");
+  ok(`live landing page title carries the brand`,
+    !!home && /<title>[^<]*LoadLens/i.test(home.body), home ? "brand in title" : "no response");
+
+  const dcp = await get("design-conditions.html");
+  ok(`live /design-conditions.html is served`, !!dcp && dcp.status === 200, dcp ? `HTTP ${dcp.status}` : "no response");
+
+  const rep = await get("js/report.js");
+  ok(`live js/report.js carries the export credit`,
+    !!rep && /Calculated with LoadLens/.test(rep.body), rep ? "credit present" : "no response");
 }
 
 // ---- summary --------------------------------------------------------------
