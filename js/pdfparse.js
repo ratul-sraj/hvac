@@ -115,26 +115,102 @@ function detectLevels(items) {
 
 // ---------------------------------------------------------------- dimensions
 
-/** "4.5 x 3.6", "4500x3600" (mm), "12'-0\" x 10'-6\"" -> {length, width} in metres. */
-export function parseDims(str) {
+// The two dimension patterns, kept as named regexes so the unit detector reads the SAME runs the
+// parser accepts (it must never form its own opinion of what a dimension looks like).
+//   feet+inches:  12'-0" x 10'-6"
+//   metric:       4.5 x 3.6    4500x3600 (mm)
+const FEET_INCHES_DIM_RE =
+  /([0-9]+)\s*'\s*[-–]?\s*([0-9]+(?:\.[0-9]+)?)?\s*"?\s*[x×]\s*([0-9]+)\s*'\s*[-–]?\s*([0-9]+(?:\.[0-9]+)?)?\s*"?/i;
+const METRIC_DIM_RE =
+  /([0-9]+(?:\.[0-9]+)?)\s*(?:m|mm)?\s*[x×]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:m|mm)?/i;
+
+/**
+ * One dimension run -> { length, width, format } in metres. `format` is 'feet' for a feet+inches
+ * run ("12'-0\" x 10'-6\"") and 'metric' for mm / plain numbers ("4500x3600", "4.5 x 3.6").
+ * Additive companion to parseDims for the unit detector; same regexes, never a second opinion.
+ * @returns {{length:number, width:number, format:'feet'|'metric'}|null}
+ */
+export function parseDimRun(str) {
   const s = clampStr(str);
   if (!s) return null;
   // duct / airflow annotations are sizes, not room dimensions
   if (/ø|\bmm\b|L\s*\/\s*S/i.test(s)) return null;
-  let m = s.match(/([0-9]+)\s*'\s*[-–]?\s*([0-9]+(?:\.[0-9]+)?)?\s*"?\s*[x×]\s*([0-9]+)\s*'\s*[-–]?\s*([0-9]+(?:\.[0-9]+)?)?\s*"?/i);
+  let m = s.match(FEET_INCHES_DIM_RE);
   if (m) {
     // feet + inches -> metres
     const a = (parseInt(m[1], 10) + (m[2] ? parseFloat(m[2]) : 0) / 12) * 0.3048;
     const b = (parseInt(m[3], 10) + (m[4] ? parseFloat(m[4]) : 0) / 12) * 0.3048;
-    if (a > 0 && b > 0) return { length: +a.toFixed(3), width: +b.toFixed(3) };
+    if (a > 0 && b > 0) return { length: +a.toFixed(3), width: +b.toFixed(3), format: "feet" };
   }
-  m = s.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:m|mm)?\s*[x×]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:m|mm)?/i);
+  m = s.match(METRIC_DIM_RE);
   if (m) {
     let a = parseFloat(m[1]), b = parseFloat(m[2]);
     if (a > 100 && b > 100) { a /= 1000; b /= 1000; } // millimetres
-    if (a > 0 && b > 0 && a < 500 && b < 500) return { length: +a.toFixed(3), width: +b.toFixed(3) };
+    if (a > 0 && b > 0 && a < 500 && b < 500) return { length: +a.toFixed(3), width: +b.toFixed(3), format: "metric" };
   }
   return null;
+}
+
+/** "4.5 x 3.6", "4500x3600" (mm), "12'-0\" x 10'-6\"" -> {length, width} in metres. */
+export function parseDims(str) {
+  const r = parseDimRun(str);
+  return r ? { length: r.length, width: r.width } : null;
+}
+
+// ---------------------------------------------------------------- scale notes
+
+// A scale note says the same thing as the areas/dimensions: "SCALE 1:100" is metric,
+// `1/4" = 1'-0"` is imperial. Same idea as the dimension regexes above — one place has the pattern.
+const METRIC_SCALE_RE = /\b1\s*:\s*\d{1,5}\b/;
+const IMPERIAL_SCALE_RE =
+  /\b\d{1,3}\s*\/\s*\d{1,3}\s*(?:"|”|\u2033|in)?\s*=\s*\d{1,3}\s*'\s*[-–]?\s*\d{0,2}\s*(?:"|”|\u2033)?/;
+
+/** Classify a scale note: 'metric' for "SCALE 1:100", 'imperial' for `1/4" = 1'-0"`. */
+export function detectScaleText(str) {
+  const s = clampStr(str);
+  if (!s) return null;
+  if (IMPERIAL_SCALE_RE.test(s)) return "imperial";
+  if (METRIC_SCALE_RE.test(s)) return "metric";
+  return null;
+}
+
+// ---------------------------------------------------------------- unit evidence
+
+/** An all-zero evidence record — the shape js/unitdetect.js reads. */
+export function emptyEvidence() {
+  return {
+    areaUnits: { m2: 0, ft2: 0 },
+    dims: { metric: 0, feet: 0 },
+    scaleText: { metric: 0, imperial: 0 },
+    samples: [],
+  };
+}
+
+/**
+ * Raw unit evidence from text items — the SAME regexes the parser accepts with, so detection can
+ * never disagree with what the parser actually read. Counts one area figure per item, one dimension
+ * run per item, one scale note per item; keeps up to 5 readable samples for the UI to quote.
+ * @returns {{areaUnits:{m2:number,ft2:number}, dims:{metric:number,feet:number},
+ *            scaleText:{metric:number,imperial:number}, samples:string[]}}
+ */
+export function unitEvidence(items) {
+  const ev = emptyEvidence();
+  const addSample = (s) => {
+    const t = clampStr(s);
+    if (t && ev.samples.length < 5 && !ev.samples.includes(t)) ev.samples.push(t);
+  };
+  for (const raw of Array.isArray(items) ? items : []) {
+    const s = clampStr(raw && raw.str);
+    if (!s) continue;
+    const at = parseAreaToken(s);
+    if (at) { if (at.ft) ev.areaUnits.ft2++; else ev.areaUnits.m2++; addSample(s); continue; }
+    const dim = parseDimRun(s);
+    if (dim) { if (dim.format === "feet") ev.dims.feet++; else ev.dims.metric++; addSample(s); continue; }
+    const scale = detectScaleText(s);
+    if (scale === "imperial") { ev.scaleText.imperial++; addSample(s); }
+    else if (scale === "metric") { ev.scaleText.metric++; addSample(s); }
+  }
+  return ev;
 }
 
 // ---------------------------------------------------------------- include rules
@@ -552,7 +628,7 @@ export function parseText(items) {
       _k: k,
     }))
     .filter((it) => it.str);
-  if (!list.length) return { rooms: [], warnings: ["no text items"] };
+  if (!list.length) return { rooms: [], warnings: ["no text items"], evidence: emptyEvidence() };
 
   const levelByPage = detectLevels(list);
   const pages = [...new Set(list.map((i) => i.page))].sort((a, b) => a - b);
@@ -584,7 +660,9 @@ export function parseText(items) {
       `or typing it in the table, then tick its Include box.`
     );
   if (!finalized.length) warnings.push("no rooms found in this PDF");
-  return { rooms: finalized, warnings };
+  // The raw unit evidence travels with the rooms so js/unitdetect.js can say what system the sheet
+  // speaks without re-reading the PDF. Additive: every existing field keeps its name and meaning.
+  return { rooms: finalized, warnings, evidence: unitEvidence(list) };
 }
 
 /**
@@ -632,6 +710,6 @@ export async function parsePdf(arrayBuffer, { pdfjs, onProgress } = {}) {
     if (typeof onProgress === "function") onProgress(p, total);
   }
 
-  const { rooms, warnings } = parseText(items);
-  return { rooms, pages: total, text: textParts.join("\n"), warnings };
+  const { rooms, warnings, evidence } = parseText(items);
+  return { rooms, pages: total, text: textParts.join("\n"), warnings, evidence };
 }

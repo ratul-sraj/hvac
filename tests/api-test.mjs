@@ -167,6 +167,18 @@ async function main() {
         `every parsed room carries its position on the sheet (${withAt.length}/${json.rooms.length})`);
       const levels = new Set(json.rooms.map((r) => r.level));
       assert.equal(levels.size, 3, "3 levels in the merged list");
+
+      // The evidence the detector needs must survive the server path. The bundled parser produces it,
+      // but it is dropped by anything that rebuilds the response field by field - and then the app
+      // shows "this sheet does not say which units it uses" for EVERY uploaded PDF, silently, on the
+      // very path the live site uses.
+      assert.ok(f.evidence && typeof f.evidence === "object", "the file entry carries evidence");
+      assert.ok(f.evidence.areaUnits && typeof f.evidence.areaUnits.m2 === "number",
+        "evidence counts metric area figures");
+      assert.ok(f.evidence.dims && typeof f.evidence.dims.metric === "number", "evidence counts dimensions");
+      assert.ok(Array.isArray(f.evidence.samples), "evidence carries samples for the UI");
+      assert.ok(f.evidence.areaUnits.m2 > 0,
+        `the synthetic sample prints m2 areas, so metric evidence must be non-zero (${f.evidence.areaUnits.m2})`);
     });
 
     // 3. more than one file (same field name) ---------------------------

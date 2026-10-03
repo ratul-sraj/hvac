@@ -1,5 +1,12 @@
 // HVAC cooling load engine (simplified ASHRAE / Carrier E-20 style, SI units).
 // Pure module: works in browser and Node.
+//
+// The load is ALWAYS computed in SI (W, L/s, m², °C) - that is the hard rule of the units feature.
+// Each result also carries the imperial conversions (BTU/h, CFM, ft²) beside the SI fields, computed
+// from the SAME numbers through the shared factors in js/units.js, so a display layer never has to
+// re-derive them and the two systems can never describe a different load.
+
+import { K, normSystem } from "./units.js";
 
 // Summer design conditions (outdoor dry bulb / coincident wet bulb, °C) as commonly used
 // in design practice (ISHRAE / ASHRAE / local authority values). Check against your code.
@@ -155,6 +162,8 @@ export const DEFAULT_PROJECT = {
   safety: 10,   // %
   supplyDt: 11, // K room − supply air
   wwr: 30,      // % glazing of exposed wall when glass area not given
+  units: "si",  // display system: 'si' | 'ip'. The load is ALWAYS computed in SI; this only picks
+                // what the screen / report / CSV show. A saved project without it reads as 'si'.
 };
 
 // Number parsing for anything a schedule or a typed table cell can contain.
@@ -336,6 +345,7 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
   const sf = 1 + safeSafetyPct(p) / 100;
   const rsh = roomSensible * sf, rlh = roomLatent * sf;
   const total = rsh + rlh + oaSens + oaLat;
+  const safetyW = (roomSensible + roomLatent) * (sf - 1);
   // supply flow needs a positive supply-air ΔT to divide by; when it is zero or negative the honest
   // value is "not calculable" (screen / report / CSV show "-"), never Infinity from a division by zero.
   const supplyLs = c.supplyOk ? rsh / (1.23 * c.supplyDt) : 0;
@@ -346,12 +356,20 @@ export function calcRoom(r, proj = DEFAULT_PROJECT) {
     rsh, rlh, oaSens, oaLat, oaLs,
     // what the safety factor ADDED to this room, so the summary can show the allowance as a number
     // rather than only as a percentage in the settings
-    safetyW: (roomSensible + roomLatent) * (sf - 1),
+    safetyW,
     totalW: total,
     tr: total / 3517,
     shf: rsh / (rsh + rlh || 1),
     supplyLs, supplyOk: c.supplyOk, supplyDt: c.supplyDt,
     cfm: supplyLs * 2.11888, oaCfm: oaLs * 2.11888,
+    // the imperial twins of the SI figures above, through the shared factors (js/units.js) - the
+    // display layer reads whichever system it shows instead of recomputing the same conversion
+    rshBtuh: rsh * K.wToBtuh, rlhBtuh: rlh * K.wToBtuh,
+    oaSensBtuh: oaSens * K.wToBtuh, oaLatBtuh: oaLat * K.wToBtuh,
+    totalBtuh: total * K.wToBtuh, safetyBtuh: safetyW * K.wToBtuh,
+    areaFt2: A * K.m2ToFt2,
+    // area served per ton in SI (m²/TR); sqftPerTr below is the imperial twin
+    m2PerTr: total > 0 ? A / (total / 3517) : 0,
     sqftPerTr: total > 0 ? (A * 10.7639) / (total / 3517) : 0,
   };
 }
@@ -375,8 +393,19 @@ export function calcProject(rooms, proj = DEFAULT_PROJECT) {
       rooms: inc.length, area, areaSqft: area * 10.7639,
       totalW: sum("totalW"), tr, ls: sum("supplyLs"), oaLs: sum("oaLs"), cfm: sum("cfm"), oaCfm: sum("oaCfm"),
       rsh: sum("rsh"), rlh: sum("rlh"),
+      oaSens: sum("oaSens"), oaLat: sum("oaLat"),
       safetyW: sum("safetyW"), safetyPct: safeSafetyPct(p),
       sqftPerTr: tr ? (area * 10.7639) / tr : 0,
+      m2PerTr: tr ? area / tr : 0,
+      // the imperial twins (display only - the load itself stays SI), through js/units.js
+      totalBtuh: sum("totalW") * K.wToBtuh,
+      rshBtuh: sum("rsh") * K.wToBtuh,
+      rlhBtuh: sum("rlh") * K.wToBtuh,
+      oaSensBtuh: sum("oaSens") * K.wToBtuh,
+      oaLatBtuh: sum("oaLat") * K.wToBtuh,
+      safetyBtuh: sum("safetyW") * K.wToBtuh,
+      // the normalised display system the screen / report / CSV should use
+      units: normSystem(p.units),
       wOut: c.wo, wIn: c.wi,
       outRh: rhFromDbW(c.db, c.wo),
       // false when the supply-air ΔT made the supply flow incalculable; the UI prints "-" rather than 0

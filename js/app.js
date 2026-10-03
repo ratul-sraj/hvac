@@ -6,6 +6,18 @@ import {
   normalizeRoom, calcRoom, calcProject, guessSpaceType, NON_AC_WORDS,
 } from './calc.js';
 import { buildReportHtml, toCsv, fmt, groupByLevel, breakdown, esc, typeLabel } from './report.js';
+// The single source of truth for every conversion, unit and label (js/units.js). The load itself is
+// always computed in SI; these helpers only convert an already-computed result for display, so the
+// screen can never disagree with itself about what a number means. No literal factor is written here.
+import {
+  air, airUnit, power, powerUnit, area, areaUnit,
+  areaPerTr, areaPerTrUnit, length, lengthUnit,
+  fmtValue, fmtPower, fmtAir, fmtArea,
+  header, systemLabel, normSystem,
+} from './units.js';
+// Which system the SHEET itself uses (js/unitdetect.js) - plain-English evidence for the user, never a
+// silent switch on its own (the project setting decides; detection only informs or offers a one-click).
+import { detectUnits } from './unitdetect.js';
 import { parsePdf } from './pdfparse.js';
 import * as pdfjs from '../vendor/pdf.min.mjs';
 import {
@@ -178,6 +190,9 @@ const el = {
   planStatus: $('#planStatus'),
   planScaleFix: $('#planScaleFix'),
   projectPanel: $('#projectPanel'),
+  unitsSi: $('#proj-units-si'),
+  unitsIp: $('#proj-units-ip'),
+  unitDetect: $('#unitDetect'),
   geoNote: $('#geoNote'),
   reportView: $('#reportView'),
   reportFrame: $('#reportFrame'),
@@ -232,6 +247,9 @@ function showPlanStatus(kind, msg) {
   el.planStatus.textContent = msg;
   el.planStatus.classList.remove('hidden');
   placePlanStatus();
+  // Re-measure on the next frame: the toast's wrapped height can settle a frame after its text
+  // changes, so a single pass can position it using a stale height and leave it over the drawing.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(placePlanStatus);
   clearTimeout(planStatusTimer);
   if (kind !== 'warn' && kind !== 'err') {
     planStatusTimer = setTimeout(hidePlanStatus, 10000);
@@ -259,9 +277,13 @@ function placePlanStatus() {
     if (overlaps(top)) {
       const below = r.bottom + gap;
       const above = r.top - h - gap;
-      if (below + h <= vh - gap) top = below;
-      else if (above >= navBottom + gap) top = above;
-      else top = Math.max(navBottom + gap, Math.min(above, vh - h - gap));
+      // Prefer a position that fully clears the drawing. The old test required a whole `gap` of room at
+      // the bottom, and fractional rects made it fail by a fraction of a pixel - the toast then fell
+      // through to a fallback that sat over the drawing. Fit within the viewport instead, and only fall
+      // back to the least-bad clamped spot when neither side has room.
+      if (below + h <= vh) top = below;
+      else if (above >= navBottom) top = above;
+      else top = Math.max(navBottom + gap, Math.min(above, vh - h));
     }
   }
   t.style.top = Math.round(top) + 'px';
@@ -284,6 +306,14 @@ function setProgress(text, pct) {
 function currentCalc() {
   return calcProject(state.rooms, state.project);
 }
+
+/** The system every DISPLAYED figure follows. Never the calculation - js/calc.js is always SI. */
+const unitsSys = () => normSystem(state.project.units);
+
+/** SI area served per ton (m²/TR), from the SI area and the SI tonnage. Never a stored imperial
+ *  figure: the ft²/TR the user sees in imperial is derived from THIS through units.js, so the two
+ *  systems can never drift apart. */
+const m2PerTr = (areaM2, tr) => (tr > 0 ? Math.max(0, Number(areaM2) || 0) / tr : 0);
 
 // Anonymous, once-per-page-load signal that a calculation produced zero included
 // rooms — the honest "it did not work for me" case (a load that added nothing, or
@@ -414,6 +444,7 @@ function syncProjectInputs() {
   state.project.country = inferCountry(state.project);
   projInput('country').value = state.project.country;
   fillCitySelect();
+  syncUnitsControl();
 }
 
 function readProjectInput(key, kind) {
@@ -435,6 +466,112 @@ function checkCustomClimate() {
   state.project.city = 'Custom';
   projInput('country').value = 'Custom';
   fillCitySelect();
+}
+
+/* ------------------------------------------------------------------ */
+/* results system: metric (SI) or imperial (IP)                        */
+/* ------------------------------------------------------------------ */
+// STATE: proj.units = 'si' | 'ip' (default 'si' in DEFAULT_PROJECT, js/calc.js). 'unitsExplicit' is
+// only set when the USER picks a system here. That distinction is the whole point: an explicit choice
+// always wins, while a system the detector merely suggested may be replaced when a later sheet says
+// something different. A saved project without either field reads as metric/SI and not-explicit.
+
+/** Point the radio control at state.project.units and label both choices from js/units.js. */
+function syncUnitsControl() {
+  const sys = unitsSys();
+  if (el.unitsSi) {
+    el.unitsSi.checked = sys === 'si';
+    el.unitsSi.parentNode.querySelector('span').textContent = systemLabel('si');
+  }
+  if (el.unitsIp) {
+    el.unitsIp.checked = sys === 'ip';
+    el.unitsIp.parentNode.querySelector('span').textContent = systemLabel('ip');
+  }
+}
+
+/** Choose the results system.
+ *  explicit: the user clicked it, so the choice is remembered and detection can no longer switch it. */
+function setUnits(sys, opts) {
+  const next = normSystem(sys);
+  state.project.units = next;
+  if (opts && opts.explicit) state.project.unitsExplicit = true;
+  detectSwitched = false;         // a by-hand choice is not an automatic follow any more
+  syncUnitsControl();
+  renderAll();
+  saveSoon();
+  updateUnitDetectLine();
+}
+
+/* ------------------------------------------------------------------ */
+/* what the SHEET says it is (js/unitdetect.js)                        */
+/* ------------------------------------------------------------------ */
+
+// The last detection, kept so the line can be redrawn when the setting changes without re-parsing.
+let lastDetection = null;
+// True while the current line reflects an automatic follow of the detection (cleared if the user
+// then chooses a system by hand, so the line stops claiming the app switched for them).
+let detectSwitched = false;
+
+/** Ask js/unitdetect.js what system the drawing uses and show one plain line beside the plan panel.
+ *  Behaviour follows the contract: the project setting decides. Detection only auto-follows when it
+ *  says imperial AND the user has not chosen a system explicitly; otherwise it just informs, with a
+ *  one-click switch when the two disagree. A sheet with no evidence says so plainly - never "error",
+ *  never a guess. */
+function noteDetectedUnits(parseResult) {
+  let det = null;
+  try { det = detectUnits(parseResult); } catch (e) { det = null; }
+  if (!det || typeof det !== 'object') {
+    det = {
+      system: 'unknown', confidence: 'none',
+      reason: 'This sheet does not state whether its measurements are metric or imperial, so the results stay in the system you have chosen.',
+    };
+  }
+  lastDetection = det;
+
+  // Follow the detection ONLY when it says imperial and the user has not chosen explicitly.
+  let switched = false;
+  if (det.system === 'ip' && !state.project.unitsExplicit && unitsSys() !== 'ip') {
+    state.project.units = 'ip';
+    switched = true;
+    syncUnitsControl();
+    saveSoon();
+  }
+  updateUnitDetectLine(switched);
+  renderAll();
+}
+
+/** Draw the detection line (#unitDetect). `switched` says whether we just followed the detection;
+ *  when omitted the last known state is reused, so a plain re-render never drops that clause. */
+function updateUnitDetectLine(switched) {
+  if (switched === undefined) switched = detectSwitched; else detectSwitched = switched;
+  const node = el.unitDetect || document.getElementById('unitDetect');
+  if (!node) return;
+  if (!lastDetection) { node.classList.add('hidden'); node.textContent = ''; return; }
+  const d = lastDetection;
+  const sys = unitsSys();
+  const reason = String(d.reason || '').trim()
+    || 'This sheet does not state whether its measurements are metric or imperial.';
+  let text = reason;
+  if (switched) text += ` This sheet looks imperial, so the results are now shown in ${systemLabel('ip')}.`;
+  else if ((d.system === 'si' || d.system === 'ip') && d.system !== sys) {
+    text += ` The results are being shown in ${systemLabel(sys)}.`;
+  }
+  node.innerHTML = '';
+  node.classList.remove('hidden');
+  const span = document.createElement('span');
+  span.textContent = text;
+  node.appendChild(span);
+  // One-click switch when the sheet and the chosen system disagree.
+  if (!switched && (d.system === 'si' || d.system === 'ip') && d.system !== sys) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'unitDetectSwitch';
+    btn.className = 'btn btn-small btn-ghost';
+    btn.textContent = `Show results in ${systemLabel(d.system)}`;
+    btn.addEventListener('click', () => setUnits(d.system, { explicit: true }));
+    node.appendChild(document.createTextNode(' '));
+    node.appendChild(btn);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -782,7 +919,7 @@ function areaBadge(raw) {
   if (!raw || !raw.areaFromDrawing) return '';
   const a = Number(raw.area);
   const title = Number.isFinite(a) && a > 0
-    ? `area filled from the drawing's own outline: ${fmt(a, 1)} m² — check it against the plan`
+    ? `area filled from the drawing's own outline: ${fmtArea(a, unitsSys())} ${areaUnit(unitsSys())} — check it against the plan`
     : "area filled from the drawing's own outline";
   return ` <span class="row-badge is-autofill" title="${esc(title)}">area from drawing</span>`;
 }
@@ -797,13 +934,13 @@ function shapeBadge(raw) {
     if (raw.source === 'drawn') {
       const a = Number(raw.area);
       const title = Number.isFinite(a) && a > 0
-        ? `shape drawn on the plan by hand; its area, ${fmt(a, 1)} m², is the drawn shape's own area`
+        ? `shape drawn on the plan by hand; its area, ${fmtArea(a, unitsSys())} ${areaUnit(unitsSys())}, is the drawn shape's own area`
         : 'shape drawn on the plan by hand';
       return ` <span class="row-badge is-outline" title="${esc(title)}">drawn</span>`;
     }
     const traced = Number(raw.polyArea), stated = Number(raw.area);
     const title = Number.isFinite(traced) && traced > 0 && Number.isFinite(stated) && stated > 0
-      ? `outline traced from the drawing: ${fmt(traced, 1)} m² traced against ${fmt(stated, 1)} m² stated`
+      ? `outline traced from the drawing: ${fmtArea(traced, unitsSys())} ${areaUnit(unitsSys())} traced against ${fmtArea(stated, unitsSys())} ${areaUnit(unitsSys())} stated`
       : 'outline traced from the drawing';
     return ` <span class="row-badge is-outline" title="${esc(title)}">outline</span>`;
   }
@@ -852,6 +989,7 @@ function rowHtml(idx, calc) {
   const raw = state.rooms[idx];   // only what the user / parser set
   const inc = room.include !== false;
   const nm = room.name || 'room';
+  const sys = unitsSys();         // the chosen results system for this row's computed cells
   return `<tr data-idx="${idx}" data-id="${esc(raw.id)}" class="clickable${inc ? '' : ' excluded'}">
     <td class="c-include"><input type="checkbox" data-field="include" ${inc ? 'checked' : ''}
       aria-label="Include ${esc(nm)} in the load"></td>
@@ -878,12 +1016,12 @@ function rowHtml(idx, calc) {
     <td class="c-include"><input type="checkbox" data-field="roof" ${room.roof ? 'checked' : ''}
       aria-label="${esc(nm)} has an exposed roof"></td>
     <td class="c-num">${numInput(raw, 'partition', room, 'Partition m2 of ' + nm)}</td>
-    <td class="res v-sensible">${fmt(r.rsh, 0)}</td>
-    <td class="res v-latent">${fmt(r.rlh, 0)}</td>
-    <td class="res hi v-total">${fmt(r.totalW, 0)}</td>
+    <td class="res v-sensible">${fmtPower(r.rsh, sys)}</td>
+    <td class="res v-latent">${fmtPower(r.rlh, sys)}</td>
+    <td class="res hi v-total">${fmtPower(r.totalW, sys)}</td>
     <td class="res hi v-tr">${fmt(r.tr, 2)}</td>
-    <td class="res v-ls">${r.supplyOk === false ? '-' : fmt(r.supplyLs, 0)}</td>
-    <td class="res v-sqftPerTr">${fmt(r.sqftPerTr, 0)}</td>
+    <td class="res v-ls">${r.supplyOk === false ? '-' : fmtAir(r.supplyLs, sys)}</td>
+    <td class="res v-sqftPerTr">${fmtValue(areaPerTr(m2PerTr(room.area, r.tr), sys), 0)}</td>
     <td class="c-src" title="Where this room came from">${esc(sourceLabel(raw.source))}</td>
     <td class="c-del"><button type="button" class="btn-del" data-act="del"
       title="Delete ${esc(nm)}" aria-label="Delete ${esc(nm)}">&times;</button></td>
@@ -925,17 +1063,18 @@ function renderSortHeaders() {
  *  so renaming a room left its box on the plan still labelled with the old name. */
 function updateLive() {
   const calc = currentCalc();
+  const sys = unitsSys();
   el.roomsBody.querySelectorAll('tr').forEach((tr) => {
     const idx = parseInt(tr.dataset.idx, 10);
     const r = calc.results[idx];
     if (!r) return;
     const raw = state.rooms[idx];
-    tr.querySelector('.v-sensible').textContent = fmt(r.rsh, 0);
-    tr.querySelector('.v-latent').textContent = fmt(r.rlh, 0);
-    tr.querySelector('.v-total').textContent = fmt(r.totalW, 0);
+    tr.querySelector('.v-sensible').textContent = fmtPower(r.rsh, sys);
+    tr.querySelector('.v-latent').textContent = fmtPower(r.rlh, sys);
+    tr.querySelector('.v-total').textContent = fmtPower(r.totalW, sys);
     tr.querySelector('.v-tr').textContent = fmt(r.tr, 2);
-    tr.querySelector('.v-ls').textContent = r.supplyOk === false ? '-' : fmt(r.supplyLs, 0);
-    tr.querySelector('.v-sqftPerTr').textContent = fmt(r.sqftPerTr, 0);
+    tr.querySelector('.v-ls').textContent = r.supplyOk === false ? '-' : fmtAir(r.supplyLs, sys);
+    tr.querySelector('.v-sqftPerTr').textContent = fmtValue(areaPerTr(m2PerTr(r.room.area, r.tr), sys), 0);
     for (const f of NUM_FIELDS) {
       const inp = tr.querySelector(`input[data-field="${f}"]`);
       if (inp) inp.placeholder = defaultText(f, r.room);
@@ -973,22 +1112,27 @@ function card(k, v, unit, hero) {
 
 function renderSummary(calc) {
   const t = calc.totals;
+  const sys = unitsSys();
   el.summaryCards.innerHTML = [
     card('Total cooling load', fmt(t.tr, 2), 'TR', true),
-    card('Total heat', fmt(t.totalW, 0), 'W', true),
-    card('Supply air', t.supplyOk === false ? '-' : fmt(t.ls, 0), 'L/s'),
-    card('Fresh / outdoor air', fmt(t.oaLs, 0), 'L/s'),
-    card('Conditioned area', fmt(t.area, 1), 'm²'),
-    card('Area', fmt(t.areaSqft, 0), 'ft²'),
-    card('Area per tonne', fmt(t.sqftPerTr, 0), 'ft²/TR'),
+    card('Total heat', fmtPower(t.totalW, sys), powerUnit(sys), true),
+    card('Supply air', t.supplyOk === false ? '-' : fmtAir(t.ls, sys), airUnit(sys)),
+    card('Fresh / outdoor air', fmtAir(t.oaLs, sys), airUnit(sys)),
+    // ONE area card in the chosen system. It used to be shown twice - m² and ft² side by side -
+    // which is exactly the metric/imperial pair the contract says must not appear twice.
+    card('Conditioned area', fmtArea(t.area, sys), areaUnit(sys)),
+    card('Area per tonne', fmtValue(areaPerTr(m2PerTr(t.area, t.tr), sys), 0), areaPerTrUnit(sys)),
     card('Rooms included', String(t.rooms), ''),
-    card('Room sensible heat', fmt(t.rsh, 0), 'W'),
-    card('Room latent heat', fmt(t.rlh, 0), 'W'),
+    card('Room sensible heat', fmtPower(t.rsh, sys), powerUnit(sys)),
+    card('Room latent heat', fmtPower(t.rlh, sys), powerUnit(sys)),
     // the safety factor has always been applied to the room heat; this shows what it is worth, so it
     // is visible at a glance instead of only living in the project settings
-    card(`Safety allowance (+${fmt(t.safetyPct, 0)}%)`, fmt(t.safetyW, 0), 'W'),
+    card(`Safety allowance (+${fmt(t.safetyPct, 0)}%)`, fmtPower(t.safetyW, sys), powerUnit(sys)),
   ].join('');
 
+  // The level table's two AREA columns stay the deliberate m²/ft² pair (each column is one unit, and
+  // the existing suite reads the fresh-air column by position); the single-unit RESULT columns follow
+  // the setting - supply air, fresh air and area per ton are converted through js/units.js.
   const levels = groupByLevel(calc.results);
   el.levelBody.innerHTML = levels.length
     ? levels.map((g) => `<tr>
@@ -997,16 +1141,32 @@ function renderSummary(calc) {
         <td>${fmt(g.area, 1)}</td>
         <td>${fmt(g.areaSqft, 0)}</td>
         <td>${fmt(g.tr, 2)}</td>
-        <td>${g.supplyOk === false ? '-' : fmt(g.ls, 0)}</td>
-        <td>${fmt(g.oaLs, 0)}</td>
-        <td>${fmt(g.tr ? g.areaSqft / g.tr : 0, 0)}</td>
+        <td>${g.supplyOk === false ? '-' : fmtAir(g.ls, sys)}</td>
+        <td>${fmtAir(g.oaLs, sys)}</td>
+        <td>${fmtValue(areaPerTr(m2PerTr(g.area, g.tr), sys), 0)}</td>
       </tr>`).join('') +
       `<tr class="total-row">
         <td class="l">Total</td><td>${t.rooms}</td><td>${fmt(t.area, 1)}</td><td>${fmt(t.areaSqft, 0)}</td>
-        <td>${fmt(t.tr, 2)}</td><td>${t.supplyOk === false ? '-' : fmt(t.ls, 0)}</td><td>${fmt(t.oaLs, 0)}</td>
-        <td>${fmt(t.sqftPerTr, 0)}</td>
+        <td>${fmt(t.tr, 2)}</td><td>${t.supplyOk === false ? '-' : fmtAir(t.ls, sys)}</td><td>${fmtAir(t.oaLs, sys)}</td>
+        <td>${fmtValue(areaPerTr(m2PerTr(t.area, t.tr), sys), 0)}</td>
       </tr>`
     : '<tr><td class="l" colspan="8">No rooms included yet.</td></tr>';
+}
+
+/** Set the unit in every table header that follows the setting (rooms table + level subtotals).
+ *  Every label comes from js/units.js (header()/…Unit()), never a literal in this file. */
+function applyUnitLabels(sys) {
+  const th = (id, text) => { const n = document.getElementById(id); if (n) n.textContent = text; };
+  // rooms table result columns
+  th('thSensible', header('Sensible', powerUnit(sys)));
+  th('thLatent', header('Latent', powerUnit(sys)));
+  th('thTotal', header('Total', powerUnit(sys)));
+  th('thLs', header('Supply air', airUnit(sys)));
+  th('thApt', header('Area/tonne', areaPerTrUnit(sys)));
+  // level-wise subtotal columns
+  th('levelThSupply', header('Supply air', airUnit(sys)));
+  th('levelThFresh', header('Fresh air', airUnit(sys)));
+  th('levelThApt', header('Area/tonne', areaPerTrUnit(sys)));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1019,6 +1179,7 @@ function renderDetail(calc) {
   const r = calc.results[idx];
   const room = r.room;
   const area = parseFloat(room.area) || 0;
+  const sys = unitsSys();
   const base = r.totalW || 1;
   const rows = breakdown(r);
   const max = Math.max(...rows.map((x) => Math.abs(x.w)), 1);
@@ -1033,7 +1194,7 @@ function renderDetail(calc) {
       const width = Math.abs(x.w) / max * 100;
       return `<div class="bd-row">
         <div class="lbl">${esc(x.label)}</div>
-        <div class="w">${fmt(x.w, 0)} W</div>
+        <div class="w">${fmtPower(x.w, sys)} ${powerUnit(sys)}</div>
         <div class="bd-bar"><div class="s-${g.replace(' ', '')}" style="width:${width.toFixed(1)}%"></div></div>
         <div class="pct">${fmt(pct, 1)}%</div>
       </div>`;
@@ -1045,26 +1206,26 @@ function renderDetail(calc) {
       <div class="bd-title">${esc(room.name || 'Room')}</div>
       <div class="bd-meta">
         ${esc((room.level || 'Unspecified'))} &middot; ${esc(typeLabel(room.type))} &middot;
-        ${fmt(area, 1)} m&sup2; (${fmt(area * 10.7639, 0)} ft&sup2;) &middot;
-        height ${fmt(room.height, 2)} m &middot;
+        ${fmtArea(area, sys)} ${areaUnit(sys)} &middot;
+        height ${fmtValue(length(room.height, sys), 2)} ${lengthUnit(sys)} &middot;
         ${fmt(room.people, 0)} people &middot; ${esc(room.orient)} facing &middot;
-        glass ${fmt(room.glass, 1)} m&sup2; ${room.roof ? '&middot; roof exposed' : ''}
+        glass ${fmtArea(room.glass, sys)} ${areaUnit(sys)} ${room.roof ? '&middot; roof exposed' : ''}
         ${shapeNote(state.rooms[idx])}
         ${room.include === false ? '&middot; <strong>excluded from totals</strong>' : ''}
       </div>
     </div>
     <div class="bd-total">
       <div><div class="k">Cooling load</div><div class="v">${fmt(r.tr, 2)} TR</div></div>
-      <div><div class="k">Total heat</div><div class="v">${fmt(r.totalW, 0)} W</div></div>
-      <div><div class="k">Supply air</div><div class="v">${r.supplyOk === false ? '-' : fmt(r.supplyLs, 0)} L/s</div></div>
-      <div><div class="k">Fresh air</div><div class="v">${fmt(r.oaLs, 0)} L/s</div></div>
+      <div><div class="k">Total heat</div><div class="v">${fmtPower(r.totalW, sys)} ${powerUnit(sys)}</div></div>
+      <div><div class="k">Supply air</div><div class="v">${r.supplyOk === false ? '-' : fmtAir(r.supplyLs, sys)} ${airUnit(sys)}</div></div>
+      <div><div class="k">Fresh air</div><div class="v">${fmtAir(r.oaLs, sys)} ${airUnit(sys)}</div></div>
       <div><div class="k">SHF</div><div class="v">${fmt(r.shf, 2)}</div></div>
-      <div><div class="k">Area / tonne</div><div class="v">${fmt(r.sqftPerTr, 0)} ft&sup2;/TR</div></div>
+      <div><div class="k">Area / tonne</div><div class="v">${fmtValue(areaPerTr(m2PerTr(room.area, r.tr), sys), 0)} ${areaPerTrUnit(sys)}</div></div>
     </div>
     ${body}
     <div class="bd-row bd-total-row">
       <div class="lbl">Total cooling load</div>
-      <div class="w">${fmt(r.totalW, 0)} W</div>
+      <div class="w">${fmtPower(r.totalW, sys)} ${powerUnit(sys)}</div>
       <div></div>
       <div class="pct">100%</div>
     </div>
@@ -1180,6 +1341,7 @@ function onHeaderClick(ev) {
 function renderAll() {
   // the plan overlay draws straight from state.rooms, so refresh it with every re-render
   renderFilters();
+  applyUnitLabels(unitsSys());
   renderTable();
   renderSortHeaders();
   renderSummary(currentCalc());
@@ -1187,10 +1349,12 @@ function renderAll() {
   if (state.ui.openId) renderDetail(currentCalc());
   if (plan.overlay) plan.overlay.render();
   planSyncFillButton();
+  updateUnitDetectLine();
 }
 
 // Everything that must be refreshed after a project setting changed.
 function afterProjectChange() {
+  applyUnitLabels(unitsSys());
   if (state.rooms.length) {
     renderTable();
     renderSortHeaders();
@@ -1457,6 +1621,9 @@ const SERVER_FILES_PER_REQUEST = 10;
 // Errors (400 bad PDF, 413 too big, network, bad answer) throw with a short message.
 async function parseFilesOnServer(files) {
   const rooms = [], warnings = [], fileInfos = [];
+  // What the sheets said about their own units, so the detection line works on this path too
+  // (js/unitdetect.js reads it via noteDetectedUnits). First file that reports evidence wins.
+  let evidence = null;
   for (let i = 0; i < files.length; i += SERVER_FILES_PER_REQUEST) {
     const batch = files.slice(i, i + SERVER_FILES_PER_REQUEST);
     const body = new FormData();
@@ -1471,9 +1638,15 @@ async function parseFilesOnServer(files) {
     if (!data || typeof data !== 'object') throw new Error('the server sent an unexpected answer');
     if (Array.isArray(data.rooms)) rooms.push(...data.rooms);
     if (Array.isArray(data.warnings)) warnings.push(...data.warnings);
-    if (Array.isArray(data.files)) fileInfos.push(...data.files);
+    if (Array.isArray(data.files)) {
+      for (const info of data.files) {
+        if (!evidence && info && info.evidence) evidence = info.evidence;
+        fileInfos.push(info);
+      }
+    }
+    if (!evidence && data.evidence) evidence = data.evidence;
   }
-  return { rooms, warnings, files: fileInfos };
+  return { rooms, warnings, files: fileInfos, evidence };
 }
 
 // Same ending for all readers, so the status wording stays the same.
@@ -1573,6 +1746,7 @@ async function handleFiles(fileList) {
       const res = addRooms(withSource(out.rooms, 'pdf'));
       added = res.added;
       skipped = res.skipped;
+      noteDetectedUnits(out);   // one plain line: what system the SHEET uses
       if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
       readers.add('server');
       track('plan_parsed', { reader: 'server' });
@@ -1610,6 +1784,7 @@ async function handleFiles(fileList) {
       const res = addRooms(withSource(out.rooms, useOcr ? 'ocr' : 'pdf'));
       added += res.added;
       skipped += res.skipped;
+      noteDetectedUnits(out);   // one plain line: what system the SHEET uses
       readers.add(useOcr ? 'ocr' : 'browser');
       track('plan_parsed', { reader: useOcr ? 'ocr' : 'browser' });
       if (out.warnings && out.warnings.length) {
@@ -1729,6 +1904,7 @@ async function loadSample(which) {
     const out = await parseOne(buf, used, 0, 1);
     const r = addRooms(out.rooms);
     if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
+    noteDetectedUnits(out);   // one plain line: what system the SAMPLE SHEET uses
     track('sample_loaded', { source: 'sample' });
     if (!r.added) noteCalcEmpty('sample');
     setProgress(null);
@@ -3627,6 +3803,12 @@ function wire() {
     afterProjectChange();
   });
 
+  // The results system: two plain choices in a radio group (keyboard reachable with the arrow keys).
+  // Clicking either is an EXPLICIT choice, which from then on wins over what a sheet is detected to be.
+  const onUnitsChoice = () => setUnits(el.unitsIp && el.unitsIp.checked ? 'ip' : 'si', { explicit: true });
+  if (el.unitsSi) el.unitsSi.addEventListener('change', onUnitsChoice);
+  if (el.unitsIp) el.unitsIp.addEventListener('change', onUnitsChoice);
+
   $('#btnResetProject').addEventListener('click', () => {
     state.project = { ...DEFAULT_PROJECT };
     syncProjectInputs();
@@ -3832,4 +4014,4 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser };
+window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a) };

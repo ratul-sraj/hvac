@@ -21,6 +21,19 @@
   }
   .row-badge.is-outline { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
   .row-badge.is-box { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+  /* The Results system control (Metric SI / Imperial IP): a small fieldset inside the project card,
+     so a narrow screen (and the hamburger nav) is unaffected - it just wraps onto its own line. */
+  .units-field {
+    display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap;
+    margin: 12px 0 4px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px;
+  }
+  .units-field > legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  .units-choice { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  .units-choice input { accent-color: var(--accent); }
+
+  /* The one plain line saying what the SHEET's units are (js/unitdetect.js), beside the plan panel. */
+  .unit-detect { margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -111,6 +124,15 @@
         <input type="number" step="1" id="proj-inRh" inputmode="decimal">
       </label>
     </div>
+
+    <!-- Which system the RESULTS are shown in. The load itself is always computed in SI; this only
+         changes how the numbers are displayed. Clicking one is an explicit choice that what a sheet
+         is detected to use can no longer override (it only informs, with a one-click switch). -->
+    <fieldset class="units-field" id="unitsField" aria-labelledby="unitsLegend">
+      <legend id="unitsLegend">Results</legend>
+      <label class="units-choice"><input type="radio" name="proj-units" id="proj-units-si" value="si"><span>Metric (SI)</span></label>
+      <label class="units-choice"><input type="radio" name="proj-units" id="proj-units-ip" value="ip"><span>Imperial (IP)</span></label>
+    </fieldset>
 
     <!-- Auto-detect chip: filled once per visitor from js/climates.js. Content is built by app.js;
          it is dismissible and never overwrites values the visitor already saved. -->
@@ -282,6 +304,11 @@
     <div id="planScaleFix" class="plan-scalefix hidden" role="status" aria-live="polite"></div>
     <div id="planStatus" class="plan-status hidden" role="status" aria-live="polite"></div>
 
+    <!-- What the SHEET's own units are (js/unitdetect.js), one plain line beside the drawing. It only
+         informs; the Results setting decides what is shown, with a one-click switch when the two
+         disagree. A sheet with no unit evidence says so plainly. -->
+    <p id="unitDetect" class="hint unit-detect hidden" role="status" aria-live="polite"></p>
+
     <!-- The chooser shown when a hand-drawn shape closes: it can become its own new room or be given
          to an existing table row. "(new room)" is preselected, so a dismiss keeps the behaviour of
          the plain tool. Assigning a shape changes that room's AREA, and so its load — said out loud,
@@ -324,7 +351,7 @@
         <thead>
           <tr>
             <th class="l">Level</th><th>Rooms</th><th>Area m&sup2;</th><th>Area ft&sup2;</th>
-            <th>TR</th><th>Supply air L/s</th><th>Fresh air L/s</th><th>ft&sup2;/TR</th>
+            <th>TR</th><th id="levelThSupply">Supply air (L/s)</th><th id="levelThFresh">Fresh air (L/s)</th><th id="levelThApt">Area/tonne (m&sup2;/TR)</th>
           </tr>
         </thead>
         <tbody id="levelBody"></tbody>
@@ -396,12 +423,12 @@
             <th data-sort="glass">Glass<br>m&sup2;</th>
             <th data-sort="roof">Roof</th>
             <th data-sort="partition">Partition<br>m&sup2;</th>
-            <th class="th-res" data-sort="sensible">Sensible<br>W</th>
-            <th class="th-res" data-sort="latent">Latent<br>W</th>
-            <th class="th-res" data-sort="total">Total<br>W</th>
+            <th class="th-res" id="thSensible" data-sort="sensible">Sensible (W)</th>
+            <th class="th-res" id="thLatent" data-sort="latent">Latent (W)</th>
+            <th class="th-res" id="thTotal" data-sort="total">Total (W)</th>
             <th class="th-res" data-sort="tr">TR</th>
-            <th class="th-res" data-sort="ls">L/s</th>
-            <th class="th-res" data-sort="sqftPerTr">ft&sup2;/TR</th>
+            <th class="th-res" id="thLs" data-sort="ls">Supply air (L/s)</th>
+            <th class="th-res" id="thApt" data-sort="sqftPerTr">Area/tonne (m&sup2;/TR)</th>
             <th class="th-src" data-sort="source">Source</th>
             <th class="th-del" aria-label="Delete room"></th>
           </tr>

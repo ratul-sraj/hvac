@@ -130,6 +130,53 @@ if (!sampleMissing) {
     rows.map((r) => r.innerText.replace(/\s+/g, " ")).slice(0, 5));
   ok("level-wise subtotals", levels.length >= 3, levels.join(" || ").slice(0, 200));
 
+  // 3b. the Results system (js/units.js): the toggle must change every unit-bearing surface, switching
+  //     back must restore the SI figures exactly, and the sheet-unit detection line (js/unitdetect.js)
+  //     must appear once a drawing has been parsed.
+  {
+    const unitState = () => page.evaluate(() => {
+      const txt = (id) => { const e = document.getElementById(id); return e ? e.textContent.replace(/\s+/g, " ").trim() : null; };
+      const cardOf = (re) => {
+        const c = [...document.querySelectorAll("#summaryCards .scard")].find((x) => re.test(x.textContent));
+        return c ? c.textContent.replace(/\s+/g, " ").trim() : "";
+      };
+      const det = document.getElementById("unitDetect");
+      return {
+        sys: window.webhvac.state.project.units,
+        summary: document.getElementById("summaryCards").innerText.replace(/\s+/g, " ").trim(),
+        heat: cardOf(/total heat/i), air: cardOf(/supply air/i),
+        thTotal: txt("thTotal"), thLs: txt("thLs"), levelSupply: txt("levelThSupply"),
+        detectVisible: !!(det && !det.classList.contains("hidden")),
+        detect: det ? det.textContent.replace(/\s+/g, " ").trim() : "",
+      };
+    });
+    const unitsJunk = () => page.evaluate(() =>
+      ["NaN", "undefined", "Infinity"].filter((w) => new RegExp("\\b" + w + "\\b").test(document.body.innerText)));
+
+    const beforeUnits = await unitState();
+    ok("the sheet-unit detection line appears once the drawing is parsed",
+      beforeUnits.detectVisible && beforeUnits.detect.length > 0 && !/\berror\b/i.test(beforeUnits.detect),
+      beforeUnits.detect.slice(0, 140));
+
+    await page.click("#proj-units-ip");
+    await page.waitForFunction(() => window.webhvac.state.project.units === "ip", { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 300));
+    const ipUnits = await unitState();
+    ok("choosing Imperial (IP) changes the header and summary units to BTU/h, CFM, ft²",
+      /BTU\/h/.test(ipUnits.thTotal || "") && /CFM/.test(ipUnits.thLs || "") && /CFM/.test(ipUnits.levelSupply || "")
+        && /BTU\/h/.test(ipUnits.heat) && /CFM/.test(ipUnits.air),
+      `${ipUnits.thTotal} | ${ipUnits.thLs} | ${ipUnits.heat} | ${ipUnits.air}`);
+    ok("no NaN/undefined appears in imperial results", (await unitsJunk()).length === 0, (await unitsJunk()).join(", ") || "none");
+
+    await page.click("#proj-units-si");
+    await page.waitForFunction(() => window.webhvac.state.project.units === "si", { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 300));
+    const backUnits = await unitState();
+    ok("switching back to Metric restores the SI figures exactly",
+      backUnits.sys === "si" && backUnits.summary === beforeUnits.summary && backUnits.thTotal === beforeUnits.thTotal,
+      backUnits.summary === beforeUnits.summary ? "identical" : `MISMATCH (${backUnits.summary.slice(0, 80)})`);
+  }
+
   await page.screenshot({ path: `${OUT}/live-rooms.png`, fullPage: false });
 
   // 4. country / city dropdowns

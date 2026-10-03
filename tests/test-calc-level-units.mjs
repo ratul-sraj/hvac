@@ -66,11 +66,14 @@ const start = app.indexOf("el.levelBody.innerHTML = levels.length");
 const end = app.indexOf(": '<tr><td class=\"l\" colspan=\"8\">", start);
 const levelTemplate = start >= 0 && end > start ? app.slice(start, end) : "";
 ok("found the level-table template in js/app.js", levelTemplate.length > 0, `${levelTemplate.length} chars`);
-ok("the per-level fresh-air cell renders g.oaLs (L/s), not g.oaCfm",
-  /fmt\(\s*g\.oaLs\s*,\s*0\s*\)/.test(levelTemplate) && !/g\.oaCfm/.test(levelTemplate),
+// The cell now goes through units.js fmtAir(..., sys): in SI that prints the same L/s figure, and in
+// IP it prints CFM - which is correct, because the header says CFM too. The regression this guards is
+// unchanged: the cell must read the L/s FIELD and never the pre-converted CFM field.
+ok("the per-level fresh-air cell renders g.oaLs (the L/s field), not g.oaCfm",
+  /fmtAir\(\s*g\.oaLs\s*,\s*sys\s*\)/.test(levelTemplate) && !/g\.oaCfm/.test(levelTemplate),
   (levelTemplate.match(/<td>\$\{fmt\([^}]*\}\)<\/td>/g) || []).join(" "));
-ok("the Total row renders t.oaLs (the same L/s unit)",
-  /fmt\(\s*t\.oaLs\s*,\s*0\s*\)/.test(levelTemplate), "Total row fresh-air cell");
+ok("the Total row renders t.oaLs (the same field, hence the same unit)",
+  /fmtAir\(\s*t\.oaLs\s*,\s*sys\s*\)/.test(levelTemplate), "Total row fresh-air cell");
 
 console.log(`\n${pass}/${pass + fail} level-unit checks passed`);
 if (fail) process.exit(1);

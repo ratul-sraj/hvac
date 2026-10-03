@@ -3,6 +3,13 @@
 // Both exports take (project, calcResult) where calcResult = calcProject(rooms, project).
 
 import { SPACE_TYPES } from './calc.js';
+import {
+  normSystem, systemLabel, conversionNote,
+  area, areaUnit, air, airUnit, power, powerUnit,
+  density, densityUnit, length, lengthUnit, temp, tempUnit,
+  tempDelta, tempDeltaUnit, uValue, uValueUnit,
+  areaPerTr, areaPerTrUnit, header,
+} from './units.js';
 
 /* ---------------- small helpers ---------------- */
 
@@ -84,49 +91,91 @@ function csvCell(v) {
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// Plain-text units for the CSV: the screen and the report can afford the typographic '²' and '·',
+// but a spreadsheet column heading reads better in ASCII ('ft2', 'BTU/h.ft2', 'm2/TR').
+const csvUnit = (u) => String(u).replace(/²/g, '2').replace(/·/g, '.');
+
+// A project setting printed in the chosen system: blank input stays blank, and a value that is not a
+// number prints as nothing rather than "NaN".
+const conv = (v, f, d) => {
+  const n = Number(v);
+  if (v == null || v === '' || !Number.isFinite(n)) return '';
+  return Number(f(n)).toFixed(d);
+};
+
 export function toCsv(project, calcResult) {
   const p = project || {};
   const res = calcResult && calcResult.results ? calcResult.results : [];
+  const sys = normSystem(p.units);            // a project saved before this feature reads as 'si'
+  const uArea = csvUnit(areaUnit(sys));
+  const uLen = csvUnit(lengthUnit(sys));
+  const uPow = csvUnit(powerUnit(sys));
+  const uAir = csvUnit(airUnit(sys));
+  const uDen = csvUnit(densityUnit(sys));
+  const uApt = csvUnit(areaPerTrUnit(sys));
+  const dU = csvUnit(tempUnit(sys));
+  const eU = csvUnit(tempDeltaUnit(sys));
+  const kU = csvUnit(uValueUnit(sys));
+  // One column per fact and ONE unit per column: the export never carries m² beside ft² (or W beside
+  // BTU/h) in the same sheet. The TR column stays at index 19 and supply air at index 20 — the saved
+  // browser suite reads those positions.
   const head = [
-    'Include', 'Level', 'No.', 'Name', 'Space type', 'Area m2', 'Area ft2', 'Height m',
-    'People', 'Light W/m2', 'Equip W/m2', 'Orientation', 'Ext wall m2', 'Glass m2',
-    'Roof', 'Partition m2',
-    'Sensible W', 'Latent W', 'Total W', 'TR', 'Supply air L/s', 'Fresh air L/s', 'ft2/TR', 'SHF',
+    'Include', 'Level', 'No.', 'Name', 'Space type',
+    `Area ${uArea}`, `Height ${uLen}`, 'People', `Light ${uDen}`, `Equip ${uDen}`,
+    'Orientation', `Ext wall ${uArea}`, `Glass ${uArea}`, 'Roof', `Partition ${uArea}`,
+    `Sensible ${uPow}`, `Latent ${uPow}`, `Total ${uPow}`, `Safety ${uPow}`,
+    'TR', `Supply air ${uAir}`, `Fresh air ${uAir}`, `Area per TR ${uApt}`, 'SHF',
   ];
   const rows = [head];
   for (const r of res) {
     const room = r.room;
-    const area = parseFloat(room.area) || 0;
+    const a = parseFloat(room.area) || 0;
     rows.push([
       room.include ? 'yes' : 'no',
       room.level || '',
       room.number || '',
       room.name || '',
       typeLabel(room.type),
-      area ? area.toFixed(2) : '',
-      area ? (area * 10.7639).toFixed(2) : '',
-      room.height || '',
-      room.people, room.light, room.equip,
+      a ? area(a, sys).toFixed(2) : '',
+      room.height ? length(room.height, sys).toFixed(1) : '',
+      room.people,
+      conv(room.light, (n) => density(n, sys), 2),
+      conv(room.equip, (n) => density(n, sys), 2),
       room.orient || '',
-      room.extWall, room.glass,
-      room.roof ? 'yes' : 'no', room.partition || 0,
-      r.rsh.toFixed(0), r.rlh.toFixed(0), r.totalW.toFixed(0),
-      r.tr.toFixed(2), (r.supplyOk === false ? '-' : r.supplyLs.toFixed(0)), r.oaLs.toFixed(0),
-      r.sqftPerTr.toFixed(0), r.shf.toFixed(3),
+      conv(room.extWall, (n) => area(n, sys), 2),
+      conv(room.glass, (n) => area(n, sys), 2),
+      room.roof ? 'yes' : 'no', conv(room.partition, (n) => area(n, sys), 2),
+      power(r.rsh, sys).toFixed(0), power(r.rlh, sys).toFixed(0),
+      power(r.totalW, sys).toFixed(0), power(r.safetyW, sys).toFixed(0),
+      r.tr.toFixed(2),
+      (r.supplyOk === false ? '-' : air(r.supplyLs, sys).toFixed(0)),
+      air(r.oaLs, sys).toFixed(0),
+      areaPerTr(r.m2PerTr, sys).toFixed(0),
+      r.shf.toFixed(3),
     ]);
   }
-  // project header lines (prefixed so they do not look like room rows)
+  // project header lines (prefixed so they do not look like room rows). The unit basis is stated in
+  // words here too, so a spreadsheet opened on its own still says which system and what it came from.
   const meta = [
     ['# LoadLens cooling load export'],
     ['# Project', p.name || ''],
     ['# Country', p.country || ''],
     ['# City', p.city || ''],
-    ['# Outdoor DB (C)', p.outDb], ['# Outdoor WB (C)', p.outWb],
-    ['# Indoor DB (C)', p.inDb], ['# Indoor RH (%)', p.inRh],
-    ['# U wall', p.uWall], ['# U glass', p.uGlass], ['# SC', p.sc],
-    ['# U roof', p.uRoof], ['# Roof ETD', p.roofEtd], ['# U partition', p.uPart],
-    ['# Infiltration ACH', p.infilAch], ['# Safety %', p.safety],
-    ['# Supply dT (K)', p.supplyDt], ['# Glazing % of wall', p.wwr],
+    ['# Unit system', systemLabel(sys)],
+    ['# Units basis', conversionNote(sys)],
+    [`# Outdoor dry bulb (${dU})`, conv(p.outDb, (n) => temp(n, sys), 1)],
+    [`# Outdoor wet bulb (${dU})`, conv(p.outWb, (n) => temp(n, sys), 1)],
+    [`# Indoor dry bulb (${dU})`, conv(p.inDb, (n) => temp(n, sys), 1)],
+    ['# Indoor RH (%)', p.inRh],
+    [`# U wall (${kU})`, conv(p.uWall, (n) => uValue(n, sys), 3)],
+    [`# U glass (${kU})`, conv(p.uGlass, (n) => uValue(n, sys), 3)],
+    ['# SC', p.sc],
+    [`# U roof (${kU})`, conv(p.uRoof, (n) => uValue(n, sys), 3)],
+    [`# Roof ETD (${eU})`, conv(p.roofEtd, (n) => tempDelta(n, sys), 1)],
+    [`# U partition (${kU})`, conv(p.uPart, (n) => uValue(n, sys), 3)],
+    ['# Infiltration ACH', p.infilAch], ['# Safety (%)', p.safety],
+    [`# Supply air dT (${eU})`, conv(p.supplyDt, (n) => tempDelta(n, sys), 1)],
+    ['# Glazing (% of wall)', p.wwr],
     [],
   ];
   // One trailing comment line carries the tool's own address. The '#' prefix matches the header
@@ -201,40 +250,51 @@ export function buildReportHtml(project, calcResult, opts = {}) {
   const when = generated.toLocaleString ? generated.toLocaleString('en-GB') : String(generated);
   const included = res.filter((r) => r.room.include);
   const levels = groupByLevel(res);
+  // The chosen display system. Everything below converts an already-computed SI result with js/units.js;
+  // no figure is re-derived and no table mixes the two systems.
+  const sys = normSystem(p.units);
+  const AU = areaUnit(sys), LU = lengthUnit(sys), PU = powerUnit(sys);
+  const QU = airUnit(sys), APTU = areaPerTrUnit(sys), TU = tempUnit(sys), DTU = tempDeltaUnit(sys);
+  // In SI the companion cell can show the same quantity in m³/s (still SI); in imperial it is a
+  // plain-language note instead, so no table ever carries two systems at once.
+  const supplyAlt = sys === 'ip'
+    ? 'computed from the room sensible heat and the supply &Delta;T'
+    : `${fmt((totals.ls || 0) * 0.001, 3)} m&sup3;/s`;
+  const oaAlt = sys === 'ip'
+    ? 'outdoor air per the space types (ASHRAE 62.1)'
+    : `${fmt((totals.oaLs || 0) * 0.001, 3)} m&sup3;/s`;
 
   const roomRows = included.map((r, i) => {
     const room = r.room;
-    const area = parseFloat(room.area) || 0;
     return `<tr>
       <td>${i + 1}</td>
       <td class="l">${esc(room.level || '-')}</td>
       <td class="l">${esc(room.number || '-')}</td>
       <td class="l">${esc(room.name || '-')}</td>
       <td class="l">${esc(typeLabel(room.type))}</td>
-      <td>${fmt(area, 1)}</td>
-      <td>${fmt(room.height, 1)}</td>
+      <td>${fmt(area(room.area, sys), 1)}</td>
+      <td>${fmt(length(room.height, sys), 1)}</td>
       <td>${fmt(room.people, 0)}</td>
       <td>${esc(room.orient || '-')}</td>
-      <td>${fmt(room.glass, 1)}</td>
+      <td>${fmt(area(room.glass, sys), 1)}</td>
       <td>${room.roof ? 'Yes' : '-'}</td>
-      <td>${fmt(r.rsh, 0)}</td>
-      <td>${fmt(r.rlh, 0)}</td>
-      <td>${fmt(r.oaSens + r.oaLat, 0)}</td>
-      <td>${fmt(r.totalW, 0)}</td>
+      <td>${fmt(power(r.rsh, sys), 0)}</td>
+      <td>${fmt(power(r.rlh, sys), 0)}</td>
+      <td>${fmt(power((r.oaSens || 0) + (r.oaLat || 0), sys), 0)}</td>
+      <td>${fmt(power(r.totalW, sys), 0)}</td>
       <td>${fmt(r.tr, 2)}</td>
-      <td>${r.supplyOk === false ? '-' : fmt(r.supplyLs, 0)}</td>
-      <td>${fmt(r.sqftPerTr, 0)}</td>
+      <td>${r.supplyOk === false ? '-' : fmt(air(r.supplyLs, sys), 0)}</td>
+      <td>${fmt(areaPerTr(r.m2PerTr, sys), 0)}</td>
     </tr>`;
   }).join('');
 
   const levelRows = levels.map((g) => `<tr>
       <td class="l">${esc(g.level)}</td>
       <td>${g.rooms}</td>
-      <td>${fmt(g.area, 1)}</td>
-      <td>${fmt(g.areaSqft, 0)}</td>
+      <td>${fmt(area(g.area, sys), 1)}</td>
       <td>${fmt(g.tr, 2)}</td>
-      <td>${g.supplyOk === false ? '-' : fmt(g.cfm, 0)}</td>
-      <td>${fmt(g.oaCfm, 0)}</td>
+      <td>${g.supplyOk === false ? '-' : fmt(air(g.ls, sys), 0)}</td>
+      <td>${fmt(air(g.oaLs, sys), 0)}</td>
     </tr>`).join('');
 
   const skipped = res.filter((r) => !r.room.include);
@@ -253,8 +313,9 @@ export function buildReportHtml(project, calcResult, opts = {}) {
 <div class="btnbar"><button type="button" onclick="window.print()">Print / Save as PDF</button></div>
 
 <h1>${esc(p.name || 'HVAC Load Calculation')}</h1>
-<p class="sub"><strong>LoadLens</strong> &mdash; the lens on your cooling load, from a floor plan PDF to TR, L/s and watts.</p>
-<p class="sub">Cooling load estimate — room wise. Generated by LoadLens on ${esc(when)}.</p>
+<p class="sub"><strong>LoadLens</strong> &mdash; the lens on your cooling load, from a floor plan PDF to tonnes, airflow and heat load.</p>
+<p class="sub">Cooling load estimate — room wise. Results shown in <strong>${esc(systemLabel(sys))}</strong>. Generated by LoadLens on ${esc(when)}.</p>
+<p class="sub">${esc(conversionNote(sys))}</p>
 
 <h2>1. Project and design conditions</h2>
 <div class="cols">
@@ -263,19 +324,19 @@ export function buildReportHtml(project, calcResult, opts = {}) {
       <tr><th>Project</th><td>${esc(p.name || '-')}</td></tr>
       <tr><th>Country</th><td>${esc(p.country || '-')}</td></tr>
       <tr><th>City / region</th><td>${esc(p.city || '-')}</td></tr>
-      <tr><th>Outdoor dry bulb</th><td>${fmt(p.outDb, 1)} &deg;C</td></tr>
-      <tr><th>Outdoor wet bulb</th><td>${fmt(p.outWb, 1)} &deg;C</td></tr>
+      <tr><th>Outdoor dry bulb</th><td>${fmt(temp(p.outDb, sys), 1)} ${esc(TU)}</td></tr>
+      <tr><th>Outdoor wet bulb</th><td>${fmt(temp(p.outWb, sys), 1)} ${esc(TU)}</td></tr>
       <tr><th>Outdoor RH (from DB/WB)</th><td>${fmt(totals.outRh, 0)} %</td></tr>
       <tr><th>Outdoor humidity ratio</th><td>${fmt(totals.wOut, 4)} kg/kg</td></tr>
     </table>
   </div>
   <div>
     <table class="kv">
-      <tr><th>Indoor dry bulb</th><td>${fmt(p.inDb, 1)} &deg;C</td></tr>
+      <tr><th>Indoor dry bulb</th><td>${fmt(temp(p.inDb, sys), 1)} ${esc(TU)}</td></tr>
       <tr><th>Indoor RH</th><td>${fmt(p.inRh, 0)} %</td></tr>
       <tr><th>Indoor humidity ratio</th><td>${fmt(totals.wIn, 4)} kg/kg</td></tr>
-      <tr><th>Room &minus; outdoor &Delta;T</th><td>${fmt((p.outDb || 0) - (p.inDb || 0), 1)} K</td></tr>
-      <tr><th>Supply air &Delta;T</th><td>${fmt(p.supplyDt, 1)} K</td></tr>
+      <tr><th>Room &minus; outdoor &Delta;T</th><td>${fmt(tempDelta((p.outDb || 0) - (p.inDb || 0), sys), 1)} ${esc(DTU)}</td></tr>
+      <tr><th>Supply air &Delta;T</th><td>${fmt(tempDelta(p.supplyDt, sys), 1)} ${esc(DTU)}</td></tr>
       <tr><th>Safety factor</th><td>${fmt(p.safety, 0)} %</td></tr>
     </table>
   </div>
@@ -285,32 +346,34 @@ export function buildReportHtml(project, calcResult, opts = {}) {
 <div class="cols">
   <div>
     <table class="kv">
-      <tr><th>Wall U value</th><td>${fmt(p.uWall, 2)} W/m&sup2;K (230 mm brick, plastered)</td></tr>
-      <tr><th>Glass U value</th><td>${fmt(p.uGlass, 2)} W/m&sup2;K (single clear glass)</td></tr>
+      <tr><th>Wall U value</th><td>${fmt(uValue(p.uWall, sys), 2)} ${esc(uValueUnit(sys))} (230 mm brick, plastered)</td></tr>
+      <tr><th>Glass U value</th><td>${fmt(uValue(p.uGlass, sys), 2)} ${esc(uValueUnit(sys))} (single clear glass)</td></tr>
       <tr><th>Shading coefficient</th><td>${fmt(p.sc, 2)} (clear glass + internal blinds)</td></tr>
-      <tr><th>Roof U value</th><td>${fmt(p.uRoof, 2)} W/m&sup2;K (RCC slab + weathering)</td></tr>
+      <tr><th>Roof U value</th><td>${fmt(uValue(p.uRoof, sys), 2)} ${esc(uValueUnit(sys))} (RCC slab + weathering)</td></tr>
     </table>
   </div>
   <div>
     <table class="kv">
-      <tr><th>Roof equivalent &Delta;T (ETD)</th><td>${fmt(p.roofEtd, 1)} K</td></tr>
-      <tr><th>Partition U value</th><td>${fmt(p.uPart, 2)} W/m&sup2;K</td></tr>
+      <tr><th>Roof equivalent &Delta;T (ETD)</th><td>${fmt(tempDelta(p.roofEtd, sys), 1)} ${esc(DTU)}</td></tr>
+      <tr><th>Partition U value</th><td>${fmt(uValue(p.uPart, sys), 2)} ${esc(uValueUnit(sys))}</td></tr>
       <tr><th>Infiltration</th><td>${fmt(p.infilAch, 2)} air changes per hour</td></tr>
       <tr><th>Glazing assumed</th><td>${fmt(p.wwr, 0)} % of exposed wall (when glass area is blank)</td></tr>
     </table>
   </div>
 </div>
 <p class="muted">Solar gain and wall equivalent temperature differences are peak values for about 10&deg; north latitude.
-Fresh air (outdoor air) rates follow ASHRAE 62.1 type-of-use values per person plus per m&sup2; of floor.</p>
+Fresh air (outdoor air) rates follow ASHRAE 62.1 type-of-use values per person plus a small allowance per unit of floor area.</p>
 
 <h2>3. Room wise load</h2>
 <table>
   <thead>
     <tr>
       <th>#</th><th class="l">Level</th><th class="l">No.</th><th class="l">Room</th><th class="l">Space type</th>
-      <th>Area<br>m&sup2;</th><th>Height<br>m</th><th>People</th><th>Orient.</th><th>Glass<br>m&sup2;</th><th>Roof</th>
-      <th>Sensible<br>W</th><th>Latent<br>W</th><th>Fresh air<br>W</th><th>Total<br>W</th>
-      <th>TR</th><th>Supply air L/s</th><th>ft&sup2;/TR</th>
+      <th>${esc(header('Area', AU))}</th><th>${esc(header('Height', LU))}</th><th>People</th><th>Orient.</th>
+      <th>${esc(header('Glass', AU))}</th><th>Roof</th>
+      <th>${esc(header('Sensible', PU))}</th><th>${esc(header('Latent', PU))}</th>
+      <th>${esc(header('Fresh air', PU))}</th><th>${esc(header('Total', PU))}</th>
+      <th>TR</th><th>${esc(header('Supply air', QU))}</th><th>${esc(header('Area per TR', APTU))}</th>
     </tr>
   </thead>
   <tbody>
@@ -319,11 +382,12 @@ Fresh air (outdoor air) rates follow ASHRAE 62.1 type-of-use values per person p
   <tfoot>
     <tr class="total">
       <td colspan="5" class="l">Total — ${included.length} room(s)</td>
-      <td>${fmt(totals.area, 1)}</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
-      <td>${fmt(totals.rsh, 0)}</td><td>${fmt(totals.rlh, 0)}</td>
-      <td>${fmt((totals.totalW || 0) - (totals.rsh || 0) - (totals.rlh || 0), 0)}</td>
-      <td>${fmt(totals.totalW, 0)}</td>
-      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(totals.ls, 0) : '-'}</td><td>${fmt(totals.sqftPerTr, 0)}</td>
+      <td>${fmt(area(totals.area, sys), 1)}</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+      <td>${fmt(power(totals.rsh, sys), 0)}</td><td>${fmt(power(totals.rlh, sys), 0)}</td>
+      <td>${fmt(power((totals.totalW || 0) - (totals.rsh || 0) - (totals.rlh || 0), sys), 0)}</td>
+      <td>${fmt(power(totals.totalW, sys), 0)}</td>
+      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(air(totals.ls, sys), 0) : '-'}</td>
+      <td>${fmt(areaPerTr(totals.m2PerTr, sys), 0)}</td>
     </tr>
   </tfoot>
 </table>
@@ -333,36 +397,37 @@ ${skippedNote}
 <table>
   <tbody>
     <tr><th class="l">Total cooling load</th><td>${fmt(totals.tr, 2)} TR</td>
-        <td class="l">${fmt(totals.totalW, 0)} W = ${fmt((totals.totalW || 0) / 1000, 1)} kW</td></tr>
-    <tr><th class="l">Room sensible heat (incl. safety)</th><td>${fmt(totals.rsh, 0)} W</td>
-        <td class="l">Room latent heat (incl. safety) ${fmt(totals.rlh, 0)} W</td></tr>
-    <tr><th class="l">Safety allowance (${fmt(totals.safetyPct, 0)}%)</th><td>+${fmt(totals.safetyW, 0)} W</td>
+        <td class="l">${fmt(power(totals.totalW, sys), 0)} ${esc(PU)}${sys === 'ip' ? '' : ` = ${fmt((totals.totalW || 0) / 1000, 1)} kW`}</td></tr>
+    <tr><th class="l">Room sensible heat (incl. safety)</th><td>${fmt(power(totals.rsh, sys), 0)} ${esc(PU)}</td>
+        <td class="l">Room latent heat (incl. safety) ${fmt(power(totals.rlh, sys), 0)} ${esc(PU)}</td></tr>
+    <tr><th class="l">Safety allowance (${fmt(totals.safetyPct, 0)}%)</th><td>+${fmt(power(totals.safetyW, sys), 0)} ${esc(PU)}</td>
         <td class="l">inside the room heat above; fresh air is added afterwards</td></tr>
-    <tr><th class="l">Supply air quantity</th><td>${supplyOk ? fmt(totals.cfm, 0) + ' CFM' : '-'}</td>
-        <td class="l">${supplyOk ? fmt((totals.cfm || 0) * 0.000471947, 3) + ' m&sup3;/s' : '-'}</td></tr>
-    <tr><th class="l">Fresh / outdoor air</th><td>${fmt(totals.oaCfm, 0)} CFM</td>
-        <td class="l">${fmt((totals.oaCfm || 0) * 0.000471947, 3)} m&sup3;/s</td></tr>
-    <tr><th class="l">Conditioned floor area</th><td>${fmt(totals.area, 1)} m&sup2;</td>
-        <td class="l">${fmt(totals.areaSqft, 0)} ft&sup2;</td></tr>
-    <tr><th class="l">Area per tonne</th><td>${fmt(totals.sqftPerTr, 0)} ft&sup2;/TR</td>
-        <td class="l">${fmt(totals.tr ? totals.area / totals.tr : 0, 1)} m&sup2;/TR</td></tr>
+    <tr><th class="l">Supply air quantity</th><td>${supplyOk ? fmt(air(totals.ls, sys), 0) + ' ' + esc(QU) : '-'}</td>
+        <td class="l">${supplyOk ? supplyAlt : '-'}</td></tr>
+    <tr><th class="l">Fresh / outdoor air</th><td>${fmt(air(totals.oaLs, sys), 0)} ${esc(QU)}</td>
+        <td class="l">${oaAlt}</td></tr>
+    <tr><th class="l">Conditioned floor area</th><td>${fmt(area(totals.area, sys), 1)} ${esc(AU)}</td>
+        <td class="l">of the air conditioned rooms only</td></tr>
+    <tr><th class="l">Area per tonne</th><td>${fmt(areaPerTr(totals.m2PerTr, sys), 0)} ${esc(APTU)}</td>
+        <td class="l">area served per ton of refrigeration</td></tr>
   </tbody>
 </table>
 
 <h2>5. Level wise subtotal</h2>
 <table>
   <thead>
-    <tr><th class="l">Level</th><th>Rooms</th><th>Area m&sup2;</th><th>Area ft&sup2;</th>
-        <th>TR</th><th>Supply CFM</th><th>Fresh air CFM</th></tr>
+    <tr><th class="l">Level</th><th>Rooms</th><th>${esc(header('Area', AU))}</th>
+        <th>TR</th><th>${esc(header('Supply air', QU))}</th><th>${esc(header('Fresh air', QU))}</th></tr>
   </thead>
   <tbody>
-    ${levelRows || '<tr><td colspan="7" class="l">-</td></tr>'}
+    ${levelRows || '<tr><td colspan="6" class="l">-</td></tr>'}
   </tbody>
   <tfoot>
     <tr class="grand">
       <td class="l">Grand total</td><td>${included.length}</td>
-      <td>${fmt(totals.area, 1)}</td><td>${fmt(totals.areaSqft, 0)}</td>
-      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(totals.cfm, 0) : '-'}</td><td>${fmt(totals.oaCfm, 0)}</td>
+      <td>${fmt(area(totals.area, sys), 1)}</td>
+      <td>${fmt(totals.tr, 2)}</td><td>${supplyOk ? fmt(air(totals.ls, sys), 0) : '-'}</td>
+      <td>${fmt(air(totals.oaLs, sys), 0)}</td>
     </tr>
   </tfoot>
 </table>
@@ -371,6 +436,7 @@ ${skippedNote}
 <div class="notes">
   <strong>This is a simplified estimate. It must be checked by a qualified HVAC engineer before use.</strong>
   <ul>
+    <li>Units: results are shown in <strong>${esc(systemLabel(sys))}</strong>. ${esc(conversionNote(sys))}</li>
     <li>Method: simplified ASHRAE / Carrier E-20 style. Peak solar gain through glass (with storage effect)
         and sol-air equivalent temperature differences (ETD / CLTD) are used, <em>not</em> a full hourly RTS
         (radiant time series) calculation.</li>
@@ -398,7 +464,7 @@ ${skippedNote}
 <p class="muted">LoadLens &mdash; <a href="https://loadlens.net/">loadlens.net</a> &middot;
 Source on GitHub: <a href="https://github.com/ratul-sraj/hvac">github.com/ratul-sraj/hvac</a></p>
 
-<p class="credit">Calculated with LoadLens - loadlens.net &middot; free, runs in your browser, your drawing is never sent to a third party. On loadlens.net it is posted to this site's own server so it can be read faster; it is not stored and nothing from it is logged.</p>
+<p class="credit">${esc(conversionNote(sys))} Calculated with LoadLens - loadlens.net &middot; free, runs in your browser, your drawing is never sent to a third party. On loadlens.net it is posted to this site's own server so it can be read faster; it is not stored and nothing from it is logged.</p>
 </body>
 </html>`;
   return html;

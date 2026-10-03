@@ -34,7 +34,7 @@ const rooms = [
   { id: "r2", name: "Office B", level: "Ground", area: 20, height: 3, type: "office", orient: "S", include: true, people: 2 },
   { id: "r3", name: "Room C", level: "First", area: 30, height: 3, type: "office", orient: "N", include: true, people: 3 },
 ];
-const project = { ...DEFAULT_PROJECT, name: "Unit test", supplyDt: 11 };
+const project = { ...DEFAULT_PROJECT, name: "Unit test", supplyDt: 11, units: "ip" };
 
 const calc = calcProject(rooms, project);
 const totals = calc.totals;
@@ -53,8 +53,8 @@ ok("the L/s and CFM figures genuinely differ (so the unit is testable)",
   `ls ${Math.round(totals.ls)} vs cfm ${Math.round(totals.cfm)}`);
 
 /* ---------- the level table must agree --------------------------------------------- */
-ok("the level table's supply column is headed 'Supply CFM'",
-  /Supply CFM/.test(html.slice(html.indexOf("5. Level wise subtotal"))));
+ok("the level table's supply column is headed 'Supply air (CFM)'",
+  /Supply air \(CFM\)/.test(html.slice(html.indexOf("5. Level wise subtotal"))));
 const levelRows = tableRows(html, "5. Level wise subtotal");
 ok("the level table has one row per level plus a grand total", levelRows.length === levels.length + 1,
   `${levelRows.length} rows, ${levels.length} levels`);
@@ -62,7 +62,7 @@ ok("the level table has one row per level plus a grand total", levelRows.length 
 let levelSupplyOk = true;
 let grandSupply = null;
 for (const row of levelRows) {
-  const supply = row[5]; // [Level, Rooms, Area m2, Area ft2, TR, Supply, Fresh air]
+  const supply = row[4]; // [Level, Rooms, Area, TR, Supply, Fresh air]
   if (row[0] === "Grand total") { grandSupply = supply; continue; }
   const g = levels.find((x) => x.level === row[0]);
   const want = fmt(g.cfm, 0);
@@ -77,10 +77,10 @@ ok("the level table's grand total is in CFM and equals the summary",
   grandSupply !== null && num(grandSupply) === summaryCfm && grandSupply === fmt(totals.cfm, 0),
   `grand ${grandSupply}, summary ${summaryCfm}, fmt(totals.cfm)=${fmt(totals.cfm, 0)}`);
 ok("no supply cell in the level table is the L/s figure",
-  levelRows.every((r) => r[0] === "Grand total" || r[5] !== fmt((levels.find((x) => x.level === r[0]) || {}).ls, 0)));
+  levelRows.every((r) => r[0] === "Grand total" || r[4] !== fmt((levels.find((x) => x.level === r[0]) || {}).ls, 0)));
 
 /* ---------- the '-' placeholder when supply is incalculable ------------------------ */
-const noDt = { ...DEFAULT_PROJECT, name: "No supply", supplyDt: 0 };
+const noDt = { ...DEFAULT_PROJECT, name: "No supply", supplyDt: 0, units: "ip" };
 const calcNo = calcProject(rooms, noDt);
 ok("a zero supply dT makes supply incalculable", calcNo.totals.supplyOk === false);
 const htmlNo = buildReportHtml(noDt, calcNo, { generatedAt: new Date(0) });
@@ -89,10 +89,10 @@ ok("the summary shows '-' when supply is incalculable",
   !!summaryNo && summaryNo[1].trim() === "-", summaryNo ? summaryNo[1] : "not found");
 const levelRowsNo = tableRows(htmlNo, "5. Level wise subtotal");
 ok("every level supply cell is '-' when supply is incalculable",
-  levelRowsNo.length > 0 && levelRowsNo.every((r) => r[5] === "-"),
-  levelRowsNo.map((r) => r[5]).join(","));
+  levelRowsNo.length > 0 && levelRowsNo.every((r) => r[4] === "-"),
+  levelRowsNo.map((r) => r[4]).join(","));
 const grandNo = levelRowsNo.find((r) => r[0] === "Grand total");
-ok("the level grand total is '-' when supply is incalculable", !!grandNo && grandNo[5] === "-");
+ok("the level grand total is '-' when supply is incalculable", !!grandNo && grandNo[4] === "-");
 
 console.log(`\n${pass}/${pass + fail} checks passed`);
 if (fail) process.exit(1);
