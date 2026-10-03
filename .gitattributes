@@ -1,0 +1,14 @@
+# LoadLens - line-ending and binary policy.
+#
+# Why this file exists: git was treating the sample PDFs as text, so every commit warned
+# "LF will be replaced by CRLF" and a checkout could rewrite their bytes. A PDF whose line
+# endings have been normalised is a corrupt PDF, and the failure shows up far from the cause
+# (the parser simply finds no rooms). Binaries stay binary and their bytes are left alone.
+*.pdf  binary
+*.xlsx binary
+*.png  binary
+*.jpg  binary
+*.mp4  binary
+
+# Keep the shell scripts runnable on Linux CI as well as this MSYS shell.
+*.sh text eol=lf
