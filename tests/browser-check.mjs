@@ -2643,6 +2643,97 @@ if (!sampleMissing) {
   }
 
   // 12. selftest page (real pdf.js worker + engine in the browser) — independent of the sample
+  // ---- Draw shape: a room with ANY number of sides ------------------------------------------------
+  // The polygon path (click corner by corner) and the rectangle path (drag) share one tool now, so the
+  // polygon can break without the rectangle noticing: the corners land in the overlay and nothing ever
+  // commits them. A user then sees only rectangles and reports the many-sided tool as missing, which
+  // is exactly what happened. These checks pin the whole flow AND the on-screen feedback that makes it
+  // discoverable.
+  await page.goto(BASE + "app.html", { waitUntil: "load", timeout: 90000 });
+  await page.waitForSelector("#btnSample", { timeout: 30000 });
+  await page.click("#btnSample");
+  await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
+  await new Promise((r) => setTimeout(r, 2500));
+
+  const planBox = await page.evaluate(() => {
+    const r = document.querySelector("#planView").getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  const draftCount = () => page.evaluate(() => {
+    const o = window.webhvac.plan.overlay;
+    return (o && typeof o.draftCount === "function") ? o.draftCount() : -1;
+  });
+  const hintText = () => page.evaluate(() => (document.querySelector("#planHint") || {}).textContent || "");
+
+  const rowsBeforeShape = await page.evaluate(() => document.querySelectorAll("#roomsBody tr").length);
+  const px = planBox.x + 300, py = planBox.y + 250, step = 85;
+  const shapePts = [[px, py], [px + step, py], [px + step, py + step], [px, py + step]];
+  for (const [x, y] of shapePts) {
+    await page.mouse.click(x, y, { delay: 25 });
+    await new Promise((r) => setTimeout(r, 420));
+  }
+  const corners = await draftCount();
+  ok("Draw shape accepts a click for each corner (a multi-sided room can be drawn)", corners >= 3,
+      `${corners} corner(s) after 4 clicks`);
+
+  const hintShape = await hintText();
+  ok("drawing a shape says how many corners are placed and how to finish",
+      /corner/i.test(hintShape) && /(Enter|finish)/i.test(hintShape), hintShape.slice(0, 140));
+
+  await page.keyboard.press("Enter");
+  await new Promise((r) => setTimeout(r, 700));
+  const chooserOpen = await page.evaluate(() => {
+    const c = document.querySelector("#planShapeAssign");
+    return !!c && !c.classList.contains("hidden");
+  });
+  ok("finishing a shape asks which room it is (the chooser appears)", chooserOpen, `chooser ${chooserOpen}`);
+
+  await page.evaluate(() => {
+    const b = document.querySelector("#planShapeAssignGo");
+    if (b) b.click();
+  });
+  await new Promise((r) => setTimeout(r, 900));
+  const rowsAfterShape = await page.evaluate(() => document.querySelectorAll("#roomsBody tr").length);
+  ok("the drawn shape becomes a room with its own area", rowsAfterShape > rowsBeforeShape,
+      `rows ${rowsBeforeShape} -> ${rowsAfterShape}`);
+  const drawnArea = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("#roomsBody tr")];
+    const last = rows[rows.length - 1];
+    const inp = last && last.querySelector("input[data-field='area']");
+    return inp ? Number(inp.value) : 0;
+  });
+  ok("the drawn room carries a real area from the shape's own ring", drawnArea > 1, `${drawnArea} m2`);
+
+  // Committing a shape deliberately switches the tool to Select / edit (so the new geometry can be
+  // reshaped), so a plain drag right after it would select, not draw. The user must choose Draw shape
+  // again - and the app must SAY so, which is what this asserts.
+  const modeAfterShape = await page.evaluate(() => {
+    const r = document.querySelector("#planModeSelect");
+    // The sentence lives in the STATUS line; #planHint switches to the Select-mode instructions.
+    const s = document.querySelector(".plan-status, #planStatus, .status");
+    return { selectChecked: !!(r && r.checked), status: s ? s.innerText : "" };
+  });
+  ok("committing a shape says the tool moved to Select / edit",
+      modeAfterShape.selectChecked && /Select \/ edit/.test(modeAfterShape.status),
+      `${modeAfterShape.selectChecked ? "select mode" : "NOT switched"} | ${modeAfterShape.status.replace(/\s+/g, " ").slice(0, 130)}`);
+
+  await page.click("#planModeShape");
+  await new Promise((r) => setTimeout(r, 400));
+
+  // The rectangle gesture must survive all of this: one tool, two gestures.
+  const boxForDrag = await page.evaluate(() => {
+    const r = document.querySelector("#planView").getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  await page.mouse.move(boxForDrag.x + boxForDrag.w * 0.62, boxForDrag.y + boxForDrag.h * 0.30);
+  await page.mouse.down();
+  await page.mouse.move(boxForDrag.x + boxForDrag.w * 0.72, boxForDrag.y + boxForDrag.h * 0.42, { steps: 12 });
+  await page.mouse.up();
+  await new Promise((r) => setTimeout(r, 900));
+  const rowsAfterDragCheck = await page.evaluate(() => document.querySelectorAll("#roomsBody tr").length);
+  ok("a drag still adds a plain rectangle", rowsAfterDragCheck > rowsAfterShape,
+      `rows ${rowsAfterShape} -> ${rowsAfterDragCheck}`);
+
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
   for (let i = 0; i < 60; i++) {

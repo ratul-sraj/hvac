@@ -1355,6 +1355,13 @@ export function createOverlay(rootEl, {
     return !!shapeDraft;
   }
 
+  /** How many corners the in-progress shape has (0 when none). The app shows this as a live count:
+   *  without it a click that lands on the plan looks like it did nothing at all, and a user who cannot
+   *  see the shape taking form falls back to dragging rectangles. */
+  function draftCount() {
+    return shapeDraft ? shapeDraft.pts.length : 0;
+  }
+
   function destroy() {
     if (destroyed) return;
     destroyed = true;
@@ -1386,5 +1393,5 @@ export function createOverlay(rootEl, {
   svg.classList.toggle('is-select', mode === 'select');
   resize();
 
-  return { render, setMode, resize, destroy, hasDraft, el: svg };
+  return { render, setMode, resize, destroy, hasDraft, draftCount, el: svg };
 }

@@ -1972,6 +1972,19 @@ function planScaleDenom() {
 }
 
 function planHintText() {
+  // An IN-PROGRESS shape comes first: the user is mid-gesture, and until now the hint kept describing
+  // the tool in general. Clicking a corner changed nothing on screen, so the polygon tool looked
+  // broken and only the drag (rectangle) felt like it worked.
+  if (state.ui.planMode !== 'select' && plan.overlay && typeof plan.overlay.hasDraft === 'function'
+      && plan.overlay.hasDraft()) {
+    const n = (typeof plan.overlay.draftCount === 'function') ? plan.overlay.draftCount() : 0;
+    const what = n <= 1 ? 'First corner placed' : `${n} corners placed`;
+    const more = n < 3
+      ? `Click at least ${3 - n} more corner(s) to make a room.`
+      : 'Click the first corner again, double-click, or press Enter to finish the shape.';
+    return `${what} — ${more} Backspace takes back the last corner, Escape throws the shape away. ` +
+      `Areas are measured at 1:${planScaleDenom()}.`;
+  }
   // A PLACED room (a locator box sized back from its own area, see planPlaceAllRooms) carries a rect
   // too, so isDrawnRoom() alone cannot tell it from a hand-drawn one — planview.isPlacedRoom() can.
   const drawn = state.rooms.filter((r) => isDrawnRoom(r) && !isPlacedRoom(r)).length;
@@ -3054,7 +3067,8 @@ function planCreateShapeRoom(shape) {
   saveNow();
   if (res.added) {
     setStatus('ok', `${room.name} added — ${fmt(room.area, 1)} m² drawn on the plan at 1:${denom}. ` +
-      `Set its name, orientation and glazing below; the load already uses it.`, 'plan');
+      `Set its name, orientation and glazing below; the load already uses it. ` +
+      `The tool is now on Select / edit so you can reshape it — pick Draw shape to draw the next room.`, 'plan');
     planSetMode('select');       // hand the user the new geometry, ready to reshape
     planSelectRoom(room);
   } else if (res.skipped) {
@@ -3495,6 +3509,15 @@ function planWireGestures() {
   el.planView.addEventListener('pointermove', planGestureMove, true);
   el.planView.addEventListener('pointerup', planGestureUp, true);
   el.planView.addEventListener('pointercancel', planGestureCancel, true);
+  // The overlay adds a corner on its own pointerdown and takes one back on Backspace, and in shape mode
+  // it reports NOTHING to the app — so without these two listeners the corner count on screen would
+  // stay stale and the shape would look like it was never started. Bubble phase: the overlay's own
+  // handlers have already run by the time these fire.
+  el.planView.addEventListener('click', () => { if (plan.overlay && plan.overlay.hasDraft && plan.overlay.hasDraft()) planSync(); });
+  window.addEventListener('keyup', (e) => {
+    if ((e.key === 'Backspace' || e.key === 'Escape')
+        && plan.overlay && plan.overlay.hasDraft && plan.overlay.hasDraft()) planSync();
+  });
   window.addEventListener('keydown', (e) => {
     // Space is the pan modifier — but never while the user is typing (the room-name box, a table
     // cell). Without this guard, holding Space to type a space set the pan flag, so the app skipped
