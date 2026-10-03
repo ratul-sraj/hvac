@@ -435,6 +435,7 @@ ${table(indiaIndicative, "India \u2014 indicative estimates (no station within a
         <li><a href="app.html">Calculator</a></li>
         <li><a href="about.html">About</a></li>
         <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="case-study.html">Case study</a></li>
         <li><a href="design-conditions.html">Design conditions (worldwide)</a></li>
         <li><a href="help.html">Help / FAQ</a></li>
       </ul>

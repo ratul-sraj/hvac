@@ -78,6 +78,7 @@ CT_JS="text/javascript; charset=utf-8"
 CT_SVG="image/svg+xml"
 CT_TEXT="text/plain; charset=utf-8"
 CT_XML="application/xml; charset=utf-8"
+CT_PNG="image/png"
 CT_GZIP="application/gzip"
 
 if [ -n "$FROM_DIR" ]; then
@@ -93,7 +94,7 @@ else
 
   # Same file set as .github/workflows/pages.yml.
   COPIED=0
-  for item in *.html robots.txt sitemap.xml favicon.svg css js vendor; do
+  for item in *.html robots.txt sitemap.xml favicon.svg css js vendor img; do
     [ -e "$item" ] || { log_warn "missing from the repo: $item"; continue; }
     cp -r "$item" "$STAGE_DIR/" && COPIED=$((COPIED + 1))
   done
@@ -193,6 +194,15 @@ if [ -d "$SRC/css" ]; then
   log_ok "css/ -> $CACHE_CODE"
 fi
 
+# img/  (the case-study page's screenshots). Filenames are fixed rather than content-hashed, so a
+# 1-day cache is the deliberate middle: images change rarely, and the invalidation below clears the
+# edge copy on every deploy anyway.
+if [ -d "$SRC/img" ]; then
+  aws s3 sync "$SRC_NATIVE/img" "s3://$BUCKET/img" \
+    --content-type "$CT_PNG" --cache-control "$CACHE_SHORT" --no-progress
+  log_ok "img/ -> $CACHE_SHORT"
+fi
+
 # js/  (content type matters: these are ES modules, a wrong MIME type makes the
 # browser refuse to import them)
 if [ -d "$SRC/js" ]; then
@@ -270,14 +280,14 @@ else
     log_info "If 30-cloudfront.sh has not been run yet, that is expected."
     log_info "Set DISTRIBUTION_ID=... or run:  bash infra/30-cloudfront.sh"
   else
-    log_step "Invalidating / , /index.html , /*.html , /js/* , /css/* , /samples/* , /robots.txt , /sitemap.xml on $DIST_ID"
+    log_step "Invalidating / , /index.html , /*.html , /js/* , /css/* , /img/* , /samples/* , /robots.txt , /sitemap.xml on $DIST_ID"
     # /js/* and /css/* MUST be here: their filenames are not content-hashed, so an edge that cached
     # an earlier copy keeps serving it (this hid a fixed js/app.js behind a stale edge copy).
     INVALIDATION_ID="$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" \
-      --paths "/" "/index.html" "/*.html" "/js/*" "/css/*" "/samples/*" "/robots.txt" "/sitemap.xml" \
+      --paths "/" "/index.html" "/*.html" "/js/*" "/css/*" "/img/*" "/samples/*" "/robots.txt" "/sitemap.xml" \
       --query 'Invalidation.Id' --output text --no-cli-pager)"
-    log_ok "invalidation $INVALIDATION_ID requested (8 path groups)"
-    log_info "The first 1,000 invalidation paths each month are free; this uses 8."
+    log_ok "invalidation $INVALIDATION_ID requested (9 path groups)"
+    log_info "The first 1,000 invalidation paths each month are free; this uses 9."
   fi
 fi
 

@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case study: cooling loads from a floor plan</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="description" content="How LoadLens reads a real architectural PDF and returns a room-wise cooling load schedule: the engineering decisions, the honest limits, the measured results.">
+<link rel="canonical" href="https://loadlens.net/case-study.html">
+<meta property="og:url" content="https://loadlens.net/case-study.html">
+<meta property="og:title" content="Case study: cooling loads from a floor plan">
+<meta property="og:description" content="A real architectural PDF in, a room-wise cooling load schedule out. The decisions behind it, and the parts it refuses to guess.">
+<meta property="og:image" content="https://loadlens.net/img/case-plan-areas.png">
+<meta name="twitter:image" content="https://loadlens.net/img/case-plan-areas.png">
+<link rel="stylesheet" href="css/landing.css">
+</head>
+<body>
+
+<header class="site-nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html" aria-label="LoadLens — home">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false">
+        <rect x="1.5" y="7" width="29" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M7 12.5h11M7 16h8M7 19.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.5 16l4.2-2.7v5.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">LoadLens<span class="brand-sub">COOLING LOAD FROM PDF</span></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="index.html">Home</a>
+      <a href="app.html">Calculator</a>
+      <a href="about.html">About</a>
+      <a href="method.html">Method</a>
+      <a href="help.html">Help</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h1>Case study: cooling loads from a floor plan</h1>
+      <p class="lead">
+        LoadLens reads a real architectural sheet and returns a room-wise cooling load schedule. On the
+        public sample drawing it fills <strong>21 room areas from the drawing itself</strong> and produces
+        <strong>20.86 TR</strong> of cooling load over 17 conditioned rooms &mdash; with the sheet's own
+        units detected, and every room it could not measure left honestly blank instead of guessed.
+      </p>
+      <p>
+        This page is the engineering behind that number: what the tool decides, what it refuses to decide,
+        and where its limits are. The app itself is at <a href="app.html">loadlens.net</a> and the source is on
+        <a href="https://github.com/ratul-sraj/hvac">GitHub</a>.
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="cards">
+        <div class="panel">
+          <h3>The measured result</h3>
+          <p class="small muted">
+            20.86 TR &middot; 73,372 W total heat &middot; 3,607 L/s supply air &middot; 314.5 m&sup2; conditioned
+            &middot; 15 m&sup2;/TR &middot; 17 rooms in the load, 21 areas taken from the drawing.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>What it costs to run</h3>
+          <p class="small muted">
+            Nothing, per user. The incumbent tools for this first-pass job are sold per seat &mdash; Carrier
+            System Design Load at about $1,055 and Trane TRACE 700 at about $1,995 &mdash; which is the reason
+            small consultancies do this step in Excel instead.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>The problem</h2>
+      <p>
+        The slowest part of a first-pass HVAC estimate is not the physics, it is the retyping. The rooms are
+        already named and dimensioned in the drawing. Someone copies those names, areas and heights into a
+        spreadsheet, one row at a time, then does the same arithmetic row by row.
+      </p>
+      <p>
+        The packaged tools that automate it are priced for a firm with a dedicated HVAC department, licensed
+        per seat. A small consultancy in Kerala or a two-person Gulf office cannot justify that for a
+        first-pass check, so the spreadsheet stays. That gap &mdash; a real load schedule with no licence and
+        no install &mdash; is what this project fills.
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head prose">
+        <h2>What it does</h2>
+      </div>
+      <figure>
+        <img src="img/case-plan-areas.png" alt="An architectural floor plan inside LoadLens, with 21 room areas measured from the drawing's own outlines" width="1300" height="736" loading="lazy">
+        <figcaption class="small muted">
+          The public sample sheet. <em>Fill areas from the drawing</em> measures the room areas from the
+          plan's own closed wall outlines &mdash; 21 rooms here &mdash; and every filled area is drawn back on
+          the plan so it can be seen and checked.
+        </figcaption>
+      </figure>
+      <figure>
+        <img src="img/case-summary.png" alt="LoadLens result cards showing 20.86 TR total cooling load, 73,372 W total heat, 3,607 L/s supply air and 314.5 square metres conditioned" width="2668" height="336" loading="lazy">
+        <figcaption class="small muted">
+          The schedule the drawing produces: total load, supply air, fresh air, conditioned area and
+          area per tonne &mdash; in metric or imperial, chosen from the sheet's own units.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>How the number is produced</h2>
+      <ol>
+        <li>
+          <strong>Read the sheet, not a picture of it.</strong> Room names, printed areas, dimensions and
+          scale notes come out of the PDF's text layer with their positions. That gives the room list and,
+          separately, the evidence of which unit system the sheet is drawn in.
+        </li>
+        <li>
+          <strong>Decide the units from evidence, and say what the evidence was.</strong> Areas in
+          <em>m&sup2;</em>, millimetre dimensions and a <em>1:100</em> note point one way;
+          <em>ft&sup2;</em>, feet-and-inches dimensions and <em>1/4&quot; = 1'-0&quot;</em> point the other.
+          Two agreeing pieces are required before the sheet is called metric or imperial; contradictory
+          evidence is reported as a contradiction, and a sheet with nothing to go on is called
+          <em>unknown</em> rather than assumed.
+        </li>
+        <li>
+          <strong>Measure only when the outline is unambiguous.</strong> A room area is taken from the
+          drawing only when a closed wall outline exists, exactly one room name sits inside it, the measured
+          area falls in a plausible range, and it does not really overlap another room. Otherwise the room
+          keeps a blank area and a plain-English reason.
+        </li>
+        <li>
+          <strong>Do the load in SI, once.</strong> The calculation runs in SI as a single source of truth.
+          Imperial results are a labelled conversion of the same numbers, not a second calculation, and the
+          report says so in words &mdash; so the screen, the printed report and the CSV can never disagree.
+        </li>
+        <li>
+          <strong>Keep the drawing where it belongs.</strong> Geometry is stored in PDF points and converted
+          to screen pixels on every repaint, so zooming, panning and page rotation can never corrupt the
+          measured areas.
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>What it refuses to do</h2>
+      <p>
+        The rule that shaped this project is that <strong>a wrong number is worse than a blank one</strong>.
+        Some consequences of taking that seriously:
+      </p>
+      <ul>
+        <li>
+          On the sample sheet the tool fills 21 of 56 rooms and states the reason for the other 35:
+          <em>"33 because one outline holds several room names, 2 because the traced shape did not look like a
+          room."</em> It does not quietly fill them with something plausible.
+        </li>
+        <li>A room whose area is unknown stays out of the load and is flagged, rather than carrying a guess.</li>
+        <li>
+          Every filled area can be undone in one action, and a filled outline is only kept when the traced
+          shape agrees with the area the plan itself prints.
+        </li>
+        <li>
+          The privacy claim is written narrowly on purpose. The honest sentence is that a drawing is never
+          sent to a third party; on this site it is posted to this site's own server so it can be parsed
+          faster, in memory, not stored. "Nothing is uploaded" would have been simpler and less true, so it is
+          not used anywhere on this site.
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>Honest limits</h2>
+      <ul>
+        <li>
+          <strong>Open-plan sheets are the hard case.</strong> When one closed outline contains many room
+          names &mdash; typical of an open office floor &mdash; the tool declines to split it. Auto-fill is
+          about 38&nbsp;% on the sample office sheet, and above 60&nbsp;% on an enclosed house plan; the rest is
+          manual, by design.
+        </li>
+        <li>
+          <strong>The drawing scale is still the user's to confirm.</strong> Areas depend on the scale printed
+          on the sheet (1:100 by default). If a PDF was rescaled after export, areas are wrong by the square of
+          that error. There is no two-point calibration tool yet &mdash; that is the next real improvement.
+        </li>
+        <li>
+          <strong>The method is handbook-level</strong> (simplified ASHRAE / Carrier E-20 style), for study
+          and checking. It is not a substitute for a full design package, and a qualified engineer must verify
+          every number.
+        </li>
+        <li><strong>Imperial sheets have not yet been tested on a real US drawing</strong>, only on constructed cases.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>Under the hood</h2>
+      <p>
+        A static site with no build step: plain HTML, ES modules and CSS, with pdf.js vendored so the app has
+        no runtime dependency on a CDN. The calculation, the tracer and the unit rules are pure modules with
+        their own Node test suites; the drawing surface keeps geometry in PDF points. It is deployed on AWS
+        (S3 behind CloudFront, with a small function for optional server-side parsing) inside the free tier,
+        and guarded by roughly 220 browser checks and 19 Node suites that run before every deploy &mdash;
+        including checks that the wording on the site never over-claims.
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap prose">
+      <h2>About the work, and what I am looking for</h2>
+      <p>
+        I am <strong>Ratul S</strong>, an MEP / HVAC drafter and modeller working with Kerala and Gulf
+        projects. LoadLens is what happens when the day job's bottleneck meets the ability to write software:
+        building-services engineering, with a working product built around it.
+      </p>
+      <p>
+        I am looking for a role where both halves are useful &mdash; building-services / HVAC design or BIM,
+        building performance, or engineering at a company that builds software for buildings. The app is public
+        so it can be tested in thirty seconds, and the source is open.
+      </p>
+      <p class="small muted">
+        Contact and code: <a href="https://github.com/ratul-sraj">github.com/ratul-sraj</a> &middot;
+        the live tool: <a href="app.html">loadlens.net</a>.
+        <!-- TODO (Ratul): add a professional email or LinkedIn here when you want one public. -->
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div>
+      <h3>LoadLens</h3>
+      <p class="small"><a href="https://loadlens.net/">LoadLens &mdash; loadlens.net</a></p>
+      <p class="small"><a href="index.html">Home</a></p>
+    </div>
+    <div>
+      <h3>Pages</h3>
+      <ul>
+        <li><a href="app.html">Calculator</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="case-study.html">Case study</a></li>
+        <li><a href="method.html">Method and assumptions</a></li>
+        <li><a href="help.html">Help / FAQ</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Project</h3>
+      <ul>
+        <li><a href="https://github.com/ratul-sraj/hvac">Source on GitHub</a></li>
+        <li><a href="https://github.com/ratul-sraj/hvac">Report an issue</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap footer-bottom">
+    Simplified ASHRAE / Carrier E-20 style cooling load estimate.
+    <strong>For study and checking only &mdash; a qualified HVAC engineer must verify every number.</strong>
+    &middot; Your PDF is never sent to a third party: it is parsed in your browser, or &mdash; on loadlens.net &mdash; posted to this site's own server so it can be read faster; it is not stored and nothing from it is logged.
+  </div>
+</footer>
+
+<script src="js/nav.js" defer></script>
+</body>
+</html>
