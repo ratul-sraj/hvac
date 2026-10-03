@@ -98,6 +98,14 @@ else
     cp -r "$item" "$STAGE_DIR/" && COPIED=$((COPIED + 1))
   done
   [ "$COPIED" -gt 0 ] || die "nothing to upload — are you in the right repository?"
+  # The IndexNow key file is served at the site root, so Bing can verify the submission by fetching it.
+  # It is public by design: the key proves we control the host, it is not a credential.
+  if [ -f "$REPO_ROOT/a538267c22d3d06f0d9dda2d2e87746e.txt" ]; then
+    cp "$REPO_ROOT/a538267c22d3d06f0d9dda2d2e87746e.txt" "$STAGE_DIR/" || log_warn "could not copy the IndexNow key file"
+  else
+    log_warn "missing a538267c22d3d06f0d9dda2d2e87746e.txt - IndexNow will not be able to verify submissions"
+  fi
+
   # .nojekyll is a GitHub Pages artefact and meaningless on S3; not copied.
   log_ok "staged $COPIED item(s)"
 
