@@ -962,6 +962,46 @@ function shapeNote(raw) {
     : "&middot; outline traced from the drawing (the area is the plan's stated area)";
 }
 
+/**
+ * The shape's LINK, shown in a room's load breakdown when that room carries geometry from the plan.
+ * The link is otherwise invisible: a drawn room simply IS a table row, so if the wrong row was picked
+ * when the shape was closed, nothing on screen says so and there is no way back. This names the row the
+ * shape belongs to and offers the two corrections people actually need - move the shape to another row,
+ * or take the shape off this row and keep the room as a typed one.
+ */
+function shapeLinkBlock(raw) {
+  if (!raw || !Array.isArray(raw.poly) || raw.poly.length <= 2) return '';
+  const others = state.rooms.filter((x) => x.id !== raw.id);
+  const name = esc(raw.name || 'Room');
+  const lv = esc((raw.level || '').trim());
+  const area = Number(raw.area);
+  const where = `this row ("${name}"${lv ? ` \u00b7 ${lv}` : ''}` +
+    `${Number.isFinite(area) && area > 0 ? ` \u00b7 ${fmt(area, 1)} m²` : ''})`;
+  if (!others.length) {
+    return `<div class="bd-link"><h3>Shape on the drawing</h3>` +
+      `<p>This shape is linked to ${where}. There is no other room to link it to yet.</p></div>`;
+  }
+  return `<div class="bd-link">
+      <h3>Shape on the drawing</h3>
+      <p>This shape belongs to ${where}. If that is the wrong room, move it &mdash; the shape and its
+        area go to the row you choose.</p>
+      <div class="bd-link-controls">
+        <label class="muted small" for="bdShapeTarget">Link the shape to</label>
+        <select id="bdShapeTarget">${others.map((x) => {
+          const n = normalizeRoom(x, state.project);
+          const a = Number(n.area);
+          const label = `${n.name || 'Room'}${n.level ? ` (${n.level})` : ''}`
+            + (Number.isFinite(a) && a > 0 ? ` \u00b7 ${fmt(a, 1)} m²` : ' \u00b7 no area');
+          return `<option value="${esc(x.id)}">${esc(label)}</option>`;
+        }).join('')}</select>
+        <button type="button" class="btn btn-small" id="bdShapeMove">Move the shape</button>
+        <button type="button" class="btn btn-small btn-ghost" id="bdShapeDetach">Remove the shape from this row</button>
+      </div>
+      <p class="muted small">Moving the shape gives the other row this shape and its area, and the load
+        changes with it. Removing it leaves this row with the area you can type yourself.</p>
+    </div>`;
+}
+
 function defaultText(key, rn) {
   switch (key) {
     case 'area': return rn.area ? fmt(rn.area, 2) : '';
@@ -1222,6 +1262,7 @@ function renderDetail(calc) {
       <div><div class="k">SHF</div><div class="v">${fmt(r.shf, 2)}</div></div>
       <div><div class="k">Area / tonne</div><div class="v">${fmtValue(areaPerTr(m2PerTr(room.area, r.tr), sys), 0)} ${areaPerTrUnit(sys)}</div></div>
     </div>
+    ${shapeLinkBlock(state.rooms[idx])}
     ${body}
     <div class="bd-row bd-total-row">
       <div class="lbl">Total cooling load</div>
@@ -1234,6 +1275,17 @@ function renderDetail(calc) {
       "Safety factor" is the extra allowance on the room sensible and latent heat
       (${fmt(state.project.safety, 0)}% in the project settings).
     </p>`;
+
+  const moveBtn = el.detailBody.querySelector('#bdShapeMove');
+  if (moveBtn) {
+    moveBtn.dataset.wired = '1';
+    moveBtn.addEventListener('click', () => {
+      const sel = el.detailBody.querySelector('#bdShapeTarget');
+      if (sel && sel.value) planMoveShapeTo(state.ui.openId, sel.value);
+    });
+  }
+  const detachBtn = el.detailBody.querySelector('#bdShapeDetach');
+  if (detachBtn) detachBtn.addEventListener('click', () => planDetachShape(state.ui.openId));
 }
 
 /** Open a room's load breakdown.
@@ -1975,6 +2027,11 @@ function planHintText() {
   // An IN-PROGRESS shape comes first: the user is mid-gesture, and until now the hint kept describing
   // the tool in general. Clicking a corner changed nothing on screen, so the polygon tool looked
   // broken and only the drag (rectangle) felt like it worked.
+  if (pendingShape) {
+    return 'Shape drawn and still outlined on the drawing — choose which room it is above, then press ' +
+      '"Set the shape". Leaving it on "(new room)" adds it as a new room; picking an existing row gives ' +
+      'that room this shape and area, and its load changes with it.';
+  }
   if (state.ui.planMode !== 'select' && plan.overlay && typeof plan.overlay.hasDraft === 'function'
       && plan.overlay.hasDraft()) {
     const n = (typeof plan.overlay.draftCount === 'function') ? plan.overlay.draftCount() : 0;
@@ -2961,7 +3018,13 @@ function planDrawShape(ring, info) {
   // before the new one takes the chooser.
   if (pendingShape) planCommitShape(null);
   pendingShape = { ring: roundRing(ring), page };
+  // The overlay threw its draft away when the shape closed, so hand it back as a PENDING ring: the user
+  // has to pick which room this shape belongs to, and choosing blind is how the wrong room gets sized.
+  if (plan.overlay && typeof plan.overlay.setPendingRing === 'function') {
+    plan.overlay.setPendingRing(pendingShape.ring, pendingShape.page);
+  }
   planShowShapeChooser();
+  planSync();   // the hint must describe the CHOICE now, not the drawing tool
 }
 
 /** Fill and show the "This shape is room:" chooser near the plan. */
@@ -2996,6 +3059,10 @@ function planCommitShape(roomId) {
   const shape = pendingShape;
   pendingShape = null;
   planHideShapeChooser();
+  // The choice is made: the ring is now the room's own geometry (drawn as a normal room) or it is gone,
+  // so the pending preview must not linger.
+  if (plan.overlay && typeof plan.overlay.clearPendingRing === 'function') plan.overlay.clearPendingRing();
+  planSync();
   const room = roomId ? roomById(roomId) : null;
   if (room) {
     const before = Number(normalizeRoom(room, state.project).area) || 0;
@@ -3014,6 +3081,69 @@ function planCommitShape(roomId) {
     return;
   }
   planCreateShapeRoom(shape);
+}
+
+/**
+ * Take the shape off a row, leaving the room as a plain typed one. The area cannot stay as if the shape
+ * were still there: an area that came from the drawing goes back to "unknown" so the load stops counting
+ * a figure nothing supports.
+ */
+function planDetachShape(roomId) {
+  const room = roomById(roomId);
+  if (!room || !Array.isArray(room.poly)) return;
+  const wasFromDrawing = !!(room.areaFromDrawing || room.source === 'drawn');
+  const oldArea = Number(room.area);
+  delete room.poly;
+  delete room.polyPage;
+  delete room.rect;
+  delete room.areaFromDrawing;
+  delete room.areaSource;
+  room.source = 'manual';
+  if (wasFromDrawing) { room.area = null; room.areaUnknown = true; }
+  renderAll();
+  saveNow();
+  setStatus('ok', `The shape was removed from ${room.name || 'the room'}. ` +
+    (wasFromDrawing
+      ? `Its area was the drawn shape, so it now counts as unknown and is left out of the load until you type one.`
+      : `It keeps the area you typed (${fmt(oldArea, 1)} m²).`) +
+    ` Choose Draw shape to draw it again if that was a mistake.`, 'plan');
+}
+
+/**
+ * Move a row's shape onto another row - the correction for picking the wrong room when the shape closed.
+ * The receiving row gets the shape, its area and its load; the giving row keeps its own data but stops
+ * claiming an area the shape was providing.
+ */
+function planMoveShapeTo(fromId, toId) {
+  const from = roomById(fromId);
+  const to = toId ? roomById(toId) : null;
+  if (!from || !to) return;
+  if (from.id === to.id) return;
+  if (!Array.isArray(from.poly) || from.poly.length <= 2) return;
+  const ring = from.poly.map((p) => ({ x: p.x, y: p.y }));
+  const page = from.polyPage;
+  const denom = roomDenom(from);
+  const wasFromDrawing = !!(from.areaFromDrawing || from.source === 'drawn');
+  const toHadShape = !!((to.poly && to.poly.length > 2) || to.rect);
+  const toOldArea = Number(normalizeRoom(to, state.project).area);
+
+  planDetachShape(fromId);          // the giving row stops claiming the shape (and says nothing yet)
+  to.source = 'drawn';
+  to.scaleDenom = denom;
+  setRoomRing(to, ring, page);
+  to.area = drawnPolyArea(to);
+  to.areaFromDrawing = true;
+  delete to.areaUnknown;
+  renderAll();
+  saveNow();
+  setStatus('ok', `The drawn shape now belongs to ${to.name || 'the room'}` +
+    `${to.level ? ` (${to.level})` : ''}: its area is ${fmt(to.area, 1)} m² and the load uses it. ` +
+    (toHadShape ? `Its previous shape was replaced. ` : '') +
+    `${from.name || 'The other room'} ` +
+    (wasFromDrawing ? 'had its area from this shape, so its area is now unknown and it is out of the load.'
+                    : `keeps the area you typed (${fmt(toOldArea, 1)} m²).`), 'plan');
+  planSelectRoom(to);
+  openDetail(to.id, { keepView: true });
 }
 
 /** Create a new room from a ring — the tool's normal behaviour. */
@@ -4037,4 +4167,4 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a) };
+window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a) };

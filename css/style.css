@@ -427,6 +427,18 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .bd-total-row { font-weight: 700; border-top: 1px solid var(--line); padding-top: 5px; margin-top: 5px; }
 .bd-note { font-size: 12px; color: var(--ink-soft); margin-top: 10px; }
 
+/* The shape's link to its table row: quiet until you need it, but always visible on a room that
+   carries geometry from the drawing, so the link is never invisible again. */
+.bd-link {
+  margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 6px; background: #f7faf8;
+}
+.bd-link h3 { color: var(--accent-dark); margin-bottom: 6px; }
+.bd-link p { font-size: 13px; margin: 0 0 8px; }
+.bd-link-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.bd-link-controls select { max-width: 280px; }
+.bd-link-controls label { white-space: nowrap; }
+
 /* ---------- footer ---------- */
 .app-footer { border-top: 1px solid var(--line); background: #fff; padding: 12px 0 22px; margin-top: 10px; }
 .app-footer p { margin: 0 0 4px; color: var(--ink-soft); font-size: 13px; }
@@ -673,6 +685,9 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   stroke-dasharray: 5 3;
 }
 .plan-draft-close { fill: none; stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; }
+/* A closed shape waiting for "This shape is room:" — stays on screen while the choice is made, so the
+   user can see what they are assigning. */
+.plan-pending-ring { fill: var(--accent); fill-opacity: .14; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 7 4; pointer-events: none; }
 .plan-vertex { fill: #fff; stroke: var(--accent); stroke-width: 1.5; }
 .plan-vertex.is-first { fill: var(--accent); }
 .plan-vertex.is-close { fill: #ff8a00; stroke: #ff8a00; }

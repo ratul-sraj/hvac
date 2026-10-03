@@ -689,6 +689,9 @@ export function createOverlay(rootEl, {
     draftG.replaceChildren();
     if (destroyed) return;
     if (shapeDraft) { renderShapeDraft(vp); return; }
+    // A closed shape still waiting for the app's choice stays visible, so the user can see exactly what
+    // they are assigning to a room.
+    if (pendingRing && pendingRing.page === (safeCall(getPage) ?? 1)) renderPendingRing(vp);
     if (!draft) return;
     const rect = rectOf(draft);
     if (!rect) return;
@@ -729,6 +732,18 @@ export function createOverlay(rootEl, {
    *  cursor, a dashed line showing where clicking the first vertex would close the ring, the vertex
    *  squares, and the live shoelace area (computed through the SAME points→m² conversion the placed
    *  rectangles use, see polyAreaM2). */
+  /** The closed ring awaiting the app's "which room is this?" choice. Dashed and slightly stronger than
+   *  the live draft, so it reads as a finished boundary rather than something still being drawn. */
+  function renderPendingRing(vp) {
+    const view = pendingRing.ring.map((p) => pdfPointToView(vp, p));
+    if (view.length < 3) return;
+    const poly = document.createElementNS(SVG_NS, 'polygon');
+    poly.setAttribute('class', 'plan-pending-ring');
+    poly.setAttribute('points', view.map((p) => `${num(p.x)},${num(p.y)}`).join(' '));
+    poly.setAttribute('vector-effect', 'non-scaling-stroke');
+    draftG.appendChild(poly);
+  }
+
   function renderShapeDraft(vp) {
     const pts = shapeDraft.pts;
     const cursor = shapeDraft.cursorView || null;
@@ -1349,10 +1364,29 @@ export function createOverlay(rootEl, {
     render();
   }
 
+  /** A CLOSED shape the app is asking about ("This shape is room:"). The draft is gone by then, so
+   *  without this the user chooses a room while the shape they just drew has vanished from the screen -
+   *  they cannot check what they are assigning. Kept by the app, drawn by the overlay. */
+  let pendingRing = null;   // { ring:[{x,y}], page } | null
+
   /** Is a 'Draw shape' polygon being drawn right now? The app checks this so its own Escape handling
    *  (close the report / the room breakdown) never fights the in-progress shape. */
   function hasDraft() {
     return !!shapeDraft;
+  }
+
+  /** Show a closed shape the app is asking about, or take it off the screen. */
+  function setPendingRing(ring, page) {
+    pendingRing = (Array.isArray(ring) && ring.length >= 3)
+      ? { ring: ring.map((p) => ({ x: p.x, y: p.y })), page: page != null ? page : (safeCall(getPage) ?? 1) }
+      : null;
+    render();
+  }
+
+  function clearPendingRing() {
+    if (!pendingRing) return;
+    pendingRing = null;
+    render();
   }
 
   /** How many corners the in-progress shape has (0 when none). The app shows this as a live count:
@@ -1393,5 +1427,8 @@ export function createOverlay(rootEl, {
   svg.classList.toggle('is-select', mode === 'select');
   resize();
 
-  return { render, setMode, resize, destroy, hasDraft, draftCount, el: svg };
+  return {
+    render, setMode, resize, destroy, hasDraft, draftCount, el: svg,
+    setPendingRing, clearPendingRing,
+  };
 }

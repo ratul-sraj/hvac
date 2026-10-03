@@ -2688,6 +2688,18 @@ if (!sampleMissing) {
   });
   ok("finishing a shape asks which room it is (the chooser appears)", chooserOpen, `chooser ${chooserOpen}`);
 
+  // While the chooser is open the drawn shape must STAY on the drawing: choosing which room it belongs
+  // to while the shape has vanished is how the wrong room gets sized.
+  const pendingOnScreen = await page.evaluate(() => ({
+    rings: document.querySelectorAll(".plan-pending-ring").length,
+    points: (document.querySelector(".plan-pending-ring") || {}).getAttribute
+      ? document.querySelector(".plan-pending-ring").getAttribute("points") : "",
+    hint: ((document.querySelector("#planHint") || {}).textContent || "").slice(0, 90),
+  }));
+  ok("the drawn shape stays outlined while you choose which room it is",
+      pendingOnScreen.rings >= 1 && /\S,\S/.test(pendingOnScreen.points || ""),
+      `${pendingOnScreen.rings} outline(s) | ${pendingOnScreen.hint}`);
+
   await page.evaluate(() => {
     const b = document.querySelector("#planShapeAssignGo");
     if (b) b.click();
@@ -2703,19 +2715,70 @@ if (!sampleMissing) {
     return inp ? Number(inp.value) : 0;
   });
   ok("the drawn room carries a real area from the shape's own ring", drawnArea > 1, `${drawnArea} m2`);
+  const pendingGone = await page.evaluate(() => document.querySelectorAll(".plan-pending-ring").length);
+  ok("the pending outline is gone once the choice is made", pendingGone === 0, `${pendingGone} left`);
 
   // Committing a shape deliberately switches the tool to Select / edit (so the new geometry can be
   // reshaped), so a plain drag right after it would select, not draw. The user must choose Draw shape
-  // again - and the app must SAY so, which is what this asserts.
+  // again - and the app must SAY so. Asserted HERE, while the status still carries the commit message:
+  // the checks below act on the shape and overwrite the status line.
   const modeAfterShape = await page.evaluate(() => {
     const r = document.querySelector("#planModeSelect");
-    // The sentence lives in the STATUS line; #planHint switches to the Select-mode instructions.
     const s = document.querySelector(".plan-status, #planStatus, .status");
     return { selectChecked: !!(r && r.checked), status: s ? s.innerText : "" };
   });
   ok("committing a shape says the tool moved to Select / edit",
       modeAfterShape.selectChecked && /Select \/ edit/.test(modeAfterShape.status),
-      `${modeAfterShape.selectChecked ? "select mode" : "NOT switched"} | ${modeAfterShape.status.replace(/\s+/g, " ").slice(0, 130)}`);
+      `${modeAfterShape.selectChecked ? "select mode" : "NOT switched"} | ${modeAfterShape.status.replace(/\s+/g, " ").slice(0, 120)}`);
+
+  // The shape's link to its row must be visible and correctable: drawing a shape opens the new room's
+  // breakdown, so the control is right there. Picking the wrong row at the chooser was previously
+  // unfixable - the link existed only in the data.
+  const linkShown = await page.evaluate(() => {
+    const el = document.querySelector(".bd-link");
+    return el ? { text: el.innerText.replace(/\s+/g, " "), options: document.querySelectorAll("#bdShapeTarget option").length } : null;
+  });
+  ok("a room with a drawn shape shows which row the shape belongs to",
+      !!linkShown && /belongs to/.test(linkShown.text), linkShown ? linkShown.text.slice(0, 110) : "no link block");
+  ok("the link control lists the other rooms", !!linkShown && linkShown.options > 3,
+      `${linkShown ? linkShown.options : 0} option(s)`);
+
+  const moveTarget = await page.evaluate(() => {
+    const sel = document.querySelector("#bdShapeTarget");
+    if (!sel) return null;
+    const opt = [...sel.options].find((o) => !/Drawn room/.test(o.textContent));
+    sel.value = opt.value;
+    return { id: opt.value, label: opt.textContent.trim() };
+  });
+  await page.evaluate(() => { const b = document.querySelector("#bdShapeMove"); if (b) b.click(); });
+  await new Promise((r) => setTimeout(r, 1000));
+  const moved = await page.evaluate((id) => {
+    const rooms = window.webhvac.state.rooms;
+    const to = rooms.find((r) => r.id === id);
+    const status = ((document.querySelector(".plan-status,#planStatus,.status") || {}).innerText || "").replace(/\s+/g, " ");
+    return {
+      reported: /now belongs to/.test(status),
+      toHasShape: !!(to && Array.isArray(to.poly) && to.poly.length > 2),
+      toArea: to ? Number(to.area) : 0,
+      strayDrawn: rooms.filter((r) => /^Drawn room/.test(r.name) && Array.isArray(r.poly)).length,
+      status: status.slice(0, 150),
+    };
+  }, moveTarget ? moveTarget.id : "");
+  ok("the shape can be moved to another row from the breakdown",
+      moved.reported && moved.toHasShape && moved.toArea > 1,
+      `${moveTarget ? moveTarget.label : "?"} -> area ${moved.toArea} | ${moved.status}`);
+  ok("the row the shape left stops claiming it", moved.strayDrawn === 0, `${moved.strayDrawn} stray shape(s)`);
+
+  // ... and the shape can be taken off a row entirely.
+  await page.evaluate(() => { const b = document.querySelector("#bdShapeDetach"); if (b) b.click(); });
+  await new Promise((r) => setTimeout(r, 900));
+  const detached = await page.evaluate((id) => {
+    const to = window.webhvac.state.rooms.find((r) => r.id === id);
+    const status = ((document.querySelector(".plan-status,#planStatus,.status") || {}).innerText || "").replace(/\s+/g, " ");
+    return { ringGone: !(to && Array.isArray(to.poly)), said: /shape was removed/i.test(status), status: status.slice(0, 130) };
+  }, moveTarget ? moveTarget.id : "");
+  ok("a shape can be removed from a row, and the room stops claiming its area",
+      detached.ringGone && detached.said, detached.status);
 
   await page.click("#planModeShape");
   await new Promise((r) => setTimeout(r, 400));
