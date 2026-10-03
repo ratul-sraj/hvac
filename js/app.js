@@ -187,6 +187,8 @@ const el = {
   planShapeAssignGo: $('#planShapeAssignGo'),
   planShapeAssignClose: $('#planShapeAssignClose'),
   planHint: $('#planHint'),
+  planShapeLink: $('#planShapeLink'), planShapeLinkName: $('#planShapeLinkName'),
+  planLinkTarget: $('#planLinkTarget'), planLinkMove: $('#planLinkMove'), planLinkDetach: $('#planLinkDetach'),
   planStatus: $('#planStatus'),
   planScaleFix: $('#planScaleFix'),
   projectPanel: $('#projectPanel'),
@@ -969,14 +971,48 @@ function shapeNote(raw) {
  * shape belongs to and offers the two corrections people actually need - move the shape to another row,
  * or take the shape off this row and keep the room as a typed one.
  */
+/** The rows a shape could be linked to, as <option> markup. Shared by the bar under the drawing and the
+ *  block in the load breakdown so the two lists cannot drift apart. */
+function shapeTargetOptions(raw) {
+  return state.rooms.filter((x) => x.id !== raw.id).map((x) => {
+    const n = normalizeRoom(x, state.project);
+    const a = Number(n.area);
+    const label = `${n.name || 'Room'}${n.level ? ` (${n.level})` : ''}`
+      + (Number.isFinite(a) && a > 0 ? ` \u00b7 ${fmt(a, 1)} m\u00b2` : ' \u00b7 no area');
+    return `<option value="${esc(x.id)}">${esc(label)}</option>`;
+  }).join('');
+}
+
+/** The one short sentence naming the row a shape belongs to. */
+function shapeOwnerLabel(raw) {
+  const lv = (raw.level || '').trim();
+  const area = Number(raw.area);
+  return `${raw.name || 'Room'}${lv ? ` (${lv})` : ''}` +
+    (Number.isFinite(area) && area > 0 ? ` \u00b7 ${fmt(area, 1)} m\u00b2` : '');
+}
+
+/**
+ * The shape's link, mirrored UNDER THE DRAWING for the selected room. The same control exists in the
+ * room's load breakdown, but that sits far below the plan, and the moment the link matters is the moment
+ * the user is looking at the shape - they should not have to scroll away from it and back.
+ */
+function renderPlanShapeLink() {
+  if (!el.planShapeLink) return;
+  const raw = state.rooms.find((r) => r.id === state.ui.openId) || null;
+  const hasShape = !!(raw && Array.isArray(raw.poly) && raw.poly.length > 2);
+  if (!hasShape) { el.planShapeLink.classList.add('hidden'); return; }
+  const others = state.rooms.filter((x) => x.id !== raw.id);
+  el.planShapeLinkName.textContent = shapeOwnerLabel(raw);
+  el.planLinkTarget.innerHTML = others.length ? shapeTargetOptions(raw) : '<option value="">(no other room)</option>';
+  el.planLinkTarget.disabled = !others.length;
+  if (el.planLinkMove) el.planLinkMove.disabled = !others.length;
+  el.planShapeLink.classList.remove('hidden');
+}
+
 function shapeLinkBlock(raw) {
   if (!raw || !Array.isArray(raw.poly) || raw.poly.length <= 2) return '';
   const others = state.rooms.filter((x) => x.id !== raw.id);
-  const name = esc(raw.name || 'Room');
-  const lv = esc((raw.level || '').trim());
-  const area = Number(raw.area);
-  const where = `this row ("${name}"${lv ? ` \u00b7 ${lv}` : ''}` +
-    `${Number.isFinite(area) && area > 0 ? ` \u00b7 ${fmt(area, 1)} m²` : ''})`;
+  const where = `this row ("${esc(shapeOwnerLabel(raw))}")`;
   if (!others.length) {
     return `<div class="bd-link"><h3>Shape on the drawing</h3>` +
       `<p>This shape is linked to ${where}. There is no other room to link it to yet.</p></div>`;
@@ -987,13 +1023,7 @@ function shapeLinkBlock(raw) {
         area go to the row you choose.</p>
       <div class="bd-link-controls">
         <label class="muted small" for="bdShapeTarget">Link the shape to</label>
-        <select id="bdShapeTarget">${others.map((x) => {
-          const n = normalizeRoom(x, state.project);
-          const a = Number(n.area);
-          const label = `${n.name || 'Room'}${n.level ? ` (${n.level})` : ''}`
-            + (Number.isFinite(a) && a > 0 ? ` \u00b7 ${fmt(a, 1)} m²` : ' \u00b7 no area');
-          return `<option value="${esc(x.id)}">${esc(label)}</option>`;
-        }).join('')}</select>
+        <select id="bdShapeTarget">${shapeTargetOptions(raw)}</select>
         <button type="button" class="btn btn-small" id="bdShapeMove">Move the shape</button>
         <button type="button" class="btn btn-small btn-ghost" id="bdShapeDetach">Remove the shape from this row</button>
       </div>
@@ -1286,6 +1316,10 @@ function renderDetail(calc) {
   }
   const detachBtn = el.detailBody.querySelector('#bdShapeDetach');
   if (detachBtn) detachBtn.addEventListener('click', () => planDetachShape(state.ui.openId));
+
+  // The bar under the drawing mirrors this room's link, so it is updated in the same place the breakdown
+  // is - there is no second source of truth for which room is "open".
+  renderPlanShapeLink();
 }
 
 /** Open a room's load breakdown.
@@ -1304,6 +1338,7 @@ function openDetail(id, opts) {
 
 function closeDetail() {
   state.ui.openId = null;
+  if (typeof renderPlanShapeLink === 'function') renderPlanShapeLink();   // hide the bar under the plan
   el.detailPanel.classList.add('hidden');
   el.roomsBody.querySelectorAll('tr').forEach((tr) => tr.classList.remove('selected'));
 }
@@ -3748,6 +3783,14 @@ async function openPlan(bytes, opts) {
         onDelete: planDeleteRoom,
       });
       if (plan.overlay.setMode) planSetMode(state.ui.planMode);   // also syncs the mode radios
+  if (el.planLinkMove) {
+    el.planLinkMove.addEventListener('click', () => {
+      if (el.planLinkTarget && el.planLinkTarget.value) planMoveShapeTo(state.ui.openId, el.planLinkTarget.value);
+    });
+  }
+  if (el.planLinkDetach) {
+    el.planLinkDetach.addEventListener('click', () => planDetachShape(state.ui.openId));
+  }
       planWire();
     }
     const info = await plan.viewer.load(own);

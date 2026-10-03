@@ -328,6 +328,19 @@
     <div id="planView" class="plan-view"></div>
     <p id="planHint" class="muted small plan-hint" aria-live="polite"></p>
 
+    <!-- Which table row the SELECTED room's shape belongs to, and the two corrections (move the shape to
+         another row, or take the shape off this row). Kept right under the drawing on purpose: the same
+         control also sits in the room's load breakdown, but that is a long scroll below the plan, and
+         this is the moment you are looking at the shape. -->
+    <div id="planShapeLink" class="plan-shape-link hidden" role="group" aria-labelledby="planShapeLinkHead">
+      <span id="planShapeLinkHead">Shape on the drawing — belongs to</span>
+      <strong id="planShapeLinkName"></strong>
+      <label class="muted small" for="planLinkTarget">Move it to</label>
+      <select id="planLinkTarget" aria-label="Which room should this shape belong to"></select>
+      <button type="button" class="btn btn-small" id="planLinkMove">Move the shape</button>
+      <button type="button" class="btn btn-small btn-ghost" id="planLinkDetach">Remove the shape from this row</button>
+    </div>
+
     <!-- Which drawing you are looking at. The sample is somebody else's drawing, used under its
          licence, so we name it and link the licence here in the plan panel. Fuller credit:
          about.html#sample-credit and docs/SAMPLE-CREDITS.md. -->

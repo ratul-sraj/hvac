@@ -2734,6 +2734,23 @@ if (!sampleMissing) {
   // The shape's link to its row must be visible and correctable: drawing a shape opens the new room's
   // breakdown, so the control is right there. Picking the wrong row at the chooser was previously
   // unfixable - the link existed only in the data.
+  // The same control must also be reachable from the DRAWING: the breakdown is a long scroll below the
+  // plan, and the moment the link matters is the moment the shape is on screen.
+  const bar = await page.evaluate(() => {
+    const el = document.querySelector("#planShapeLink");
+    if (!el || el.classList.contains("hidden")) return null;
+    const plan = document.querySelector("#planView").getBoundingClientRect();
+    const br = el.getBoundingClientRect();
+    return {
+      gap: Math.round(br.top - plan.bottom),
+      text: el.innerText.replace(/\s+/g, " "),
+      options: document.querySelectorAll("#planLinkTarget option").length,
+    };
+  });
+  ok("a link bar sits directly under the drawing for the selected shape",
+      !!bar && bar.gap >= 0 && bar.gap < 220, bar ? `${bar.gap}px below the plan | ${bar.text.slice(0, 90)}` : "no bar");
+  ok("the bar lists the other rooms to link to", !!bar && bar.options > 3, `${bar ? bar.options : 0} option(s)`);
+
   const linkShown = await page.evaluate(() => {
     const el = document.querySelector(".bd-link");
     return el ? { text: el.innerText.replace(/\s+/g, " "), options: document.querySelectorAll("#bdShapeTarget option").length } : null;
