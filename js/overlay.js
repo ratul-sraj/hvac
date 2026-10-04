@@ -206,6 +206,11 @@ const PLACED_MARKER_LIMIT = 40;
 const PLACED_MARKER_MIN_PX = 14;
 /** Diamond radius in view pixels — fixed, so a marker stays the same clickable size at every zoom. */
 const MARKER_PX = 9;
+/** The FOCUS POINTER for a SELECTED room that has NO drawn boundary — a room read from a PDF label
+ *  carries only `at`, the point the sheet names it, and no ring/rect. It is a pointer, not a
+ *  measurement: a dashed ring (radius, view px) plus a crosshair arm length (view px). */
+const FOCUS_RING_PX = 9;
+const FOCUS_CROSS_PX = 13;
 
 /* --- 'Draw shape' (a hand-drawn polygon) --------------------------------------------------------- */
 /** Click within this many view pixels of the FIRST vertex closes the shape. */
@@ -684,6 +689,73 @@ export function createOverlay(rootEl, {
     return g;
   }
 
+  /** The SELECTED room when it is NOT one the shapes loop drew: a room that carries a label position
+   *  (`at`, PDF space, y up) on the CURRENT page — the case that needs the focus pointer because there
+   *  is no ring or rect to outline. Null when the room is not on this page or has no usable `at`. */
+  function focusRoomOnPage(rooms, selectedId, page) {
+    for (const room of rooms || []) {
+      if (!room || String(room.id) !== String(selectedId)) continue;
+      const at = room.at;
+      if (!at || !Number.isFinite(Number(at.x)) || !Number.isFinite(Number(at.y))) return null;
+      // room.page, then at.page, defaulting to 1 — the same page rule the app stores the room on.
+      const n = Number(room.page != null ? room.page : (at.page != null ? at.page : 1));
+      return (Number.isFinite(n) ? n : 1) === page ? room : null;
+    }
+    return null;
+  }
+
+  /** The FOCUS POINTER <g class="plan-room plan-focus">: a dashed ring, a small crosshair and the room
+   *  name, at `pt` (the view-pixel point the sheet names the room). Presentational only — CSS gives it
+   *  pointer-events:none — so it is never a drawing target, and it is deliberately NOT part of
+   *  shapesOnPage()/roomAtPointShaped(), so no existing shape or gesture is affected. Its shape reads
+   *  as a pointer (a dashed ring + crosshair), not as a measured boundary. */
+  function focusShape(room, pt, page) {
+    const g = document.createElementNS(SVG_NS, 'g');
+    const excluded = room.include === false;
+    g.setAttribute('class', 'plan-room plan-focus' + (excluded ? ' is-excluded' : ' is-included'));
+    g.setAttribute('data-shape', 'focus');
+    g.setAttribute('data-room-id', room.id == null ? '' : String(room.id));
+    g.setAttribute('data-page', String(page));
+    g.setAttribute('data-selected', 'true');
+
+    // A soft halo circle (pulses in CSS) behind the crisp dashed ring.
+    const halo = document.createElementNS(SVG_NS, 'circle');
+    halo.setAttribute('class', 'plan-focus-halo');
+    halo.setAttribute('cx', num(pt.x));
+    halo.setAttribute('cy', num(pt.y));
+    halo.setAttribute('r', num(FOCUS_RING_PX));
+    g.appendChild(halo);
+
+    const ring = document.createElementNS(SVG_NS, 'circle');
+    ring.setAttribute('class', 'plan-focus-ring');
+    ring.setAttribute('cx', num(pt.x));
+    ring.setAttribute('cy', num(pt.y));
+    ring.setAttribute('r', num(FOCUS_RING_PX));
+    ring.setAttribute('vector-effect', 'non-scaling-stroke');
+    g.appendChild(ring);
+
+    const a = FOCUS_CROSS_PX;
+    const cross = document.createElementNS(SVG_NS, 'path');
+    cross.setAttribute('class', 'plan-focus-cross');
+    cross.setAttribute('d',
+      `M ${num(pt.x - a)},${num(pt.y)} L ${num(pt.x + a)},${num(pt.y)} ` +
+      `M ${num(pt.x)},${num(pt.y - a)} L ${num(pt.x)},${num(pt.y + a)}`);
+    cross.setAttribute('vector-effect', 'non-scaling-stroke');
+    g.appendChild(cross);
+
+    const name = String(room.name == null ? '' : room.name).trim();
+    if (name) {
+      const t = document.createElementNS(SVG_NS, 'text');
+      t.setAttribute('class', 'plan-room-label');
+      t.setAttribute('x', num(pt.x));
+      t.setAttribute('y', num(pt.y - FOCUS_RING_PX - 4));
+      t.setAttribute('text-anchor', 'middle');
+      t.textContent = name;
+      g.appendChild(t);
+    }
+    return g;
+  }
+
   /** The rubber band + the live size/area readout. Only drawn while a drag is in progress. */
   function renderDraft(vp) {
     draftG.replaceChildren();
@@ -818,7 +890,9 @@ export function createOverlay(rootEl, {
     for (const s of shapes) if (!s.ring && isPlacedRoom(s.room)) placedOnPage += 1;
     const crowded = placedOnPage >= PLACED_MARKER_LIMIT;
 
+    let selectedDrawn = false;
     for (const { room, ring } of shapes) {
+      if (selectedId != null && String(room.id) === String(selectedId)) selectedDrawn = true;
       const dragging = !!drag && drag.dragged && String(drag.id) === String(room.id);
       if (ring) {
         // A traced outline: every point through the SAME viewport adapter the rectangles use.
@@ -839,6 +913,16 @@ export function createOverlay(rootEl, {
         continue;
       }
       roomsG.appendChild(roomShape(room, box, null, room.id === selectedId, dragging));
+    }
+    // A SELECTED room the loop above did NOT draw still gets marked: a room read from a PDF label
+    // carries only `at` — the point that names it — and no ring or rect, so clicking its table row
+    // used to draw nothing at all. The focus pointer shows WHERE the sheet names the room. It is a
+    // pointer, not a boundary: clearly different from a real shape, pointer-events:none in CSS, and
+    // never added to shapesOnPage()/roomAtPointShaped(), so every existing shape and gesture is
+    // unchanged. A room the loop already drew is skipped (no double outline).
+    if (selectedId != null && !selectedDrawn) {
+      const focusRoom = focusRoomOnPage(safeCall(getRooms) || [], selectedId, page);
+      if (focusRoom) roomsG.appendChild(focusShape(focusRoom, pdfPointToView(vp, focusRoom.at), page));
     }
     renderDraft(vp);
   }

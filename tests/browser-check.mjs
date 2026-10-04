@@ -1236,6 +1236,31 @@ if (!sampleMissing) {
     });
     ok("the chooser names each row by its room number, so rows sharing a name are told apart",
       chooserNos.numbered > 0 && chooserNos.withNo > 0, JSON.stringify(chooserNos));
+    // The pickers list rooms ALPHABETICALLY (name, then number, then level) via one shared helper, so a
+    // long table is not a hunt through sheet order. Compare each option's room by its normalized key.
+    const chooserOrder = await page.evaluate(() => {
+      const sel = document.getElementById("planShapeAssignRoom");
+      const rooms = window.webhvac.state.rooms;
+      const keyOf = (id) => {
+        const r = rooms.find((x) => String(x.id) === String(id));
+        if (!r) return null;
+        const n = window.webhvac.normalizeRoom(r, window.webhvac.state.project);
+        return { name: String(n.name || ""), number: String(n.number == null ? "" : n.number), level: String(n.level || "") };
+      };
+      const items = [...sel.options].slice(1).map((o) => keyOf(o.value)).filter(Boolean);
+      const cmp = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+      let asc = true;
+      for (let k = 1; k < items.length; k += 1) {
+        const a = items[k - 1], b = items[k];
+        const c = cmp(a.name, b.name) || cmp(a.number, b.number) || cmp(a.level, b.level);
+        if (c > 0) { asc = false; break; }
+      }
+      return { count: items.length, asc, first: items[0] && items[0].name,
+        last: items.length ? items[items.length - 1].name : null };
+    });
+    ok("the chooser lists the room rows alphabetically by name, not in sheet order",
+      chooserOrder.asc && chooserOrder.count > 10,
+      `${chooserOrder.count} option(s), "${chooserOrder.first}" .. "${chooserOrder.last}", ascending ${chooserOrder.asc}`);
     await page.click("#planShapeAssignGo");                // "(new room)" is selected: make a new room
     await sleep2(700);
     const shape1 = await newestShape();
@@ -2933,6 +2958,111 @@ if (!sampleMissing) {
   const rowsAfterDragCheck = await page.evaluate(() => document.querySelectorAll("#roomsBody tr").length);
   ok("a drag still adds a plain rectangle", rowsAfterDragCheck > rowsAfterShape,
       `rows ${rowsAfterShape} -> ${rowsAfterDragCheck}`);
+
+  // ---- Clicking a table ROW highlights its room on the plan (label-only rooms included) -----------
+  // A room read from a PDF label carries only `at` (where the sheet names it, PDF space) and no traced
+  // ring or drawn rect, so clicking its table row used to draw nothing at all. It now gets a FOCUS
+  // POINTER at that point: a dashed ring + crosshair + name, pointer-events:none, never a drawing
+  // target. A row whose room already has a drawn/placed shape uses the existing selected outline
+  // instead (no second mark).
+  {
+    // fresh, deterministic state: the synthetic sample with nothing drawn or placed
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.click("#btnSample");
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
+      { timeout: 60000, polling: 400 });
+    await new Promise((r) => setTimeout(r, 1000));
+
+    const pickRow = (wantGeometry) => page.evaluate((want) => {
+      const pageNow = +(document.getElementById("planPage").textContent.trim()) || 1;
+      const rooms = window.webhvac.state.rooms;
+      for (const tr of document.querySelectorAll("#roomsBody tr")) {
+        const r = rooms[+tr.dataset.idx];
+        if (!r) continue;
+        const hasGeom = !!(Array.isArray(r.poly) && r.poly.length > 2)
+          || !!(r.rect && typeof r.rect.x === "number");
+        if (hasGeom === want && Number(r.page != null ? r.page : 1) === pageNow
+            && (want || (r.at && Number.isFinite(r.at.x)))) {
+          return { id: tr.dataset.id, name: r.name };
+        }
+      }
+      return null;
+    }, wantGeometry);
+    // Click a CELL, never an <input>: onTableClick ignores input/select/button/label so the caret can
+    // be placed while editing (clicking the name input does NOT open the row).
+    const clickRowCell = (id) => page.evaluate((rid) => {
+      const tr = document.querySelector(`#roomsBody tr[data-id="${rid}"]`);
+      const cell = tr && (tr.querySelector(".v-total") || tr.querySelector("td"));
+      if (cell) cell.click();
+    }, id);
+
+    const focus = await pickRow(false);
+    ok("a plan-loaded room with a label position but no drawn shape is present in the table",
+      !!focus, focus ? focus.name : "none");
+
+    // (a)+(b) click the row: the breakdown opens AND exactly one focus mark appears for that room
+    await clickRowCell(focus.id);
+    await new Promise((r) => setTimeout(r, 1200));
+    const opened = await page.evaluate((rid) => {
+      const marks = document.querySelectorAll('#planView [data-shape="focus"]');
+      const g = marks[0] || null;
+      const box = g ? g.getBoundingClientRect() : null;
+      const pv = document.getElementById("planView").getBoundingClientRect();
+      return {
+        detailOpen: !document.getElementById("detailPanel").classList.contains("hidden"),
+        openId: window.webhvac.state.ui.openId,
+        count: marks.length,
+        roomId: g ? g.getAttribute("data-room-id") : null,
+        page: g ? g.getAttribute("data-page") : null,
+        selected: g ? g.getAttribute("data-selected") : null,
+        name: g ? (g.textContent || "").trim() : "",
+        onPage: +(document.getElementById("planPage").textContent.trim()),
+        inside: !!box && box.left >= pv.left - 1 && box.right <= pv.right + 1
+          && box.top >= pv.top - 1 && box.bottom <= pv.bottom + 1,
+      };
+    }, focus.id);
+    ok("clicking a room row opens its breakdown and selects that row",
+      opened.detailOpen && opened.openId === focus.id,
+      `openId ${opened.openId}, panel open ${opened.detailOpen}`);
+    ok("exactly one focus mark appears for the row's room, on its page, marked selected",
+      opened.count === 1 && opened.roomId === focus.id && opened.selected === "true"
+        && opened.page === String(opened.onPage) && opened.inside,
+      `${opened.count} mark(s), room ${opened.roomId} page ${opened.page} (on ${opened.onPage}), name "${opened.name}", inside plan ${opened.inside}`);
+
+    // (c) clicking the same row again closes the panel and leaves no mark behind
+    await clickRowCell(focus.id);
+    await new Promise((r) => setTimeout(r, 900));
+    const closed = await page.evaluate(() => ({
+      detailHidden: document.getElementById("detailPanel").classList.contains("hidden"),
+      openId: window.webhvac.state.ui.openId,
+      count: document.querySelectorAll('#planView [data-shape="focus"]').length,
+    }));
+    ok("clicking the row again closes the breakdown and removes the focus mark",
+      closed.detailHidden && closed.openId == null && closed.count === 0,
+      `panel hidden ${closed.detailHidden}, openId ${closed.openId}, ${closed.count} mark(s)`);
+
+    // (d) a room that ALREADY has a drawn/placed shape uses the existing selected outline, not a
+    //     second focus mark (no double outline)
+    await page.click("#planPlaceAll");
+    await new Promise((r) => setTimeout(r, 2500));
+    const placedPick = await pickRow(true);
+    await clickRowCell(placedPick.id);
+    await new Promise((r) => setTimeout(r, 1200));
+    const doubled = await page.evaluate(() => ({
+      focus: document.querySelectorAll('#planView [data-shape="focus"]').length,
+      selected: document.querySelectorAll('#planView .plan-room.is-selected').length,
+    }));
+    ok("a room that already has a drawn shape keeps the existing selected outline, with no focus mark",
+      doubled.focus === 0 && doubled.selected === 1,
+      `${doubled.focus} focus mark(s), ${doubled.selected} selected outline(s)`);
+
+    // leave the project as it was found
+    await page.click("#planPlaceClear");
+    await new Promise((r) => setTimeout(r, 1200));
+  }
 
   // 15. fresh, empty project (UX pass): the quick-start strip is shown, the totals bar is hidden,
   //     the Construction details start closed, and the print/CSV buttons are disabled and say why.

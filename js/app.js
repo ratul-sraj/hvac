@@ -1053,10 +1053,32 @@ function shapeNote(raw) {
  * shape belongs to and offers the two corrections people actually need - move the shape to another row,
  * or take the shape off this row and keep the room as a typed one.
  */
+/** Rooms in the order EVERY picker must list them: alphabetically by room name, then room number, then
+ *  level — case-insensitive and numeric-aware, so "Office 2" comes before "Office 10". One shared sort
+ *  so the chooser after a shape is drawn and the two shape-link lists cannot drift apart. `exclude`
+ *  drops a single row (the shape's current owner) where a list must not offer it. */
+function pickerRooms(exclude) {
+  const keyed = state.rooms
+    .filter((r) => !exclude || r.id !== exclude.id)
+    .map((r) => {
+      const n = normalizeRoom(r, state.project);
+      return {
+        r,
+        name: String(n.name || ''),
+        number: String(n.number == null ? '' : n.number),
+        level: String(n.level || ''),
+      };
+    });
+  const cmp = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  keyed.sort((a, b) => cmp(a.name, b.name) || cmp(a.number, b.number) || cmp(a.level, b.level));
+  return keyed.map((k) => k.r);
+}
+
 /** The rows a shape could be linked to, as <option> markup. Shared by the bar under the drawing and the
- *  block in the load breakdown so the two lists cannot drift apart. */
+ *  block in the load breakdown so the two lists cannot drift apart, and listed ALPHABETICALLY (see
+ *  pickerRooms) so a long table is not a hunt through sheet order. */
 function shapeTargetOptions(raw) {
-  return state.rooms.filter((x) => x.id !== raw.id)
+  return pickerRooms(raw)
     .map((x) => `<option value="${esc(x.id)}">${esc(roomOptionLabel(x))}</option>`).join('');
 }
 
@@ -1453,13 +1475,21 @@ function renderDetail(calc) {
  *  and scrolling down to the breakdown there would yank the sheet out of view after every room they
  *  draw (it looked like the drawing only worked near the top of the page). Clicking a table row still
  *  scrolls to the breakdown, because there the breakdown IS what was asked for. */
-function openDetail(id, opts) {
+async function openDetail(id, opts) {
   state.ui.openId = id;
   el.detailPanel.classList.remove('hidden');
   el.roomsBody.querySelectorAll('tr').forEach((tr) =>
     tr.classList.toggle('selected', tr.dataset.id === id));
   renderDetail(currentCalc());
+  // The overlay draws the selection straight from getSelectedId() (= state.ui.openId), so it has to be
+  // re-rendered here: this is what shows the room's outline, or — for a room that has none on the
+  // sheet — the focus mark at the point that names it.
+  if (plan.overlay) plan.overlay.render();
   if (!(opts && opts.keepView)) el.detailPanel.scrollIntoView({ block: 'nearest' });
+  // A table row click ASKS to see the room, so switch to its page and bring it into view. Never for a
+  // selection made ON the drawing (keepView) — it is already on screen and must not jump. A
+  // schedule-only project (no drawing) is a safe no-op.
+  if (!(opts && opts.keepView)) await planRevealRoom(id);
 }
 
 function closeDetail() {
@@ -1467,6 +1497,72 @@ function closeDetail() {
   if (typeof renderPlanShapeLink === 'function') renderPlanShapeLink();   // hide the bar under the plan
   el.detailPanel.classList.add('hidden');
   el.roomsBody.querySelectorAll('tr').forEach((tr) => tr.classList.remove('selected'));
+  // Re-render so the overlay drops the selected outline / focus mark with the selection itself —
+  // closing must leave nothing behind on the plan.
+  if (plan.overlay) plan.overlay.render();
+}
+
+/** Bring a room on the plan into view after its table row is clicked (the row asks to SEE it). The
+ *  overlay can only outline a room that has geometry; a room read from a PDF label carries just `at`
+ *  (where the sheet names it, PDF space) and gets a focus pointer there. This switches to the room's
+ *  page when it lives on another one, then centres the plan's own scroll box on that point and, only
+ *  when the plan panel is not already on screen, scrolls the window to it. Safe no-op for a
+ *  schedule-only project, and it never throws. */
+async function planRevealRoom(id) {
+  try {
+    if (!plan.viewer || plan.unavailable) return;
+    const room = state.rooms.find((r) => String(r.id) === String(id));
+    if (!room) return;
+    const src = room.at || room.rect || null;
+    const roomPage = Number(room.page != null ? room.page : (src && src.page != null ? src.page : 1));
+    const target = Number.isFinite(roomPage) ? roomPage : 1;
+    if (target !== plan.page) await planGoTo(target);
+    const at = room.at;
+    if (!at || !Number.isFinite(Number(at.x)) || !Number.isFinite(Number(at.y))) return;
+    const vp = plan.viewer.getViewport ? plan.viewer.getViewport() : null;
+    if (!vp || typeof vp.convertToViewportPoint !== 'function') return;
+    // pdfPointToView maps the PDF point into the CANVAS' CSS box — the very space the overlay draws in
+    // (js/overlay.js resize() reads canvas.clientWidth). If a stale viewport ever disagreed with the
+    // canvas' own size, scale the point back to it rather than scrolling to a wrong place.
+    const pt = pdfPointToView(vp, at);
+    const canvas = el.planView.querySelector('canvas');
+    let vx = pt.x, vy = pt.y;
+    if (canvas && vp.width) {
+      const sx = canvas.clientWidth / vp.width;
+      if (Number.isFinite(sx) && sx > 0) vx *= sx;
+    }
+    if (canvas && vp.height) {
+      const sy = canvas.clientHeight / vp.height;
+      if (Number.isFinite(sy) && sy > 0) vy *= sy;
+    }
+    const box = planScrollBox();
+    if (box) {
+      box.scrollLeft = Math.max(0, vx - box.clientWidth / 2);
+      box.scrollTop = Math.max(0, vy - box.clientHeight / 2);
+    }
+    // Bring the plan PANEL into the window only when it is not visible right now; clicking a row must
+    // not yank a page the user is already looking at.
+    const r = el.planView.getBoundingClientRect();
+    const onScreen = el.planView.offsetHeight > 0 && r.bottom > 0 && r.top < window.innerHeight
+      && r.right > 0 && r.left < window.innerWidth;
+    if (!onScreen) el.planView.scrollIntoView({ block: 'center' });
+  } catch (err) {
+    // enhancement only: a plan that cannot be scrolled must never stop a room's breakdown opening
+  }
+}
+
+/** The element a reveal (or a pan) must scroll: the nearest scrollable box at or above #planView —
+ *  the choice js/overlay.js scrollBox() makes, so the two agree (rootEl when there is none). */
+function planScrollBox() {
+  let node = el.planView;
+  for (let i = 0; node && i < 6; i += 1) {
+    const cs = getComputedStyle(node);
+    const scrolls = /(auto|scroll|overlay)/.test(`${cs.overflow}${cs.overflowX}${cs.overflowY}`);
+    const overflow = node.scrollHeight > node.clientHeight + 1 || node.scrollWidth > node.clientWidth + 1;
+    if (scrolls && overflow) return node;
+    node = node.parentElement;
+  }
+  return el.planView;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3250,7 +3346,7 @@ function planDrawShape(ring, info) {
 function planShowShapeChooser() {
   if (!el.planShapeAssign || !pendingShape) return;
   el.planShapeAssignRoom.innerHTML = '<option value="">(new room)</option>' +
-    state.rooms
+    pickerRooms(null)
       .map((r) => `<option value="${esc(r.id)}">${esc(roomOptionLabel(r, { areaFallback: false }))}</option>`)
       .join('');
   el.planShapeAssignRoom.value = '';

@@ -767,6 +767,32 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 /* A placed locator drawn as a full box (zoomed in) is lighter and dashed, so it reads as a locator
    and not as a real traced boundary. */
 .plan-room[data-placed="true"][data-shape="rect"] .plan-room-box { fill-opacity: .10; stroke-width: 1.2; stroke-dasharray: 5 3; }
+/* FOCUS POINTER for a SELECTED room that has NO drawn boundary: a room read from a PDF label carries
+   only `at` (the point the sheet names it), so js/overlay.js marks it with a dashed ring, a crosshair
+   and its name instead of an outline. It is a POINTER, not a measurement — deliberately unlike a real
+   boundary (a solid, filled box): dashed and unfilled, in the accent colour so it stays crisp on a
+   white sheet. pointer-events:none because it is never a drawing target (the overlay keeps it out of
+   shapesOnPage / roomAtPointShaped). The halo pulses gently to say "this one, here"; the pulse is
+   switched off for anyone who asked for reduced motion. */
+.plan-focus { pointer-events: none; cursor: default; }
+.plan-focus .plan-focus-halo {
+  fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: .55;
+  transform-box: fill-box; transform-origin: center;
+  animation: plan-focus-pulse 1.5s ease-out infinite;
+}
+.plan-focus .plan-focus-ring {
+  fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 2;
+}
+.plan-focus .plan-focus-cross { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; }
+.plan-focus .plan-room-label { fill: var(--accent-dark); font-weight: 600; }
+@keyframes plan-focus-pulse {
+  0%   { transform: scale(.65); opacity: .85; }
+  70%  { transform: scale(1.5); opacity: .25; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-focus .plan-focus-halo { animation: none; }
+}
 .plan-room-handle {
   fill: #fff; stroke: var(--danger); stroke-width: 1.5; pointer-events: none;
 }
