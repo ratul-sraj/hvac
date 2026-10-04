@@ -76,7 +76,10 @@
  *   • Dragging an outline MOVES it: every ring point is translated by the same PDF delta and the shape
  *     is preserved exactly. onRoomMoved/onRoomMoveEnd report `{ id, poly, page }`.
  *   • Resize handles are ONLY for rect rooms. An outline has no box to drag; it is never converted to
- *     a rectangle.
+ *     a rectangle. A rectangle, however, CAN become a polygon: dragging the middle of one of its edges
+ *     (the edge-midpoint diamonds handleShape draws) inserts a vertex there and reports the ring as a
+ *     'convert' drag; the app drops the box and stores the ring, so the user can then pull its corners
+ *     like any other outline. A corner grip still resizes the box, exactly as before.
  *
  * DRAWN SHAPES (mode 'shape' — a hand-drawn polygon with any number of edges):
  *   • In 'shape' mode a click ADDS a vertex to the in-progress ring; the last segment follows the
@@ -273,6 +276,18 @@ function polyPageOf(room) {
 /** Deep-enough copy of a ring (plain {x,y} objects). */
 function copyRing(ring) {
   return ring.map((p) => ({ x: p.x, y: p.y }));
+}
+
+/** The four corners of a PDF rect as a closed ring (bottom-left, bottom-right, top-right, top-left;
+ *  y up) — the ring a rectangle STARTS from when one of its edge middles is dragged to make it a
+ *  polygon (see onPointerDown / the 'convert' drag). */
+function rectRing(rect) {
+  return [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+    { x: rect.x, y: rect.y + rect.h },
+  ];
 }
 
 /** Translate EVERY point of a ring by the same delta — the shape is preserved exactly. */
@@ -630,7 +645,10 @@ export function createOverlay(rootEl, {
     return wrap;
   }
 
-  /** The four corner grips of a room's view box, as a <g class="plan-handles">. */
+  /** The four corner grips of a room's view box, as a <g class="plan-handles">. A rectangle also gets
+   *  a small diamond at the MIDDLE of each edge: dragging one of those is how a locator box becomes a
+   *  real polygon (see the 'convert' drag in onPointerDown). They carry the same class the polygon
+   *  edge handles use and are presentational only — the grab test is geometric, in PDF points. */
   function handleShape(box) {
     const wrap = document.createElementNS(SVG_NS, 'g');
     wrap.setAttribute('class', 'plan-handles');
@@ -650,6 +668,21 @@ export function createOverlay(rootEl, {
       h.setAttribute('width', num(HANDLE_DRAW_PX));
       h.setAttribute('height', num(HANDLE_DRAW_PX));
       wrap.appendChild(h);
+    }
+    const halfE = EDGE_DRAW_PX / 2;
+    const mids = [
+      { x: box.x + box.w / 2, y: box.y },
+      { x: box.x + box.w, y: box.y + box.h / 2 },
+      { x: box.x + box.w / 2, y: box.y + box.h },
+      { x: box.x, y: box.y + box.h / 2 },
+    ];
+    for (const m of mids) {
+      const d = document.createElementNS(SVG_NS, 'path');
+      d.setAttribute('class', 'plan-edge-handle');
+      d.setAttribute('d',
+        `M ${num(m.x)},${num(m.y - halfE)} L ${num(m.x + halfE)},${num(m.y)} ` +
+        `L ${num(m.x)},${num(m.y + halfE)} L ${num(m.x - halfE)},${num(m.y)} Z`);
+      wrap.appendChild(d);
     }
     return wrap;
   }
@@ -1150,8 +1183,10 @@ export function createOverlay(rootEl, {
 
   /** Begin a move (handle=null) or a resize (handle='nw'|'ne'|'se'|'sw') of one room. A traced
    *  outline or a drawn polygon is snapshotted as its ring; a rectangle as its rect. The two never
-   *  mix. `extra.poly` overrides the snapshot (the edge-midpoint gesture inserts a vertex first) and
-   *  `extra.vertex` marks a VERTEX edit: every move then moves exactly that one ring point. */
+   *  mix. `extra.poly` overrides the snapshot (the edge-midpoint gesture inserts a vertex first,
+   *  and a rectangle's edge-middle drag builds a ring from its four corners + that new vertex) and
+   *  `extra.vertex` marks a VERTEX edit: every move then moves exactly that one ring point.
+   *  `extra.convert` marks a rectangle becoming a polygon: the app drops the box on release. */
   function startDrag(e, kind, room, handle, p, pdf, extra = null) {
     e.preventDefault?.();   // dragging a box must not start a text selection / browser drag
     const ring = extra && extra.poly ? extra.poly : ringOfRoom(room);
@@ -1160,6 +1195,7 @@ export function createOverlay(rootEl, {
       id: idOf(room),
       handle: handle || null,
       vertex: extra && Number.isInteger(extra.vertex) ? extra.vertex : null,
+      convert: !!(extra && extra.convert),
       startRect: room.rect ? { ...room.rect } : null,
       startPoly: ring ? copyRing(ring) : null,
       startPdf: { ...pdf },
@@ -1200,7 +1236,7 @@ export function createOverlay(rootEl, {
       id: drag.id,
       poly,
       page: drag.page,
-      kind: drag.vertex != null ? 'vertex' : 'move',
+      kind: drag.convert ? 'convert' : (drag.vertex != null ? 'vertex' : 'move'),
     };
   }
 
@@ -1237,8 +1273,14 @@ export function createOverlay(rootEl, {
     downAt = null;
     releaseCapture();
     if (d.dragged) {
-      safeCall(onRoomMoved, d.id,
-        d.startPoly ? { id: d.id, poly: d.startPoly, page: d.page } : { ...d.startRect });
+      if (d.convert) {
+        // A box was becoming a polygon: abandon the conversion — the app drops the ring it wrote live
+        // and the original box stands (kind 'convert-cancel').
+        safeCall(onRoomMoved, d.id, { id: d.id, page: d.page, kind: 'convert-cancel' });
+      } else {
+        safeCall(onRoomMoved, d.id,
+          d.startPoly ? { id: d.id, poly: d.startPoly, page: d.page } : { ...d.startRect });
+      }
     }
     render();
   }
@@ -1277,6 +1319,21 @@ export function createOverlay(rootEl, {
     const handle = selected && !ringOfRoom(selected)
       ? handleAtPoint(selected.rect, pdf, handleTolPt(vp)) : null;
     if (handle) { startDrag(e, 'resize', selected, handle, p, pdf); return; }
+    // 1a. the MIDDLE of an edge of the SELECTED rectangle → the box becomes a POLYGON: insert a vertex
+    //     at that edge's middle and drag it. The four corners were the ring; the added vertex makes a
+    //     real outline the app stores and tags like every other (js/app.js, kind 'convert'), so the
+    //     owner can then pull its corners to match the drawing. A corner grip wins over an edge middle
+    //     (checked just above), so plain resize is unchanged.
+    if (selected && selected.rect && !ringOfRoom(selected)) {
+      const base = rectRing(selected.rect);
+      const tolM = tolPtFor(vp, VERTEX_PX);
+      const mi = ringMidpointAt(base, pdf, tolM);
+      if (mi >= 0) {
+        const ring = ringInsertVertex(base, mi, ringMidpoint(base, mi));
+        startDrag(e, 'convert', selected, null, p, pdf, { vertex: mi + 1, poly: ring, convert: true });
+        return;
+      }
+    }
     // 1b. a VERTEX or EDGE-MIDPOINT grip of the SELECTED polygon room → edit the ring. Vertices win
     //     over midpoints (they are checked first), so a grip is grabbed exactly as it is aimed at.
     const selRing = selected ? ringOfRoom(selected) : null;
@@ -1335,11 +1392,12 @@ export function createOverlay(rootEl, {
         // reports its rect; a polygon room reports its NEW ring (with the page) so the app stores it.
         if (d.startPoly) {
           let poly = d.lastPoly;
-          let kind = d.vertex != null ? 'vertex' : 'move';
+          // A rectangle becoming a polygon keeps its own kind, so the app knows to drop the box.
+          let kind = d.convert ? 'convert' : (d.vertex != null ? 'vertex' : 'move');
           // Alt + drop a dragged vertex ON ANOTHER EDGE removes that vertex (merging two edges into
           // one). Only a NON-adjacent edge counts — a vertex always lies on its own two edges. Never
           // let the ring fall below 3 points.
-          if (d.vertex != null && vp && e && e.altKey && d.startPoly.length > 3) {
+          if (d.vertex != null && !d.convert && vp && e && e.altKey && d.startPoly.length > 3) {
             const pdf = viewPointToPdf(vp, p);
             const ei = ringEdgeNotTouching(d.startPoly, d.vertex, pdf, tolPtFor(vp, VERTEX_PX));
             if (ei >= 0) { poly = ringRemoveVertex(d.lastPoly, d.vertex); kind = 'vertex'; }

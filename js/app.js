@@ -2383,6 +2383,19 @@ const plan = {
   drawingId: null,
 };
 
+/* ---- the one-click "trace again at the implied scale" -------------------------------------------
+ * The trace can measure what scale a drawing's own outlines imply. When that disagrees with the
+ * panel's scale, the fix is offered ONCE per drawing beside the plan buttons (planShowScaleFix). After
+ * it has been used, a second trace that still disagrees only REPORTS the scale — it never offers the
+ * button again, so the fix can never become a loop. Reset when a different drawing is opened. */
+let scaleFixUsedDrawing;   // undefined = never used; otherwise the drawingId it was used for
+
+/** Do two drawing identities name the same drawing? Both null (no identity in play) count as the same. */
+function sameDrawingKey(a, b) {
+  if (a == null && b == null) return true;
+  return String(a) === String(b);
+}
+
 async function ensurePlanModules() {
   if (plan.mods || plan.unavailable) return plan.mods;
   try {
@@ -2672,11 +2685,23 @@ function roomById(id) {
 function planRoomMoved(id, payload) {
   const room = roomById(id);
   if (!room || !payload) return;
+  // An abandoned conversion: the app wrote a ring live but the box must stand — drop the ring and stop.
+  if (payload.kind === 'convert-cancel') {
+    delete room.poly;
+    delete room.polyPage;
+    delete room.polyDrawing;
+    if (plan.overlay) plan.overlay.render();
+    return;
+  }
   // A polygon room (a traced outline, or a hand-drawn shape) reports { id, poly, page, kind }: write
   // the ring. For a HAND-DRAWN shape the row's area cell is refreshed live too (a vertex edit changes
   // the area, and the user should see it), but the TOTALS are deliberately left alone until the
   // release — exactly as for a rectangle move — so the load can never move mid-gesture.
   if (Array.isArray(payload.poly)) {
+    // A BOX becoming a POLYGON (Select/edit: drag the middle of a rect edge). While the drag is live
+    // the ring is written but the box is KEPT, so an abandoned drag (Escape) simply drops the ring and
+    // the room is exactly as it was. The box leaves only on release (planRoomMoveEnd).
+    if (payload.kind === 'convert') { planConvertRectToPoly(room, payload.poly, payload.page, false); return; }
     setRoomRing(room, payload.poly, payload.page);
     if (room.source === 'drawn') {
       room.area = drawnPolyArea(room);
@@ -2701,6 +2726,25 @@ function planRoomMoved(id, payload) {
 function planRoomMoveEnd(id, payload) {
   const room = roomById(id);
   if (!room || !payload) return;
+  // A BOX became a POLYGON (the edge-middle drag converted it). Store the ring, DROP the box, tag it
+  // like every other outline — then say so and hand the room back selected, ready to reshape. The AREA
+  // rule is the one planDetachShape/commit use: it is re-measured from the new shape ONLY when the
+  // room's area already came from a shape; a typed (or placed) area is never silently overwritten.
+  if (payload.kind === 'convert' && Array.isArray(payload.poly)) {
+    const wasFromDrawing = !!(room.areaFromDrawing || room.source === 'drawn');
+    planConvertRectToPoly(room, payload.poly, payload.page, true);
+    const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
+    if (inp) inp.value = String(room.area);
+    updateLive();
+    saveSoon();
+    if (plan.overlay) plan.overlay.render();
+    setStatus('ok', `${room.name || 'The room'} is now a shape you can pull — drag its corners ` +
+      `to match the drawing. ` +
+      (wasFromDrawing
+        ? `Its area is now ${fmt(room.area, 1)} m² and the load uses it.`
+        : `It keeps the area you had (${fmt(room.area, 1)} m²), so the load is unchanged.`), 'plan');
+    return;
+  }
   // A polygon room: store the new ring. A hand-drawn shape OWNS its area through the ring, so it is
   // re-derived here (a translation leaves a shoelace area untouched, so a move reports the same area
   // and the load does not move; a VERTEX edit really does change it, so the load follows). A traced
@@ -3122,7 +3166,11 @@ async function planTraceOutlines() {
       const scaleOff = !!(implied && implied.denom && implied.n >= 5
         && Math.abs(implied.denom - denom) / denom > 0.15);
       // Offer the implied scale in the list, so fixing it is one click. Nothing is stored until chosen.
-      const offered = scaleOff ? planOfferScale(implied.denom) : false;
+      // Once the button has been used for THIS drawing, never offer it again — a second trace that
+      // still disagrees only reports the scale (planShowScaleFix), so the fix cannot loop.
+      const fixUsedHere = scaleFixUsedDrawing !== undefined
+        && sameDrawingKey(scaleFixUsedDrawing, plan.drawingId);
+      const offered = (scaleOff && !fixUsedHere) ? planOfferScale(implied.denom) : false;
       // ...and put the fix ON the plan panel, next to the button that produced it: the scale list entry
       // alone was easy to miss, and the explanation sat in the upload section (UX review, item 2).
       if (offered) planShowScaleFix({ implied: implied.denom, denom, accepted, attempted: withPos.length });
@@ -3139,7 +3187,9 @@ async function planTraceOutlines() {
         msg = `Only ${accepted} of ${withPos.length} room(s) traced: this drawing's outlines point to about ` +
           `1:${implied.denom} (the middle of ${implied.n} room${implied.n === 1 ? '' : 's'}), but the drawing ` +
           `scale is set to 1:${denom}. Set the drawing scale to 1:${implied.denom} and trace again. ` +
-          (offered ? `(1:${implied.denom} is now in the drawing-scale list.) ` : '');
+          (offered
+            ? `(1:${implied.denom} is now in the drawing-scale list.) `
+            : `(The one-click fix was already used for this drawing, so it is not offered again.) `);
       } else {
         msg = `Real outlines for ${accepted} of ${withPos.length} room(s) (traced from the plan's own linework, ` +
           `using ${passLabel(winKeys)}). `;
@@ -3206,6 +3256,8 @@ function planShowScaleFix(info) {
   btn.textContent = `Use 1:${right} and trace again`;
   btn.addEventListener('click', () => {
     planOfferScale(info.implied);                       // make sure the option exists before selecting it
+    scaleFixUsedDrawing = plan.drawingId;               // the fix is single-use per drawing — never re-offered
+    planHideScaleFix();                                 // hide it at once, before the trace it starts
     if (el.planScale) el.planScale.value = right;
     planApplyScale(right);
     planTraceOutlines();
@@ -3585,6 +3637,33 @@ function setRoomRing(room, ring, page) {
 /** The area (m²) a hand-drawn room's own ring represents at its own drawing scale. */
 function drawnPolyArea(room) {
   return round2(polyAreaM2(room.poly, roomDenom(room)));
+}
+
+/** A BOX becoming a POLYGON. The overlay reports the ring (the four corners plus the vertex inserted
+ *  when an edge middle was dragged) in PDF space; this writes it the way every other outline is
+ *  stored: `poly` + `polyPage` + `polyDrawing`, so the overlay draws/hit-tests/moves it as a polygon
+ *  and the drawing tag keeps it on the sheet it was measured on. `final` is false while the drag is
+ *  live — then the box is KEPT, so Escape leaves the room untouched; on release the box is dropped.
+ *  AREA (the rule planDetachShape/planCommitShape use): the new shape's area replaces the room's ONLY
+ *  when that area already came FROM a shape (areaFromDrawing, or a room the user drew); a typed or
+ *  placed area is never overwritten. */
+function planConvertRectToPoly(room, ring, page, final) {
+  const denom = roomDenom(room);
+  room.poly = roundRing(ring);
+  room.polyPage = page != null
+    ? page
+    : (room.polyPage || (room.rect && room.rect.page) || plan.page || 1);
+  room.polyDrawing = plan.drawingId;
+  if (!final) return;                 // live drag: the box stays, so an abandoned drag changes nothing
+  delete room.rect;
+  delete room.rectDrawing;
+  if (room.areaFromDrawing || room.source === 'drawn') {
+    room.source = 'drawn';            // it now owns its area through the ring (vertex edits follow)
+    room.scaleDenom = denom;
+    room.area = round2(polyAreaM2(room.poly, denom));
+    room.areaFromDrawing = true;
+    delete room.areaUnknown;
+  }
 }
 
 /** The ring is stored, pending the user's choice in the chooser. */
@@ -4327,6 +4406,7 @@ async function openPlan(bytes, opts) {
   // Give this drawing an identity BEFORE anything can detach or copy the bytes: every shape measured
   // from it is tagged with it, and the overlay paints only shapes that match the drawing now loaded.
   plan.drawingId = drawingIdentity(bytes);
+  scaleFixUsedDrawing = undefined;   // a different drawing has its own one-click scale fix
   // pdf.js DETACHES the ArrayBuffer it is handed — it transfers it to its worker — so a buffer shared
   // with the parser is already dead for whoever asks second ("ArrayBuffer at index 0 is already
   // detached"). The plan view therefore gets its own copy, taken synchronously here, before any await,

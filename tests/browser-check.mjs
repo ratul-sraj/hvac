@@ -3494,6 +3494,250 @@ if (!sampleMissing) {
       `areas kept ${areasKept}; stale left ${afterRemove.stillStale}; plan rooms ${afterRemove.planRooms}; button hidden ${afterRemove.btnHidden}`);
   }
 
+  // ---- JOB 1: one-click "trace again at the implied scale" --------------------------------------
+  // When a drawing's own outlines imply a different drawing scale, a one-click control appears beside
+  // the plan buttons, sets that scale and re-traces more rooms; it is hidden when the scale already
+  // matches, and after it has been used a second mismatch is only REPORTED (never offered again).
+  // ---- JOB 2: a selected BOX becomes a POLYGON by dragging the MIDDLE of an edge -----------------
+  // The room then carries poly + polyPage/polyDrawing and no rect, draws as data-shape="poly", keeps a
+  // typed area, and its corner grips still resize a plain box.
+  {
+    const sleepT = (ms) => new Promise((r) => setTimeout(r, ms));
+    const readFix = () => page.evaluate(() => {
+      const box = document.getElementById("planScaleFix");
+      const btn = document.getElementById("planScaleFixBtn");
+      const r = box ? box.getBoundingClientRect() : null;
+      return {
+        shown: !!(box && !box.classList.contains("hidden") && btn),
+        btn: btn ? btn.textContent.trim() : null,
+        scale: document.getElementById("planScale").value,
+        status: (document.getElementById("planStatus") || {}).textContent.replace(/\s+/g, " ").trim(),
+        polys: window.webhvac.state.rooms.filter((x) => Array.isArray(x.poly) && x.poly.length > 2).length,
+        onScreen: !!r && r.top < window.innerHeight && r.bottom > 0,
+      };
+    });
+    const traceAndWait = async () => {
+      await page.click("#planTraceOutlines");
+      await page.waitForFunction(() => {
+        const s = document.getElementById("planStatus");
+        return s && !/Tracing the plan/.test(s.textContent) && /point to|outline|traced/i.test(s.textContent);
+      }, { timeout: 150000, polling: 400 }).catch(() => {});
+      await sleepT(700);
+    };
+    const roomState = (id) => page.evaluate((rid) => {
+      const room = window.webhvac.state.rooms.find((x) => x.id === rid);
+      if (!room) return null;
+      const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+      const cell = document.querySelector(`tr[data-id="${rid}"] input[data-field="area"]`);
+      return {
+        hasRect: !!room.rect, rect: room.rect || null,
+        hasPoly: Array.isArray(room.poly), polyLen: Array.isArray(room.poly) ? room.poly.length : 0,
+        polyPage: room.polyPage, polyDrawing: room.polyDrawing, source: room.source,
+        area: room.area, cell: cell ? Number(cell.value) : null,
+        shape: g ? g.getAttribute("data-shape") : null,
+        cornerHandles: document.querySelectorAll(".plan-room-handle").length,
+        edgeHandles: document.querySelectorAll(".plan-edge-handle").length,
+        status: (document.getElementById("planStatus") || {}).textContent.replace(/\s+/g, " ").trim(),
+      };
+    }, id);
+    const boxOf = (id) => page.evaluate((rid) => {
+      const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+      const s = g ? g.querySelector(".plan-room-box") : null;
+      if (!s) return null;
+      const r = s.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    }, id);
+    // Switching mode: the site's sticky header can cover the plan toolbar's radios, so a raw click
+    // can land on the header. Scroll the toolbar into the middle, click, and verify the mode took —
+    // falling back to the radio's own click handler if a covering element swallowed it.
+    const setMode = async (which) => {
+      const want = which === "select" ? "select" : "shape";
+      const id = want === "select" ? "#planModeSelect" : "#planModeShape";
+      await page.evaluate(() => {
+        const tb = document.querySelector(".plan-toolbar");
+        if (tb) tb.scrollIntoView({ block: "center" });
+      });
+      await sleepT(250);
+      await page.click(id).catch(() => {});
+      await sleepT(200);
+      const now = await page.evaluate(() => window.webhvac.state.ui.planMode);
+      if (now !== want) {
+        await page.evaluate((w) => document.getElementById(
+          w === "select" ? "planModeSelect" : "planModeShape").click(), want);
+        await sleepT(200);
+      }
+    };
+    const centerPlan = async () => {
+      await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+      await sleepT(300);
+    };
+    const drawRect = async (fx = 0.08, fy = 0.45, wf = 0.20, hf = 0.20) => {
+      await setMode("shape");
+      await centerPlan();
+      const b = await page.$eval("#planView", (e) => {
+        const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height };
+      });
+      const sx = b.x + fx * b.w, sy = b.y + fy * b.h;
+      await page.mouse.move(sx, sy);
+      await page.mouse.down();
+      await page.mouse.move(sx + wf * b.w, sy + hf * b.h, { steps: 8 });
+      await page.mouse.up();
+      await sleepT(800);
+      return page.$eval("#roomsBody tr:last-child", (tr) => tr.getAttribute("data-id"));
+    };
+    const selectRoom = async (id) => {
+      await setMode("select");
+      await centerPlan();
+      const r = await boxOf(id);            // re-read the box right before the click
+      await page.mouse.click(r.x + r.w / 2, r.y + r.h / 2);
+      await sleepT(400);
+    };
+
+    // Establish our OWN state: an empty table, then the synthetic sample (a deterministic drawing).
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForFunction(() => !window.webhvac.state.ui.busy, { timeout: 60000 }).catch(() => {});
+    const rows0 = await page.$$eval("#roomsBody tr", (r) => r.length);
+    if (rows0 === 0) await page.click("#btnSample");
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
+      { timeout: 60000, polling: 400 }).catch(() => {});
+    await sleepT(900);
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await page.click("#planFit");
+    await sleepT(1200);
+
+    // (JOB 1-i) a WRONG scale finds almost nothing → the one-click fix appears, labelled with the
+    //           implied numbers, and pressing it sets that scale and traces MORE rooms.
+    await page.select("#planScale", "500");
+    await sleepT(400);
+    const polysBefore = (await readFix()).polys;
+    await traceAndWait();
+    await page.evaluate(() => { const b = document.getElementById("planScaleFix"); if (b) b.scrollIntoView({ block: "center" }); });
+    await sleepT(300);
+    const fix = await readFix();
+    const mWanted = (fix.btn || "").match(/1:(\d+)/);
+    const wantedDenom = mWanted ? mWanted[1] : null;
+    ok("JOB1 (i) a drawing whose outlines imply another scale offers the fix, labelled with the implied scale",
+      fix.shown && fix.onScreen && !!wantedDenom && wantedDenom !== "500",
+      `button "${fix.btn}", on screen ${fix.onScreen}, status "${(fix.status || "").slice(0, 110)}"`);
+
+    if (wantedDenom) {
+      const btnBox = await page.evaluate(() => {
+        const b = document.getElementById("planScaleFixBtn");
+        const r = b.getBoundingClientRect();
+        return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      });
+      await page.mouse.click(btnBox.x, btnBox.y);
+      await page.waitForFunction(() => {
+        const s = document.getElementById("planStatus");
+        return s && !/Tracing the plan/.test(s.textContent) && /real outline|point to|traced/i.test(s.textContent);
+      }, { timeout: 150000, polling: 400 }).catch(() => {});
+      await sleepT(1400);
+      const afterFix = await readFix();
+      ok("JOB1 (i) pressing it sets the offered scale and traces more rooms",
+        afterFix.scale === wantedDenom && afterFix.polys > polysBefore,
+        `scale 1:${afterFix.scale} (offered 1:${wantedDenom}); outlines ${polysBefore} -> ${afterFix.polys}`);
+
+      // (JOB 1-ii) with the scale now matching, a fresh trace does not show the control at all.
+      await traceAndWait();
+      const matched = await readFix();
+      ok("JOB1 (ii) the control is hidden when the implied scale matches the panel's",
+        matched.shown === false,
+        `fix shown ${matched.shown}, status "${(matched.status || "").slice(0, 110)}"`);
+
+      // (JOB 1-iii) after use, set the scale wrong AGAIN and trace: the control must NOT return, but
+      //             the status line must still report the scale the outlines point to.
+      await page.select("#planScale", "500");
+      await sleepT(400);
+      await traceAndWait();
+      const reused = await readFix();
+      ok("JOB1 (iii) it does not come back after use — the mismatch is only reported in the status line",
+        reused.shown === false && /point to about 1:/i.test(reused.status),
+        `fix shown ${reused.shown}, status "${(reused.status || "").slice(0, 150)}"`);
+    } else {
+      ok("JOB1 (i) pressing it sets the offered scale and traces more rooms", false, "no scale on the button");
+      ok("JOB1 (ii) the control is hidden when the implied scale matches the panel's", false, "no fix offered");
+      ok("JOB1 (iii) it does not come back after use — the mismatch is only reported in the status line", false, "no fix offered");
+    }
+
+    // Back to the drawing's own scale and a clean sheet so the geometry checks below are unambiguous.
+    await page.select("#planScale", "100");
+    await sleepT(400);
+    await page.click("#planTraceClear").catch(() => {});
+    await page.click("#planPlaceClear").catch(() => {});
+    await sleepT(600);
+
+    // (JOB 2-vi) a plain box still resizes by its four corner grips (the edge gesture did not replace it).
+    {
+      const id = await drawRect(0.08, 0.42);
+      await selectRoom(id);
+      const sel = await roomState(id);
+      const before = await boxOf(id);
+      await page.mouse.move(before.x + before.w, before.y + before.h);   // the SE corner
+      await page.mouse.down();
+      await page.mouse.move(before.x + before.w + 90, before.y + before.h + 70, { steps: 8 });
+      await page.mouse.up();
+      await sleepT(800);
+      const after = await boxOf(id);
+      const st = await roomState(id);
+      ok("JOB2 (vi) a plain box still resizes by its corner grips",
+        sel.cornerHandles === 4 && st.hasPoly === false && st.hasRect
+          && after.w > before.w + 20 && after.h > before.h + 20,
+        `corner grips ${sel.cornerHandles}, ${before.w.toFixed(0)}x${before.h.toFixed(0)} -> ` +
+        `${after.w.toFixed(0)}x${after.h.toFixed(0)}, poly ${st.hasPoly}`);
+    }
+
+    // (JOB 2-iv) dragging the MIDDLE of an edge turns the box into a polygon: poly + tags, no rect,
+    //            drawn as data-shape="poly", with one more corner than the four the box had.
+    {
+      const id = await drawRect(0.36, 0.42, 0.17, 0.15);
+      await selectRoom(id);
+      const st0 = await roomState(id);
+      const b = await boxOf(id);                 // re-read right before the drag
+      await page.mouse.move(b.x + b.w / 2, b.y); // the TOP edge middle
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.w / 2 + 44, b.y - 60, { steps: 8 });
+      await page.mouse.up();
+      await sleepT(1000);
+      const st = await roomState(id);
+      ok("JOB2 (iv) an edge-middle drag converts the box into a polygon (poly, no rect, data-shape=poly)",
+        st.hasPoly && !st.hasRect && st.shape === "poly" && st.polyLen === 5
+          && st.polyPage >= 1 && st.polyDrawing != null && st0.edgeHandles === 4,
+        `corners ${st.polyLen} (was a 4-corner box), rect ${st.hasRect}, shape ${st.shape}, ` +
+        `page ${st.polyPage}, drawing ${st.polyDrawing ? "tagged" : "null"}, edge grips shown ${st0.edgeHandles}`);
+      ok("JOB2 (iv) the status line says the room is now a shape the user can pull",
+        /now a shape you can pull/i.test(st.status),
+        `status "${(st.status || "").slice(0, 140)}"`);
+    }
+
+    // (JOB 2-v) a TYPED area is never overwritten by the conversion.
+    {
+      const id = await drawRect(0.64, 0.42, 0.15, 0.24);
+      await page.$eval(`tr[data-id="${id}"] input[data-field="area"]`, (inp) => {
+        inp.value = "42.5";
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+        inp.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await sleepT(500);
+      await selectRoom(id);
+      const typed = await roomState(id);
+      const b = await boxOf(id);
+      await page.mouse.move(b.x + b.w, b.y + b.h / 2);   // the RIGHT edge middle
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.w + 70, b.y + b.h / 2 + 30, { steps: 8 });
+      await page.mouse.up();
+      await sleepT(1000);
+      const st = await roomState(id);
+      ok("JOB2 (v) a typed area is NOT overwritten when the box becomes a polygon",
+        st.hasPoly && !st.hasRect && typed.area != null
+          && Math.abs(Number(st.area) - Number(typed.area)) < 0.01
+          && Math.abs(Number(st.cell) - Number(typed.area)) < 0.01,
+        `typed ${typed.area} m²; after conversion ${st.area} m² (cell ${st.cell})`);
+    }
+  }
+
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
   for (let i = 0; i < 60; i++) {
