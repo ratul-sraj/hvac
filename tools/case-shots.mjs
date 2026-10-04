@@ -160,7 +160,22 @@ await level.evaluate(() => {
   }
 });
 
-// 2b. Select a room so the shot shows what the page claims: a room picked out on the sheet with its
+// 2b. Trace the plan's own outlines first: the area chips are drawn only for rooms that HAVE geometry
+//     (a traced outline or a placed box), and the sampling run above fills AREAS without keeping the
+//     shapes. Without this the plan shot is a bare drawing with no chips and nothing selected - which
+//     is exactly what this figure used to show, while its caption claimed the areas were on the plan.
+try {
+  await level.click("#planTraceOutlines");
+  await level.waitForFunction(
+    () => window.webhvac.state.rooms.some((r) => Array.isArray(r.poly) && r.poly.length > 2),
+    { timeout: 120000, polling: 500 }
+  );
+} catch (e) {
+  console.warn("WARN: the outline trace produced nothing on this sheet — the plan shot will have no chips");
+}
+await sleep(3000);
+
+// 2c. Select a room so the shot shows what the page claims: a room picked out on the sheet with its
 //     area chip under its name. The room is selected through the TABLE ROW (the same gesture a visitor
 //     uses - the app marks that room on the plan, scrolls its row into view and flashes it). Never
 //     pre-set state.ui.openId: a row click TOGGLES, so a pre-set id closes the panel instead of
