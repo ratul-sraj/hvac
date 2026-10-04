@@ -1224,6 +1224,18 @@ if (!sampleMissing) {
     ok("closing the shape opens the chooser with (new room) preselected",
       chooserUp.open && chooserUp.value === "" && /new room/i.test(String(chooserUp.first)),
       JSON.stringify(chooserUp));
+    // The chooser must name a row by the ROOM NUMBER the sheet prints, not only its name: the office
+    // sample carries four rows called MEETING ROOM, so the name alone cannot tell them apart.
+    const chooserNos = await page.evaluate(() => {
+      const sel = document.getElementById("planShapeAssignRoom");
+      const nums = [...document.querySelectorAll('#roomsBody input[data-field="number"]')]
+        .map((i) => (i.value || "").trim()).filter(Boolean);
+      const opts = [...sel.options].slice(1).map((o) => o.text);
+      return { numbered: nums.length, opts: opts.slice(0, 3),
+        withNo: opts.filter((t) => nums.some((n) => t.startsWith(n + " \u00b7 "))).length };
+    });
+    ok("the chooser names each row by its room number, so rows sharing a name are told apart",
+      chooserNos.numbered > 0 && chooserNos.withNo > 0, JSON.stringify(chooserNos));
     await page.click("#planShapeAssignGo");                // "(new room)" is selected: make a new room
     await sleep2(700);
     const shape1 = await newestShape();

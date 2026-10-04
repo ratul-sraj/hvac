@@ -1056,21 +1056,34 @@ function shapeNote(raw) {
 /** The rows a shape could be linked to, as <option> markup. Shared by the bar under the drawing and the
  *  block in the load breakdown so the two lists cannot drift apart. */
 function shapeTargetOptions(raw) {
-  return state.rooms.filter((x) => x.id !== raw.id).map((x) => {
-    const n = normalizeRoom(x, state.project);
-    const a = Number(n.area);
-    const label = `${n.name || 'Room'}${n.level ? ` (${n.level})` : ''}`
-      + (Number.isFinite(a) && a > 0 ? ` \u00b7 ${fmt(a, 1)} m\u00b2` : ' \u00b7 no area');
-    return `<option value="${esc(x.id)}">${esc(label)}</option>`;
-  }).join('');
+  return state.rooms.filter((x) => x.id !== raw.id)
+    .map((x) => `<option value="${esc(x.id)}">${esc(roomOptionLabel(x))}</option>`).join('');
+}
+
+/**
+ * ONE label for a room row, shared by every picker that asks the user to name a row (the chooser that
+ * opens after a shape is drawn, the shape-link bar under the drawing and the link block in the load
+ * breakdown). Built in one place so the three lists cannot drift apart.
+ *
+ * The room NUMBER comes first when the sheet prints one: a plan often carries several rows with the
+ * same name (the office sample has four MEETING ROOMs), and when the user has to pick "which room is
+ * this shape", the number and the level are the only things that tell those rows apart. { areaFallback:
+ * false } drops the "no area" tail for the one-line sentence that names the row a shape belongs to.
+ */
+function roomOptionLabel(raw, opts) {
+  const showNoArea = !(opts && opts.areaFallback === false);
+  const n = normalizeRoom(raw, state.project);
+  const lv = (n.level || '').trim();
+  const no = String(n.number == null ? '' : n.number).trim();
+  const a = Number(n.area);
+  const areaOk = Number.isFinite(a) && a > 0;
+  return `${no ? `${no} \u00b7 ` : ''}${n.name || 'Room'}${lv ? ` (${lv})` : ''}`
+    + (areaOk ? ` \u00b7 ${fmt(a, 1)} m\u00b2` : (showNoArea ? ' \u00b7 no area' : ''));
 }
 
 /** The one short sentence naming the row a shape belongs to. */
 function shapeOwnerLabel(raw) {
-  const lv = (raw.level || '').trim();
-  const area = Number(raw.area);
-  return `${raw.name || 'Room'}${lv ? ` (${lv})` : ''}` +
-    (Number.isFinite(area) && area > 0 ? ` \u00b7 ${fmt(area, 1)} m\u00b2` : '');
+  return roomOptionLabel(raw, { areaFallback: false });
 }
 
 /**
@@ -3237,14 +3250,9 @@ function planDrawShape(ring, info) {
 function planShowShapeChooser() {
   if (!el.planShapeAssign || !pendingShape) return;
   el.planShapeAssignRoom.innerHTML = '<option value="">(new room)</option>' +
-    state.rooms.map((r) => {
-      const n = normalizeRoom(r, state.project);
-      const lv = (n.level || '').trim();
-      const area = Number(n.area);
-      const label = `${n.name || 'Room'}${lv ? ` (${lv})` : ''}`
-        + (Number.isFinite(area) && area > 0 ? ` · ${fmt(area, 1)} m²` : '');
-      return `<option value="${esc(r.id)}">${esc(label)}</option>`;
-    }).join('');
+    state.rooms
+      .map((r) => `<option value="${esc(r.id)}">${esc(roomOptionLabel(r, { areaFallback: false }))}</option>`)
+      .join('');
   el.planShapeAssignRoom.value = '';
   el.planShapeAssign.classList.remove('hidden');
   if (plan.overlay) plan.overlay.render();
