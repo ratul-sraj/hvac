@@ -43,8 +43,8 @@
       <h1>Case study: cooling loads from a floor plan</h1>
       <p class="lead">
         LoadLens reads a real architectural sheet and returns a room-wise cooling load schedule. On the
-        public sample drawing it fills <strong>21 room areas from the drawing itself</strong> and produces
-        <strong>20.86 TR</strong> of cooling load over 17 conditioned rooms &mdash; with the sheet's own
+        public sample drawing it fills <strong>22 room areas from the drawing itself</strong> and produces
+        <strong>21.59 TR</strong> of cooling load over 18 conditioned rooms &mdash; with the sheet's own
         units detected, and every room it could not measure left honestly blank instead of guessed.
       </p>
       <p>
@@ -61,8 +61,8 @@
         <div class="panel">
           <h3>The measured result</h3>
           <p class="small muted">
-            20.86 TR &middot; 73,372 W total heat &middot; 3,607 L/s supply air &middot; 314.5 m&sup2; conditioned
-            &middot; 15 m&sup2;/TR &middot; 17 rooms in the load, 21 areas taken from the drawing.
+            21.59 TR &middot; 75,943 W total heat &middot; 3,743 L/s supply air &middot; 325.5 m&sup2; conditioned
+            &middot; 15 m&sup2;/TR &middot; 18 rooms in the load, 22 areas taken from the drawing.
           </p>
         </div>
         <div class="panel">
@@ -100,15 +100,15 @@
         <h2>What it does</h2>
       </div>
       <figure>
-        <img src="img/case-plan-areas.png" alt="An architectural floor plan inside LoadLens, with 21 room areas measured from the drawing's own outlines" width="1300" height="736" loading="lazy">
+        <img src="img/case-plan-areas.png" alt="An architectural floor plan inside LoadLens, with 22 room areas measured from the drawing's own outlines" width="2668" height="1512" loading="lazy">
         <figcaption class="small muted">
           The public sample sheet. <em>Fill areas from the drawing</em> measures the room areas from the
-          plan's own closed wall outlines &mdash; 21 rooms here &mdash; and every filled area is drawn back on
+          plan's own closed wall outlines &mdash; 22 rooms here &mdash; and every filled area is drawn back on
           the plan so it can be seen and checked.
         </figcaption>
       </figure>
       <figure>
-        <img src="img/case-summary.png" alt="LoadLens result cards showing 20.86 TR total cooling load, 73,372 W total heat, 3,607 L/s supply air and 314.5 square metres conditioned" width="2668" height="336" loading="lazy">
+        <img src="img/case-summary.png" alt="LoadLens result cards showing 21.59 TR total cooling load, 75,943 W total heat, 3,743 L/s supply air and 325.5 square metres conditioned" width="2668" height="336" loading="lazy">
         <figcaption class="small muted">
           The schedule the drawing produces: total load, supply air, fresh air, conditioned area and
           area per tonne &mdash; in metric or imperial, chosen from the sheet's own units.
@@ -136,9 +136,12 @@
         </li>
         <li>
           <strong>Measure only when the outline is unambiguous.</strong> A room area is taken from the
-          drawing only when a closed wall outline exists, exactly one room name sits inside it, the measured
-          area falls in a plausible range, and it does not really overlap another room. Otherwise the room
-          keeps a blank area and a plain-English reason.
+          drawing only when a closed wall outline exists, the part of it a room owns holds exactly one room
+          name, the measured area falls in a plausible range, and it does not really overlap another room.
+          Otherwise the room keeps a blank area and a plain-English reason. Where one traced outline holds
+          several room names, the tool now splits it at door-width openings and gives each room its own part;
+          a space with no name stays with no room; on the house sample this took the filled areas from 6 to
+          10 of 10.
         </li>
         <li>
           <strong>Do the load in SI, once.</strong> The calculation runs in SI as a single source of truth.
@@ -163,9 +166,10 @@
       </p>
       <ul>
         <li>
-          On the sample sheet the tool fills 21 of 56 rooms and states the reason for the other 35:
-          <em>"33 because one outline holds several room names, 2 because the traced shape did not look like a
-          room."</em> It does not quietly fill them with something plausible.
+          On the sample sheet the tool fills 22 of 56 rooms and states the reason for the other 34:
+          <em>"28 because the room is open to the next space, so its edge is not on the drawing, 4 because one
+          outline holds several room names, 2 because the traced shape did not look like a room."</em> It does
+          not quietly fill them with something plausible.
         </li>
         <li>A room whose area is unknown stays out of the load and is flagged, rather than carrying a guess.</li>
         <li>
@@ -188,9 +192,9 @@
       <ul>
         <li>
           <strong>Open-plan sheets are the hard case.</strong> When one closed outline contains many room
-          names &mdash; typical of an open office floor &mdash; the tool declines to split it. Auto-fill is
-          about 38&nbsp;% on the sample office sheet, and above 60&nbsp;% on an enclosed house plan; the rest is
-          manual, by design.
+          names &mdash; typical of an open office floor &mdash; most of those rooms still cannot be bounded
+          from the drawing alone. Auto-fill is about 39&nbsp;% on the sample office sheet, and above 60&nbsp;%
+          on an enclosed house plan; the rest is manual, by design.
         </li>
         <li>
           <strong>The drawing scale is still the user's to confirm.</strong> Areas depend on the scale printed
