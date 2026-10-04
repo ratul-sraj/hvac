@@ -819,6 +819,16 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   font-size: 11px; fill: var(--ink); pointer-events: none;
   paint-order: stroke; stroke: rgba(255, 255, 255, .88); stroke-width: 3px;
 }
+/* The AREA CHIP: each room's own area, shown on the drawing just under its name — no click needed,
+   kept live while a shape is dragged. A WHOLE LAYER of inert text (pointer-events:none) so it can
+   never become a hit-target or steal a click from selection, a shape corner, a vertex/edge grip, the
+   pending ring or the focus mark. Text is handed in by js/app.js (the same unit-aware formatter the
+   table uses), so the plan and the table can never disagree. */
+.plan-area-chips { pointer-events: none; }
+.plan-area-chip {
+  font-size: 11px; fill: var(--ink); pointer-events: none;
+  paint-order: stroke; stroke: rgba(255, 255, 255, .88); stroke-width: 3px;
+}
 .plan-draft-box { fill: var(--accent); fill-opacity: .2; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
 .plan-overlay-readout {
   font-size: 12px; fill: var(--ink); pointer-events: none;

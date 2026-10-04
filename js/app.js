@@ -533,6 +533,10 @@ function syncProjectInputs() {
   projInput('country').value = state.project.country;
   fillCitySelect();
   syncUnitsControl();
+  // A project can carry a scale the preset list does not contain (a custom 1:N). Rebuild the drawing-
+  // scale list so the select SHOWS that value again instead of snapping to the nearest preset — which
+  // would silently change EVERY area on the next edit.
+  planRenderScaleOptions();
 }
 
 function readProjectInput(key, kind) {
@@ -1658,9 +1662,18 @@ function onTableInput(ev) {
   } else {
     const v = t.value.trim();
     if (v === '') delete room[field]; else room[field] = v;
-    // The user has typed the area themselves, so it is no longer "from the drawing" — drop the mark
-    // (and the badge) rather than keep claiming a provenance that is no longer true.
-    if (field === 'area') { delete room.areaFromDrawing; delete room.areaSource; }
+    if (field === 'area') {
+      // The user has typed the area themselves, so it is no longer "from the drawing" — drop the mark
+      // (and the badge) rather than keep claiming a provenance that is no longer true.
+      delete room.areaFromDrawing;
+      delete room.areaSource;
+      // ...and MARK it as the owner's own figure (areaTyped). Every geometry path checks this marker
+      // before it recomputes an area: a shape edit may only replace an area a SHAPE provided, never one
+      // the user typed. This is the opposite direction from a row that GIVES its shape away — that one
+      // blanks the area the shape was providing (planDetachShape). An EMPTY cell leaves the area
+      // unknown, so the marker goes and a shape may drive the area once more.
+      if (v === '') delete room.areaTyped; else room.areaTyped = true;
+    }
   }
   saveSoon();
   if (field === 'include' || field === 'roof' || field === 'type') renderAll();
@@ -2417,6 +2430,19 @@ function planScaleDenom() {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_SCALE_DENOM;
 }
 
+/** The text of a room's AREA CHIP on the plan: the area in the CURRENT unit system, or exactly
+ *  "no area" when the room has none. Never 0, never NaN, never a blank chip. Formatted with the same
+ *  helpers the table uses, so the plan and the table can never disagree — the overlay only places it. */
+function planRoomAreaText(room) {
+  const n = Number(room && room.area);
+  if (!room || room.areaUnknown || room.area == null || room.area === ''
+      || !Number.isFinite(n) || n <= 0) {
+    return 'no area';
+  }
+  const sys = unitsSys();
+  return `${fmtArea(n, sys)} ${areaUnit(sys)}`;
+}
+
 function planHintText() {
   // An IN-PROGRESS shape comes first: the user is mid-gesture, and until now the hint kept describing
   // the tool in general. Clicking a corner changed nothing on screen, so the polygon tool looked
@@ -2438,7 +2464,8 @@ function planHintText() {
   }
   // A PLACED room (a locator box sized back from its own area, see planPlaceAllRooms) carries a rect
   // too, so isDrawnRoom() alone cannot tell it from a hand-drawn one — planview.isPlacedRoom() can.
-  const drawn = state.rooms.filter((r) => isDrawnRoom(r) && !isPlacedRoom(r)).length;
+  // A converted polygon carries NO rect, so the count uses the shared "has a shape" test.
+  const drawn = state.rooms.filter((r) => roomHasShape(r) && !isPlacedRoom(r)).length;
   const placed = state.rooms.filter(isPlacedRoom).length;
   if (state.ui.planMode === 'select') {
     return `Click a room box to open its load breakdown. Drag a room to move it, drag a corner to ` +
@@ -2701,9 +2728,20 @@ function planRoomMoved(id, payload) {
     // A BOX becoming a POLYGON (Select/edit: drag the middle of a rect edge). While the drag is live
     // the ring is written but the box is KEPT, so an abandoned drag (Escape) simply drops the ring and
     // the room is exactly as it was. The box leaves only on release (planRoomMoveEnd).
-    if (payload.kind === 'convert') { planConvertRectToPoly(room, payload.poly, payload.page, false); return; }
+    if (payload.kind === 'convert') {
+      planConvertRectToPoly(room, payload.poly, payload.page, false);
+      // LIVE area preview while the conversion drag runs: on release the ring re-measures the area for a
+      // room whose area came from a shape, so show that figure on the chip NOW, not only on release. A
+      // TYPED area is never touched.
+      if (!areaIsTyped(room) && (room.areaFromDrawing || room.source === 'drawn')) {
+        room.area = round2(polyAreaM2(room.poly, roomDenom(room)));
+      }
+      return;
+    }
     setRoomRing(room, payload.poly, payload.page);
-    if (room.source === 'drawn') {
+    // A hand-drawn shape owns its area through the ring, so the live drag refreshes the cell from the
+    // ring — UNLESS the user typed the area, which no geometry edit may replace.
+    if (room.source === 'drawn' && !areaIsTyped(room)) {
       room.area = drawnPolyArea(room);
       const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
       if (inp) inp.value = String(room.area);
@@ -2715,6 +2753,10 @@ function planRoomMoved(id, payload) {
     page: payload.page != null ? payload.page : (room.rect && room.rect.page) || plan.page || 1,
     x: payload.x, y: payload.y, w: payload.w, h: payload.h,
   };
+  // LIVE area preview for a resize/move, so the on-plan chip shows the figure on the way (the release
+  // re-derives the same area from the box). A move keeps w/h, so the area is unchanged; a TYPED area is
+  // never touched, so its chip keeps the owner's figure. The TOTALS are still untouched until release.
+  if (!areaIsTyped(room)) room.area = round2(areaFromRect(room.rect, roomDenom(room)));
   if (plan.overlay) plan.overlay.render();
 }
 
@@ -2731,35 +2773,54 @@ function planRoomMoveEnd(id, payload) {
   // rule is the one planDetachShape/commit use: it is re-measured from the new shape ONLY when the
   // room's area already came from a shape; a typed (or placed) area is never silently overwritten.
   if (payload.kind === 'convert' && Array.isArray(payload.poly)) {
-    const wasFromDrawing = !!(room.areaFromDrawing || room.source === 'drawn');
+    const typed = areaIsTyped(room);
+    const wasFromDrawing = !areaIsTyped(room) && !!(room.areaFromDrawing || room.source === 'drawn');
     planConvertRectToPoly(room, payload.poly, payload.page, true);
     const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
     if (inp) inp.value = String(room.area);
     updateLive();
     saveSoon();
     if (plan.overlay) plan.overlay.render();
+    // The message must quote the area that ACTUALLY resulted. A typed area was left alone, so say so
+    // rather than reading back a number the room still carries from somewhere else.
     setStatus('ok', `${room.name || 'The room'} is now a shape you can pull — drag its corners ` +
       `to match the drawing. ` +
-      (wasFromDrawing
-        ? `Its area is now ${fmt(room.area, 1)} m² and the load uses it.`
-        : `It keeps the area you had (${fmt(room.area, 1)} m²), so the load is unchanged.`), 'plan');
+      (typed
+        ? `Your typed area ${fmt(room.area, 1)} m² is unchanged — a shape edit never replaces a figure you typed.`
+        : wasFromDrawing
+          ? `Its area is now ${fmt(room.area, 1)} m² and the load uses it.`
+          : `It keeps the area you had (${fmt(room.area, 1)} m²), so the load is unchanged.`), 'plan');
     return;
   }
   // A polygon room: store the new ring. A hand-drawn shape OWNS its area through the ring, so it is
   // re-derived here (a translation leaves a shoelace area untouched, so a move reports the same area
   // and the load does not move; a VERTEX edit really does change it, so the load follows). A traced
-  // outline keeps the stated area it already had — the load must never read `poly*` (AGENTS.md).
+  // outline keeps the stated area it already had — the load must never read `poly*` (AGENTS.md). A
+  // TYPED area is the owner's own measurement, so it is left exactly as typed and the status says so.
   if (Array.isArray(payload.poly)) {
     const denom = roomDenom(room);
+    const typed = areaIsTyped(room);
     setRoomRing(room, payload.poly, payload.page);
     if (!room.scaleDenom) room.scaleDenom = denom;
-    if (room.source === 'drawn') {
+    const followsShape = room.source === 'drawn' && !typed;
+    if (followsShape) {
       room.area = drawnPolyArea(room);
       const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
       if (inp) inp.value = String(room.area);
     }
     updateLive();   // recalculates, refreshes computed cells, summary, description and the shapes
     saveSoon();
+    // Only an edit that can CHANGE the area speaks about it: a vertex drag reshapes the room, a move
+    // slides it (shoelace unchanged). The status must never quote a stale figure.
+    if (payload.kind === 'vertex') {
+      if (typed) {
+        setStatus('ok', `${room.name || 'The room'} was reshaped, but your typed area ` +
+          `${fmt(room.area, 1)} m² is unchanged — a geometry edit never replaces a figure you typed.`, 'plan');
+      } else if (followsShape) {
+        setStatus('ok', `${room.name || 'The room'} was reshaped: its area is now ` +
+          `${fmt(room.area, 1)} m² and the load uses it.`, 'plan');
+      }
+    }
     return;
   }
   const denom = roomDenom(room);
@@ -2772,17 +2833,26 @@ function planRoomMoveEnd(id, payload) {
   room.scaleDenom = denom;
   if (!room.source) room.source = 'manual';
   const dims = dimsFromRect(next, denom);
-  room.area = round2(areaFromRect(next, denom));
   room.length = round2(dims.length);
   room.width = round2(dims.width);
+  // AREA rule (the same one every geometry edit uses): a resize recomputes the area from the box ONLY
+  // when the room did not carry a TYPED one. The owner's typed figure is his own measurement and must
+  // never be replaced silently by a corner drag.
+  const typed = areaIsTyped(room);
+  if (!typed) room.area = round2(areaFromRect(next, denom));
 
   // the area cell shows room.area, so it has to be re-typed into the input as well (updateLive()
-  // refreshes the computed cells and placeholders, but never overwrites a field's value)
+  // refreshes the computed cells and placeholders, but never overwrites a field's value) — unless the
+  // area is the user's own typed value, which stays exactly as it is.
   const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
-  if (inp) inp.value = String(room.area);
+  if (inp && !typed) inp.value = String(room.area);
 
   updateLive();   // recalculates, refreshes computed cells, summary, description and the boxes
   saveSoon();
+  if (typed) {
+    setStatus('ok', `${room.name || 'The room'} was resized, but your typed area ` +
+      `${fmt(room.area, 1)} m² is unchanged — a geometry edit never replaces a figure you typed.`, 'plan');
+  }
 }
 
 /** Delete/Backspace on a selection: drop the room from state and from the table, recalculate,
@@ -2829,7 +2899,7 @@ async function planPlaceAllRooms() {
   let placed = 0, noAt = 0, noArea = 0, already = 0, handDrawn = 0;
   for (const room of state.rooms) {
     if (isPlacedRoom(room)) { already += 1; continue; }        // already has a locator box
-    if (isDrawnRoom(room)) { handDrawn += 1; continue; }        // a hand-drawn box already sits where it was traced
+    if (roomHasShape(room)) { handDrawn += 1; continue; }       // a hand-drawn box/outline already sits where it was traced
     if (!room.at) { noAt += 1; continue; }                      // the plan does not name this room
     const area = Number(room.area);
     if (!Number.isFinite(area) || area <= 0) { noArea += 1; continue; }
@@ -3287,6 +3357,105 @@ function planOfferScale(implied) {
   return true;
 }
 
+/* ---- the drawing-scale list, including a user-typed CUSTOM scale --------------------------------
+ * `#planScale` is filled from DRAWING_SCALES by planRenderScaleOptions(). On top of the presets it can
+ * hold: a `1:N (from the drawing)` entry a trace offered (planOfferScale, marked data-from-drawing), a
+ * `1:N (custom)` entry for a denominator the user typed (marked data-custom), and always a final
+ * `Custom…` sentinel. The list is rebuilt from state.project.planScale every time it is shown, so a
+ * project RESTORED from this browser shows its custom scale again instead of snapping to the nearest
+ * preset — which would silently change EVERY area. The only place a scale is ever applied is
+ * planApplyScale(); a custom value goes through it exactly like a preset. */
+const CUSTOM_SCALE_VALUE = '__custom__';   // the sentinel option value; never a real scale
+const CUSTOM_SCALE_MAX = 5000;             // above this a "scale" is almost certainly a typo
+
+/** Is this denominator one of the presets (so it needs no `(custom)` entry of its own)? */
+function isPresetScale(n) {
+  return DRAWING_SCALES.some((s) => Number(s.denom) === Number(n));
+}
+
+/** (Re)build the drawing-scale <option> list from the current project scale. Preserves any
+ *  `(from the drawing)` entry across rebuilds, adds a `(custom)` entry when the current scale is not a
+ *  preset, and always ends with `Custom…`. */
+function planRenderScaleOptions() {
+  const sel = el.planScale;
+  if (!sel) return;
+  const cur = planScaleDenom();
+  const draw = [...sel.options]
+    .filter((o) => o.dataset && o.dataset.fromDrawing)
+    .map((o) => ({ value: String(o.value), label: o.textContent }));
+  const drawByVal = new Map(draw.map((d) => [d.value, d.label]));
+  const html = DRAWING_SCALES.map((s) => {
+    const v = String(s.denom);
+    const over = drawByVal.get(v);
+    return over
+      ? `<option value="${v}" data-from-drawing="1">${esc(over)}</option>`
+      : `<option value="${v}">${esc(s.label)}</option>`;
+  });
+  for (const d of draw) {
+    if (isPresetScale(d.value)) continue;          // a preset already covers 1:N
+    html.push(`<option value="${esc(d.value)}" data-from-drawing="1">${esc(d.label)}</option>`);
+  }
+  if (!isPresetScale(cur)) {
+    html.push(`<option value="${cur}" data-custom="1">1:${cur} (custom)</option>`);
+  }
+  html.push(`<option value="${CUSTOM_SCALE_VALUE}">Custom…</option>`);
+  sel.innerHTML = html.join('');
+  sel.value = String(cur);
+}
+
+/** Select a custom denominator and apply it through the ONE scale path (planApplyScale). */
+function planApplyCustomScale(n) {
+  const sel = el.planScale;
+  if (!sel) return;
+  const v = String(n);
+  [...sel.options].forEach((o) => { if (o.dataset.custom && o.value !== v) o.remove(); });
+  let opt = [...sel.options].find((o) => o.value === v && o.dataset.custom);
+  if (!opt) {
+    opt = [...sel.options].find((o) => o.value === v);   // a preset with the same value: relabel it
+    if (opt) opt.dataset.custom = '1';
+  }
+  if (!opt) {
+    opt = document.createElement('option');
+    opt.value = v;
+    opt.dataset.custom = '1';
+    sel.appendChild(opt);
+  }
+  opt.textContent = `1:${v} (custom)`;
+  sel.value = v;
+  planApplyScale(v);
+}
+
+/** Ask for the denominator behind `Custom…`. A cancel, or anything that is not a positive number in
+ *  1..CUSTOM_SCALE_MAX, leaves the select exactly where it was and SAYS so — a silent no-op reads as
+ *  broken, and a wrong scale silently changes every area, so a value is never guessed. */
+function planAskCustomScale() {
+  const sel = el.planScale;
+  if (!sel) return;
+  const prev = String(planScaleDenom());
+  sel.value = prev;                      // the sentinel is never a real selection
+  const raw = window.prompt('Drawing scale — type the N in 1:N (for example 175 for 1:175):', prev);
+  if (raw == null) {
+    sel.value = prev;
+    setStatus('warn', `No scale was entered, so the drawing scale is unchanged (1:${prev}).`, 'plan');
+    return;
+  }
+  const txt = String(raw).trim();
+  const n = Number(txt);
+  if (!Number.isFinite(n) || n <= 0) {
+    sel.value = prev;
+    setStatus('warn', `“${txt || '(blank)'}” is not a positive number, so the drawing scale is ` +
+      `unchanged (1:${prev}). Type the N in 1:N, for example 175.`, 'plan');
+    return;
+  }
+  if (n > CUSTOM_SCALE_MAX) {
+    sel.value = prev;
+    setStatus('warn', `1:${n} is beyond the range this tool accepts (1 to ${CUSTOM_SCALE_MAX}), so the ` +
+      `drawing scale is unchanged (1:${prev}).`, 'plan');
+    return;
+  }
+  planApplyCustomScale(n);
+}
+
 /** Which line class(es) the trace used, in words (one class, or a different winner per page). */
 function passLabel(keys) {
   const list = [...(keys || [])];
@@ -3433,6 +3602,7 @@ function planApplyFill(assignments, reasonCount, info) {
     });
     room.area = a.areaM2;
     delete room.areaUnknown;
+    delete room.areaTyped;      // the area comes from the drawing now, so edits may follow the shape
     // Mark it so the table can say where the area came from, and so a later run/undo behave.
     room.areaFromDrawing = true;
     room.areaSource = 'drawing';
@@ -3610,9 +3780,26 @@ function planLevelForPage(page) {
  * placed rectangles use (planview.areaFromRect, wrapped by polyshape.polyAreaM2): there is no second
  * formula. */
 
+/** True when the user TYPED this room's area himself (areaTyped, set in onTableInput). That figure is
+ *  the owner's own measurement: no geometry edit may replace it silently. A path that recomputes an
+ *  area checks this FIRST and leaves the room exactly as typed instead. */
+function areaIsTyped(room) {
+  return !!(room && room.areaTyped);
+}
+
 /** A room the user drew by hand: source 'drawn' plus a poly ring. */
 function isDrawnPolyRoom(room) {
   return !!(room && room.source === 'drawn' && Array.isArray(room.poly) && room.poly.length > 2);
+}
+
+/** Does this room carry geometry on the plan — a ring (traced, drawn, or a converted polygon) or a
+ *  box (placed or hand-drawn)? A converted polygon owns its shape through the RING and carries no
+ *  `rect`, so planview.isDrawnRoom() alone would miss it; this is the single "has a shape on the plan"
+ *  test the box-based paths use. */
+function roomHasShape(room) {
+  if (!room) return false;
+  if (Array.isArray(room.poly) && room.poly.length > 2) return true;
+  return !!(room.rect && typeof room.rect.x === 'number');
 }
 
 /** Write a ring onto a room: the ring, its page, and a bounding-box rect — so every existing "this
@@ -3620,10 +3807,19 @@ function isDrawnPolyRoom(room) {
  *  what the overlay draws and hit-tests; the rect is only its box. NEVER touches `source`: a traced
  *  outline stays traced. */
 function setRoomRing(room, ring, page) {
+  const hadRing = Array.isArray(room.poly) && room.poly.length > 2;
   const pts = roundRing(ring);
   room.poly = pts;
   room.polyPage = page != null ? page : (room.polyPage || plan.page || 1);
   room.polyDrawing = plan.drawingId;   // this ring is measured on the drawing now loaded
+  // A room whose shape is a RING owns it through the ring: it must not ALSO grow a `rect`. A bounding
+  // box on a polygon is a lie about the shape, and rewriting it on every vertex drag would resurrect a
+  // rectangle behind the polygon that a later corner gesture could act on. So the box is written only
+  // when this call GIVES the room its first ring (a trace, a hand-drawn shape, a shape moved onto it) —
+  // the box-based paths (isDrawnRoom, place-all) still recognise that room. A room that already had a
+  // ring (a converted polygon's vertex/edge edit) keeps whatever box state it has: none, for a
+  // conversion, which drops the box on release (planConvertRectToPoly).
+  if (hadRing) return;
   const bbox = ringBBox(pts);
   if (bbox) {
     room.rect = {
@@ -3657,7 +3853,11 @@ function planConvertRectToPoly(room, ring, page, final) {
   if (!final) return;                 // live drag: the box stays, so an abandoned drag changes nothing
   delete room.rect;
   delete room.rectDrawing;
-  if (room.areaFromDrawing || room.source === 'drawn') {
+  // AREA rule: the new shape's area replaces the room's ONLY when that area came FROM a shape
+  // (areaFromDrawing, or a room the user drew) AND the user did not type it. A typed area is the
+  // owner's own measurement and is NEVER silently replaced by a geometry edit — the opposite direction
+  // from a row that GIVES its shape away, which blanks the area that shape was providing.
+  if (!areaIsTyped(room) && (room.areaFromDrawing || room.source === 'drawn')) {
     room.source = 'drawn';            // it now owns its area through the ring (vertex edits follow)
     room.scaleDenom = denom;
     room.area = round2(polyAreaM2(room.poly, denom));
@@ -3729,6 +3929,8 @@ function planCommitShape(roomId) {
     room.scaleDenom = planScaleDenom();
     setRoomRing(room, shape.ring, shape.page);
     room.area = drawnPolyArea(room);
+    delete room.areaTyped;      // the drawn shape now provides the area: edits follow the shape again
+    delete room.areaUnknown;
     renderAll();
     saveNow();
     planRenderGeometry();
@@ -3799,6 +4001,7 @@ function planMoveShapeTo(fromId, toId) {
   setRoomRing(to, ring, page);
   to.area = drawnPolyArea(to);
   to.areaFromDrawing = true;
+  delete to.areaTyped;        // the shape now provides the area: edits on it follow the shape again
   delete to.areaUnknown;
   renderAll();
   saveNow();
@@ -3887,7 +4090,10 @@ function planApplyScale(denom) {
   state.project.planScale = n;
   let changed = 0, keptTrace = 0;
   for (const r of state.rooms) {
-    if (!isDrawnRoom(r) || isPlacedRoom(r)) continue;
+    // A TYPED area is the user's own figure, independent of the drawing scale: changing the scale must
+    // not silently replace it (the same rule every geometry edit follows).
+    if (areaIsTyped(r)) continue;
+    if (!roomHasShape(r) || isPlacedRoom(r)) continue;
     if (isDrawnPolyRoom(r)) {
       // a HAND-DRAWN SHAPE owns its area through the RING, not through the bounding box, so it is
       // re-measured from the ring at the new scale (a traced outline keeps the old rect behaviour)
@@ -4366,11 +4572,11 @@ function planWire() {
   if (plan.wired) return;
   plan.wired = true;
   if (el.planScale) {
-    el.planScale.innerHTML = DRAWING_SCALES
-      .map((s) => `<option value="${s.denom}">${s.label}</option>`).join('');
-    el.planScale.value = String(planScaleDenom());
+    planRenderScaleOptions();
     el.planScale.addEventListener('change', () => {
       const opt = el.planScale.options[el.planScale.selectedIndex];
+      // The `Custom…` sentinel asks for a denominator; it is never applied as a scale itself.
+      if (opt && opt.value === CUSTOM_SCALE_VALUE) { planAskCustomScale(); return; }
       const fromDrawing = !!(opt && opt.dataset && opt.dataset.fromDrawing);
       planApplyScale(el.planScale.value);
       // Choosing the scale the outlines imply re-runs the trace straight away — that is the whole point
@@ -4446,6 +4652,7 @@ async function openPlan(bytes, opts) {
         getScaleDenom: planScaleDenom,
         getDrawingId: () => plan.drawingId,
         getMode: () => state.ui.planMode,
+        getAreaText: planRoomAreaText,   // the on-drawing area chip (formatted here, not in the overlay)
         onDraw: planDrawRoom,
         onDrawShape: planDrawShape,
         onSelect: planSelectRoom,

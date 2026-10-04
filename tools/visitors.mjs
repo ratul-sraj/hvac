@@ -19,6 +19,13 @@
 //   printed and never stored in --json — not even the owner's own. Only the hash prefix and
 //   aggregate counts leave this process.
 //
+// PER-CAMPAIGN ATTRIBUTION: the standard log's cs-uri-query holds the utm_* tags a link carried
+// (see tools/job-links.mjs, which mints one tagged link per job-email recipient). This tool
+// groups the unique real visitors by utm_campaign, with "(none)" for a visit that arrived without
+// a tag, and shows the (campaign/content) pair when a request carried both — so a single emailed
+// link can be told apart from a campaign-wide one. An untagged share still counts as a visitor;
+// it simply cannot be attributed, and the report says so rather than guessing.
+//
 // OWN TRAFFIC is removed two ways and both are reported:
 //   (a) a user-agent deny-list covering bots, monitors and automation (see UA_DENY below);
 //   (b) an own-address list read from a file that lives OUTSIDE this public repo, because a
@@ -63,6 +70,7 @@ const UA_DENY =
 const F_IP = "c-ip";                 // internal only — never printed
 const F_UA = "cs(User-Agent)";       // internal only
 const F_STEM = "cs-uri-stem";
+const F_QUERY = "cs-uri-query";      // carries the utm_* tags of the clicked link
 const F_STATUS = "sc-status";
 const F_DATE = "date";
 
@@ -120,7 +128,11 @@ function printHelp() {
 
 A visitor is a short salted hash of (address + browser), one per UTC day. A raw address is
 never printed and never stored. Own traffic is excluded by a bot deny-list and by the
-own-address file above (which stays outside this repo).`);
+own-address file above (which stays outside this repo).
+
+The report also groups unique real visitors by the utm_campaign carried in the request URL
+("(none)" = untagged), and shows the campaign/content pair when a request carried both, so a
+visit from a tagged email link can be told apart from a stranger, a bot, or an untagged share.`);
 }
 
 /* ---------------------------- AWS CLI helper --------------------------- */
@@ -263,6 +275,50 @@ function ipMatchesAny(ip, entries) {
   return false;
 }
 
+/* --------------------------- campaign tagging -------------------------- */
+/**
+ * Parse a CloudFront cs-uri-query value into a flat object. '-' or '' means no query.
+ * Values are URI-decoded (a '+' is treated as a space, matching how a query string is read).
+ * Never throws on a malformed escape.
+ */
+function parseQuery(q) {
+  const out = {};
+  const raw = String(q == null ? "" : q).trim();
+  if (!raw || raw === "-") return out;
+  for (const part of raw.split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    const k = eq >= 0 ? part.slice(0, eq) : part;
+    const v = eq >= 0 ? part.slice(eq + 1) : "";
+    let dk, dv;
+    try { dk = decodeURIComponent(k.replace(/\+/g, " ")); } catch { dk = k; }
+    try { dv = decodeURIComponent(v.replace(/\+/g, " ")); } catch { dv = v; }
+    if (dk) out[dk] = dv;
+  }
+  return out;
+}
+
+/**
+ * A raw utm_* value -> the same stable token the site's own beacon records, so a visit read here
+ * reconciles with the same visit read from the beacons (js/usage.js normaliseUtm): lower-cased,
+ * runs of separators -> a single '-', trimmed, capped at 64. Kept in sync with js/usage.js by
+ * hand (that module is a browser ES module and is not imported here).
+ */
+function normaliseCampaignToken(value) {
+  if (typeof value !== "string") return "";
+  const raw = value.trim();
+  if (!raw || raw.length > 512) return "";
+  return raw.toLowerCase().replace(/[^a-z0-9._~-]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64).replace(/-+$/g, "");
+}
+
+/** The (campaign, content) a request carried. campaign is "(none)" when absent or unreadable. */
+function campaignOf(query) {
+  const q = parseQuery(query);
+  const campaign = normaliseCampaignToken(q.utm_campaign || "") || "(none)";
+  const content = normaliseCampaignToken(q.utm_content || "");
+  return { campaign, content };
+}
+
 /* ------------------------------ analysis ------------------------------- */
 const pageOf = (stem) => (stem === "/index.html" ? "/" : stem); // '/' + '/index.html' are the home page
 
@@ -282,6 +338,15 @@ function analyze(parsed, opts = {}) {
   const perPage = new Map();           // path -> unique visitor count
   const byStem = new Map();            // clean request counts per uri stem
   const api = { count: 0, byStatus: new Map() };
+  // Per-campaign attribution. Visitors are tracked as the SAME (day|id) keys as elsewhere, so a
+  // campaign count is unique PEOPLE, not requests — the hourly batching (one file per UTC hour)
+  // changes nothing about who is unique; a person is one id per UTC day.
+  const campVisitors = new Map();      // campaign -> Set(day|id)
+  const campRequests = new Map();      // campaign -> clean page request count
+  const campContentVisitors = new Map(); // "campaign/content" -> Set(day|id)
+  const campContentRequests = new Map(); // "campaign/content" -> request count
+  let taggedRequests = 0;              // page requests carrying a utm_campaign
+  let untaggedRequests = 0;            // page requests with none
   let totalRequests = 0;
 
   for (const r of rows) {
@@ -318,6 +383,21 @@ function analyze(parsed, opts = {}) {
       perPage.get(pg).add(`${day}|${id}`);
       if (!cleanByDay.has(day)) cleanByDay.set(day, new Set());
       cleanByDay.get(day).add(id);
+
+      // Per-campaign attribution, from the tags this page request carried.
+      const { campaign, content } = campaignOf(r[F_QUERY]);
+      const vkey = `${day}|${id}`;
+      if (campaign === "(none)") untaggedRequests += 1;
+      else taggedRequests += 1;
+      if (!campVisitors.has(campaign)) campVisitors.set(campaign, new Set());
+      campVisitors.get(campaign).add(vkey);
+      campRequests.set(campaign, (campRequests.get(campaign) || 0) + 1);
+      if (campaign !== "(none)" && content) {
+        const pair = `${campaign}/${content}`;
+        if (!campContentVisitors.has(pair)) { campContentVisitors.set(pair, new Set()); campContentRequests.set(pair, 0); }
+        campContentVisitors.get(pair).add(vkey);
+        campContentRequests.set(pair, campContentRequests.get(pair) + 1);
+      }
     }
   }
 
@@ -331,6 +411,19 @@ function analyze(parsed, opts = {}) {
   const perPageCount = new Map([...perPage.entries()].map(([p, s]) => [p, s.size]));
 
   const topStems = [...byStem.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+  // Campaign rows: tagged campaigns first (by visitors desc), then "(none)". Requests are the
+  // clean page requests carrying that campaign tag.
+  const campaignRows = [...campVisitors.entries()]
+    .map(([campaign, ids]) => ({ campaign, visitors: ids.size, requests: campRequests.get(campaign) || 0 }))
+    .sort((a, b) => {
+      if (a.campaign === "(none)") return 1;
+      if (b.campaign === "(none)") return -1;
+      return b.visitors - a.visitors || a.campaign.localeCompare(b.campaign);
+    });
+  const contentRows = [...campContentVisitors.entries()]
+    .map(([pair, ids]) => ({ pair, visitors: ids.size, requests: campContentRequests.get(pair) || 0 }))
+    .sort((a, b) => b.visitors - a.visitors || a.pair.localeCompare(b.pair));
 
   return {
     totalRequests,
@@ -347,12 +440,49 @@ function analyze(parsed, opts = {}) {
     },
     byStem: topStems,
     api: { count: api.count, byStatus: Object.fromEntries([...api.byStatus.entries()].sort()) },
+    campaigns: {
+      rows: campaignRows,
+      content: contentRows,
+      taggedRequests,
+      untaggedRequests,
+      taggedVisitors: campaignRows.filter((r) => r.campaign !== "(none)").reduce((n, r) => n + r.visitors, 0),
+    },
   };
 }
 
 /* ------------------------------- report -------------------------------- */
 const padL = (s, n) => String(s).padStart(n);
 const pad = (s, n) => String(s).padEnd(n);
+
+// The per-campaign attribution block. Tagged campaigns first (already sorted in analyze), then
+// "(none)". A campaign with zero requests cannot appear here — so when NOTHING was tagged the
+// block says so plainly instead of implying traffic does not exist.
+function printCampaigns(stats) {
+  const c = stats.campaigns;
+  console.log(`Per campaign (UNIQUE real visitors grouped by utm_campaign in the request URL):`);
+  console.log(`  ${pad("campaign", 26)}${padL("visitors", 9)}${padL("requests", 9)}`);
+  if (!c.rows.length) console.log(`      (none)`);
+  for (const r of c.rows) console.log(`  ${pad(r.campaign, 26)}${padL(r.visitors, 9)}${padL(r.requests, 9)}`);
+  const total = c.taggedRequests + c.untaggedRequests;
+  console.log(`  tagged page requests: ${c.taggedRequests} of ${total}  ("(none)" above = a visit with no utm_campaign)`);
+  if (c.content.length) {
+    console.log(`  campaign/content pairs (tells ONE emailed link apart from a campaign-wide one):`);
+    console.log(`    ${pad("pair", 34)}${padL("visitors", 9)}${padL("requests", 9)}`);
+    for (const r of c.content) console.log(`    ${pad(r.pair, 34)}${padL(r.visitors, 9)}${padL(r.requests, 9)}`);
+  } else {
+    console.log(`  campaign/content pairs: none in this window (no request carried both tags)`);
+  }
+  if (!c.taggedRequests) {
+    const untaggedVisitors = (c.rows.find((r) => r.campaign === "(none)") || {}).visitors || 0;
+    console.log("");
+    console.log(`  NOTE (honest zero): no request in this window carried a utm_campaign tag — so 0 campaigns`);
+    console.log(`        can be attributed, whatever the total. ${untaggedVisitors} unique real visitor(s) were counted`);
+    console.log(`        without a tag. An untagged share still counts as a visitor; it simply cannot be attributed.`);
+    console.log(`        If you emailed a tagged link and it is absent above, it was opened without its utm_* tags,`);
+    console.log(`        or nobody opened it — this tool will not invent an attribution either way.`);
+  }
+  console.log("");
+}
 
 function printReport(stats, opts, meta) {
   const line = "-".repeat(64);
@@ -392,6 +522,7 @@ function printReport(stats, opts, meta) {
   for (const [p, n] of Object.entries(stats.unique.perPage)) console.log(`      ${pad(p, 26)} ${padL(n, 5)}`);
   if (!Object.keys(stats.unique.perPage).length) console.log(`      (none)`);
   console.log("");
+  printCampaigns(stats);
   console.log(`Same count WITHOUT any exclusion : ${stats.uniqueUnfiltered.window}`);
   console.log(`  (the difference is what the bot deny-list and own-address list cost you)`);
   console.log("");
@@ -507,6 +638,12 @@ function main() {
       excluded: stats.excluded,
       uniqueVisitors: stats.unique,
       uniqueVisitorsUnfiltered: stats.uniqueUnfiltered,
+      // Per-campaign attribution: unique real visitors (never requests-only) grouped by the
+      // utm_campaign in the request URL, "(none)" for untagged. Visitors stay 12-hex hashes.
+      uniqueVisitorsByCampaign: stats.campaigns.rows,
+      campaignContentPairs: stats.campaigns.content,
+      taggedRequests: stats.campaigns.taggedRequests,
+      untaggedRequests: stats.campaigns.untaggedRequests,
       topStems: stats.byStem.slice(0, 15),
       apiParse: stats.api,
       ownIpsFile: { path: ownIpsInfo.path, exists: ownIpsInfo.exists, entries: ownIpsInfo.entries.length },
@@ -522,7 +659,8 @@ function main() {
 export {
   PAGE_PATHS, UA_DENY, VISITOR_SALT, DEFAULT_OWN_IPS,
   parseArgs, parseLog, makeVisitorId, isBot, loadOwnIps, ipMatchesAny, ipInCidr,
-  analyze, printReport, listLogObjects, hourStartFromKey, decodeLog,
+  analyze, printReport, printCampaigns, listLogObjects, hourStartFromKey, decodeLog,
+  parseQuery, normaliseCampaignToken, campaignOf,
 };
 
 // Only run the CLI when executed directly; importing it (tests) must not touch AWS.

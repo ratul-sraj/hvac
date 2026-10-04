@@ -24,6 +24,9 @@
  *                      //   DIFFERENT drawing (room.polyDrawing / room.rectDrawing) is NOT painted —
  *                      //   see shapesOnPage(). null (no identity in play) filters nothing.
  *     getMode,         // () => 'draw' | 'select'
+ *     getAreaText,     // (room) => string|null  the room's area chip text, formatted by the APP (so
+ *                      //   the plan and the table can never disagree). The overlay never formats an
+ *                      //   area itself. null/absent = draw no chips at all.
  *     onDraw,          // (rect, {page}) => void   rect = {x,y,w,h} PDF points; only when usable
  *     onDrawShape,     // (ring, {page}) => void   a hand-drawn polygon (PDF space); see DRAWN SHAPES
  *     onSelect,        // (room|null) => void      click in select mode
@@ -217,6 +220,11 @@ const MARKER_PX = 9;
  *  measurement: a dashed ring (radius, view px) plus a crosshair arm length (view px). */
 const FOCUS_RING_PX = 9;
 const FOCUS_CROSS_PX = 13;
+/** The AREA CHIP: a small readout of the room's own area, drawn just BELOW its name. The gap clears
+ *  the printed/overlay name; a shape with no name point gets its chip this far below the box centre.
+ *  Font is a fixed view-pixel size — the chip is a readout, not part of the measured shape. */
+const CHIP_GAP_PX = 15;
+const CHIP_FONT_PX = 11;
 
 /* --- 'Draw shape' (a hand-drawn polygon) --------------------------------------------------------- */
 /** Click within this many view pixels of the FIRST vertex closes the shape. */
@@ -398,6 +406,7 @@ export function createOverlay(rootEl, {
   getScaleDenom = () => 100,
   getDrawingId = () => null,
   getMode = () => 'select',
+  getAreaText = null,
   onDraw = null,
   onDrawShape = null,
   onSelect = null,
@@ -418,7 +427,15 @@ export function createOverlay(rootEl, {
   const draftG = document.createElementNS(SVG_NS, 'g');
   draftG.setAttribute('class', 'draft');
 
-  svg.append(roomsG, draftG);
+  // The area chips live in their OWN layer, drawn last (on top) but entirely INERT: pointer-events:none
+  // in CSS and as an attribute here, so a chip can never be a hit-target, never steal a click from
+  // selection, a shape corner, a vertex/edge grip, the pending ring or the focus mark. The plan is a
+  // drawing surface first.
+  const chipsG = document.createElementNS(SVG_NS, 'g');
+  chipsG.setAttribute('class', 'plan-area-chips');
+  chipsG.setAttribute('pointer-events', 'none');
+
+  svg.append(roomsG, draftG, chipsG);
   rootEl.appendChild(svg);
 
   /* -------------------------------------------------------------- state */
@@ -929,9 +946,39 @@ export function createOverlay(rootEl, {
     draftG.appendChild(t);
   }
 
+  /** One room's AREA CHIP: a small text just under its name/centre. `text` is handed in by the app
+   *  (safeCall(getAreaText, room)) — the overlay never formats an area itself, so the plan and the
+   *  table can never disagree — and an empty/falsy text draws nothing. Inert: pointer-events:none. */
+  function areaChip(room, anchor, text) {
+    if (!text) return null;
+    const t = document.createElementNS(SVG_NS, 'text');
+    t.setAttribute('class', 'plan-area-chip');
+    t.setAttribute('data-room-id', room && room.id != null ? String(room.id) : '');
+    t.setAttribute('x', num(anchor.x));
+    t.setAttribute('y', num(anchor.y));
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('font-size', String(CHIP_FONT_PX));
+    t.setAttribute('pointer-events', 'none');
+    t.textContent = text;
+    return t;
+  }
+
+  /** Where a room's chip goes (view px): just below the room's own name point (`at`, the PDF's printed
+   *  name position) when it has one, otherwise CHIP_GAP_PX below the shape's box centre. */
+  function chipAnchor(room, vp, box) {
+    const at = room && room.at;
+    if (at && Number.isFinite(Number(at.x)) && Number.isFinite(Number(at.y))
+        && (room.page == null || Number(room.page) === (safeCall(getPage) ?? 1))) {
+      const p = pdfPointToView(vp, { x: Number(at.x), y: Number(at.y) });
+      return { x: p.x, y: p.y + CHIP_GAP_PX };
+    }
+    return { x: box.x + box.w / 2, y: box.y + box.h / 2 + CHIP_GAP_PX };
+  }
+
   function render() {
     if (destroyed) return;
     roomsG.replaceChildren();
+    chipsG.replaceChildren();
     const vp = viewport();
     if (!vp) { draftG.replaceChildren(); return; }   // no page rendered yet: draw nothing, throw nothing
 
@@ -954,6 +1001,8 @@ export function createOverlay(rootEl, {
         const box = viewBoxOfPoints(viewRing);
         if (!box || box.w <= 0 || box.h <= 0) continue;
         roomsG.appendChild(roomShape(room, box, viewRing, room.id === selectedId, dragging));
+        const chip = areaChip(room, chipAnchor(room, vp, box), safeCall(getAreaText, room));
+        if (chip) chipsG.appendChild(chip);
         continue;
       }
       const box = clampBox(rectToViewBox(vp, room.rect));
@@ -964,9 +1013,13 @@ export function createOverlay(rootEl, {
         const full = rectToViewBox(vp, room.rect);
         roomsG.appendChild(markerShape(room, { x: full.x + full.w / 2, y: full.y + full.h / 2 },
           room.id === selectedId, dragging));
+        const chip = areaChip(room, chipAnchor(room, vp, full), safeCall(getAreaText, room));
+        if (chip) chipsG.appendChild(chip);
         continue;
       }
       roomsG.appendChild(roomShape(room, box, null, room.id === selectedId, dragging));
+      const chip = areaChip(room, chipAnchor(room, vp, box), safeCall(getAreaText, room));
+      if (chip) chipsG.appendChild(chip);
     }
     // A SELECTED room the loop above did NOT draw still gets marked: a room read from a PDF label
     // carries only `at` — the point that names it — and no ring or rect, so clicking its table row

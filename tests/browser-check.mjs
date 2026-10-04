@@ -3736,6 +3736,243 @@ if (!sampleMissing) {
           && Math.abs(Number(st.cell) - Number(typed.area)) < 0.01,
         `typed ${typed.area} m²; after conversion ${st.area} m² (cell ${st.cell})`);
     }
+
+    // ---- JOB 4: an AREA CHIP under each room's own name, kept live and inert --------------------
+    // Every room with geometry on the page gets one small text just under its name; a room with no
+    // area reads exactly "no area"; a chip never becomes a hit-target; a stale shape gets none; and
+    // the plan does not move when chips appear. Text is handed in by the app (unit-aware formatter).
+    {
+      const chipTextOf = (id) => page.evaluate((rid) => {
+        const t = document.querySelector(`.plan-area-chip[data-room-id="${rid}"]`);
+        return t ? t.textContent : null;
+      }, id);
+      const drawPoly = async () => {
+        await setMode("shape");
+        await centerPlan();
+        const b = await page.$eval("#planView", (e) => {
+          const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height };
+        });
+        const P = [[0.05, 0.10], [0.20, 0.10], [0.20, 0.24], [0.05, 0.24]]
+          .map(([fx, fy]) => ({ x: b.x + fx * b.w, y: b.y + fy * b.h }));
+        for (const pt of P) { await page.mouse.click(pt.x, pt.y); await sleepT(220); }
+        await page.mouse.click(P[0].x, P[0].y); await sleepT(700);          // close on the first corner
+        const shown = await page.evaluate(() => {
+          const c = document.getElementById("planShapeAssign");
+          return !!(c && !c.classList.contains("hidden"));
+        });
+        if (shown) { await page.click("#planShapeAssignGo"); await sleepT(800); }
+        return page.$eval("#roomsBody tr:last-child", (tr) => tr.getAttribute("data-id"));
+      };
+
+      // (i) one chip per room with geometry, and a room with no area reads exactly "no area".
+      const idPoly = await drawPoly();
+      const polyChip = await chipTextOf(idPoly);
+      const stats = await page.evaluate(() => {
+        const chips = [...document.querySelectorAll(".plan-area-chip")];
+        return {
+          chips: chips.length,
+          rooms: document.querySelectorAll(
+            '#planView .plan-room[data-shape="rect"],#planView .plan-room[data-shape="poly"],' +
+            '#planView .plan-room[data-shape="marker"]').length,
+          blank: chips.filter((t) => !t.textContent.trim()).length,
+          zeroOrNan: chips.filter((t) => /NaN/.test(t.textContent) || /^0(\.0+)? ?/.test(t.textContent)).length,
+          pe: getComputedStyle(document.querySelector(".plan-area-chips")).pointerEvents,
+        };
+      });
+      ok("JOB4 (i) one area chip per room with geometry (never blank/0/NaN); the chip layer is inert",
+        stats.chips === stats.rooms && stats.rooms > 1 && stats.blank === 0 && stats.zeroOrNan === 0
+          && stats.pe === "none",
+        `chips ${stats.chips} vs rooms ${stats.rooms}; blank ${stats.blank}; 0/NaN ${stats.zeroOrNan}; layer pointer-events ${stats.pe}; drawn-poly chip "${polyChip}"`);
+
+      // a room WITH geometry and NO area → exactly "no area"
+      await page.$eval(`tr[data-id="${idPoly}"] input[data-field="area"]`, (inp) => {
+        inp.value = "";
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+        inp.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await sleepT(500);
+      const cleared = await chipTextOf(idPoly);
+      ok("JOB4 (i) a room with geometry but no area shows exactly \"no area\"",
+        cleared === "no area", `chip "${cleared}"`);
+      // restore a numeric area WITHOUT the typed marker, so the outline still drives it (a typed area
+      // is deliberately kept, so it must not be used for this live-follow check)
+      await page.evaluate((rid) => {
+        const room = window.webhvac.state.rooms.find((r) => r.id === rid);
+        room.area = 30;
+        delete room.areaTyped;
+        window.webhvac.plan.overlay.render();
+      }, idPoly);
+      await sleepT(400);
+
+      // (ii) the chip CHANGES when the room's own outline is dragged (a hand-drawn polygon's vertex).
+      await selectRoom(idPoly);
+      const beforeDrag = await chipTextOf(idPoly);
+      let pb = await boxOf(idPoly);   // re-read the box right before the gesture
+      await page.mouse.move(pb.x, pb.y);
+      await page.mouse.down();
+      await page.mouse.move(pb.x - 55, pb.y - 45, { steps: 8 });
+      await sleepT(200);
+      const duringDrag = await chipTextOf(idPoly);
+      await page.mouse.up();
+      await sleepT(700);
+      const afterDrag = await chipTextOf(idPoly);
+      // A hand-drawn polygon's vertex drag recomputes the area on every move, so the chip moved DURING
+      // the drag as well as after release.
+      ok("JOB4 (ii) the area chip changes when the room's outline is dragged (live, during the drag)",
+        !!afterDrag && afterDrag !== beforeDrag && /m²|ft²/.test(afterDrag) && duringDrag === afterDrag,
+        `before "${beforeDrag}" → during "${duringDrag}" → after "${afterDrag}"`);
+
+      // (ii-b) a plain BOX's corner resize is live too — the chip already shows the new figure BEFORE
+      //        the pointer is lifted.
+      {
+        const idRect = await drawRect(0.55, 0.08, 0.14, 0.14);
+        await selectRoom(idRect);
+        const before = await chipTextOf(idRect);
+        const rb = await boxOf(idRect);
+        await page.mouse.move(rb.x + rb.w, rb.y + rb.h);
+        await page.mouse.down();
+        await page.mouse.move(rb.x + rb.w + 80, rb.y + rb.h + 60, { steps: 8 });
+        await sleepT(200);
+        const mid = await chipTextOf(idRect);          // read BEFORE pointer up
+        await page.mouse.up();
+        await sleepT(500);
+        const after = await chipTextOf(idRect);
+        ok("JOB4 (ii) a box corner-resize updates the chip MID-DRAG (before pointer up)",
+          !!mid && mid !== before && mid === after && /m²|ft²/.test(mid),
+          `before "${before}" → mid-drag "${mid}" → after "${after}"`);
+      }
+
+      // (iii) inert: the chip is never the hit-target, and a click at its centre still selects the room.
+      //        Re-measure AFTER centering the plan (scrolling moves the chip).
+      await setMode("select");
+      await centerPlan();
+      const inert = await page.evaluate((rid) => {
+        const t = document.querySelector(`.plan-area-chip[data-room-id="${rid}"]`);
+        const r = t.getBoundingClientRect();
+        const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return { x, y, pe: getComputedStyle(t).pointerEvents, hitIsChip: hit === t,
+          hitClass: hit ? (hit.getAttribute("class") || hit.tagName) : null };
+      }, idPoly);
+      await page.mouse.click(inert.x, inert.y);
+      await sleepT(500);
+      const selectedByChip = await page.evaluate(() => window.webhvac.state.ui.openId);
+      ok("JOB4 (iii) a chip is inert — a click at its centre is not the chip and still selects the room",
+        inert.pe === "none" && inert.hitIsChip === false && selectedByChip === idPoly,
+        `chip pointer-events ${inert.pe}; element from chip centre hit ${inert.hitIsChip} (${inert.hitClass}); openId ${selectedByChip}`);
+
+      // (v) the plan does not move when chips appear (identical box with the layer hidden vs shown).
+      const rectOfPlan = () => page.evaluate(() => {
+        const r = document.getElementById("planView").getBoundingClientRect();
+        return { y: Math.round(r.y), h: Math.round(r.height) };
+      });
+      const withChips = await rectOfPlan();
+      await page.evaluate(() => { const g = document.querySelector(".plan-area-chips"); if (g) g.style.display = "none"; });
+      await sleepT(200);
+      const withoutChips = await rectOfPlan();
+      await page.evaluate(() => { const g = document.querySelector(".plan-area-chips"); if (g) g.style.display = ""; });
+      ok("JOB4 (v) the plan does not move when chips appear",
+        withChips.y === withoutChips.y && withChips.h === withoutChips.h,
+        `#planView y/h ${withChips.y}/${withChips.h} (chips) vs ${withoutChips.y}/${withoutChips.h} (hidden)`);
+
+      // (iv) a stale shape (geometry from another drawing) gets no chip, and gets one again when the
+      //      drawing tag matches.
+      const beforeStale = await chipTextOf(idPoly);
+      await page.evaluate((rid) => {
+        const room = window.webhvac.state.rooms.find((r) => r.id === rid);
+        room.polyDrawing = "OTHER-DRAWING";
+        window.webhvac.plan.overlay.render();
+      }, idPoly);
+      await sleepT(300);
+      const staleChip = await chipTextOf(idPoly);
+      await page.evaluate((rid) => {
+        const room = window.webhvac.state.rooms.find((r) => r.id === rid);
+        delete room.polyDrawing;
+        window.webhvac.plan.overlay.render();
+      }, idPoly);
+      await sleepT(300);
+      const restoredChip = await chipTextOf(idPoly);
+      ok("JOB4 (iv) a shape from a previous drawing gets no chip (the stale gate applies)",
+        staleChip === null && restoredChip === beforeStale,
+        `chip before "${beforeStale}", stale "${staleChip}", restored "${restoredChip}"`);
+    }
+
+    // ---- JOB 5: a user-typed CUSTOM drawing scale -----------------------------------------------
+    // `Custom…` at the end of the list asks for the denominator and applies it through the SAME
+    // planApplyScale path; rubbish leaves the select and every area untouched and says why; the custom
+    // value survives a reload as `1:N (custom)`.
+    {
+      const scaleState = () => page.evaluate(() => {
+        const sel = document.getElementById("planScale");
+        const opt = sel.options[sel.selectedIndex];
+        return {
+          value: sel.value, label: opt ? opt.textContent : null,
+          n: window.webhvac.state.project.planScale,
+          status: (document.getElementById("planStatus") || {}).textContent.replace(/\s+/g, " ").trim(),
+          hasCustomOption: [...sel.options].some((o) => o.value === "__custom__"),
+        };
+      });
+      const areaOf = (id) => page.evaluate((rid) =>
+        Number((window.webhvac.state.rooms.find((r) => r.id === rid) || {}).area), id);
+      const promptReply = (reply) => page.evaluate((r) => { window.prompt = () => r; }, reply);
+
+      const id = await drawRect(0.44, 0.12, 0.16, 0.16);
+      await sleepT(400);
+      const a0 = await areaOf(id);
+      ok("JOB5 the scale list ends in a Custom… option", (await scaleState()).hasCustomOption,
+        `options: ${JSON.stringify(await page.$$eval("#planScale option", (o) => o.map((x) => x.textContent)))}`);
+
+      // (i) Custom… 175: the scale is set and the drawn room re-measured by (175/100)^2 = 3.0625.
+      await promptReply("175");
+      await page.select("#planScale", "__custom__");
+      await sleepT(700);
+      const s1 = await scaleState();
+      const a1 = await areaOf(id);
+      const factor = a1 / a0, want = (175 / 100) ** 2;
+      ok("JOB5 (i) Custom… 175 sets the scale and re-measures a drawn room by (175/100)^2",
+        s1.value === "175" && s1.n === 175 && /\(custom\)/.test(s1.label || "") && Math.abs(factor - want) < 0.02,
+        `scale 1:${s1.value} "${s1.label}" (project ${s1.n}); area ${a0} → ${a1} (factor ${factor.toFixed(3)}, want ${want.toFixed(3)})`);
+
+      // (ii) rubbish / out-of-range: the select and the areas are untouched and the status explains.
+      await promptReply("abc");
+      await page.select("#planScale", "__custom__");
+      await sleepT(600);
+      const b1 = await scaleState();
+      const aBad = await areaOf(id);
+      ok("JOB5 (ii) a non-number leaves the scale and every area untouched, and the status line explains",
+        b1.value === "175" && aBad === a1 && /not a positive number/i.test(b1.status),
+        `value 1:${b1.value}; area ${aBad}; status "${(b1.status || "").slice(0, 110)}"`);
+      await promptReply("99999");
+      await page.select("#planScale", "__custom__");
+      await sleepT(600);
+      const b2 = await scaleState();
+      ok("JOB5 (ii) an absurd scale is refused with a plain sentence",
+        b2.value === "175" && b2.n === 175 && /beyond the range/i.test(b2.status),
+        `value 1:${b2.value}; status "${(b2.status || "").slice(0, 110)}"`);
+      await promptReply(null);
+      await page.select("#planScale", "__custom__");
+      await sleepT(600);
+      const b3 = await scaleState();
+      ok("JOB5 (ii) a cancelled prompt also leaves the select exactly where it was",
+        b3.value === "175" && /No scale was entered/i.test(b3.status),
+        `value 1:${b3.value}; status "${(b3.status || "").slice(0, 110)}"`);
+
+      // (iii) the custom scale survives a save + reload and still reads "(custom)".
+      await sleepT(700);   // let the debounced save flush (saveSoon waits 300 ms)
+      await page.reload({ waitUntil: "networkidle2", timeout: 90000 });
+      await page.waitForFunction(() => window.webhvac && window.webhvac.state, { timeout: 60000 }).catch(() => {});
+      await sleepT(1200);
+      const s2 = await scaleState();
+      ok("JOB5 (iii) a custom scale survives a reload and still reads 1:N (custom)",
+        s2.value === "175" && s2.n === 175 && /\(custom\)/.test(s2.label || ""),
+        `after reload: 1:${s2.value} "${s2.label}" (project ${s2.n})`);
+      // (iv) the presets are still offered, and the one-click / from-drawing path is unchanged (the
+      //      JOB1 checks above exercise the fix itself).
+      const presetOk = await page.$$eval("#planScale option", (o) => o.map((x) => x.value)).then(
+        (vals) => vals.includes("100") && vals.includes("200") && vals.includes("500"));
+      ok("JOB5 (iv) the preset scales remain in the list beside the custom entry", presetOk,
+        `options ${JSON.stringify(await page.$$eval("#planScale option", (o) => o.map((x) => x.textContent)))}`);
+    }
   }
 
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });

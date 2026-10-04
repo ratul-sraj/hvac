@@ -159,6 +159,39 @@ await level.evaluate(() => {
     if (n) n.style.display = "none";
   }
 });
+
+// 2b. Select a room so the shot shows what the page claims: a room picked out on the sheet with its
+//     area chip under its name. The room is selected through the TABLE ROW (the same gesture a visitor
+//     uses - the app marks that room on the plan, scrolls its row into view and flashes it). Never
+//     pre-set state.ui.openId: a row click TOGGLES, so a pre-set id closes the panel instead of
+//     opening it. Pick a room that has a real outline on the page being shown, so the mark and the
+//     new ring are both visible in the picture.
+const picked = await level.evaluate(() => {
+  const page = (window.webhvac.plan && window.webhvac.plan.page) || 1;
+  const rooms = window.webhvac.state.rooms.filter(
+    (r) => Array.isArray(r.poly) && r.poly.length > 2 && (r.polyPage || r.page || 1) === page && r.name
+  );
+  if (!rooms.length) return null;
+  // the room with the largest ring area reads best at this size
+  const best = rooms.sort((a, b) => (Number(b.area) || 0) - (Number(a.area) || 0))[0];
+  const tr = [...document.querySelectorAll("#roomsBody tr")].find((t) => t.dataset.id === best.id);
+  if (!tr) return null;
+  const cell = tr.querySelector("td.c-name") || tr.querySelector("td");
+  if (cell) cell.dispatchEvent(new MouseEvent("click", { bubbles: true, view: window }));
+  return { id: best.id, name: best.name, area: best.area };
+});
+await sleep(1200);
+if (!picked) console.warn("WARN: no room with an outline to select — the plan shot will show no selection");
+else console.log(`selected for the shot      : ${picked.name} (${picked.area} m2, id ${picked.id})`);
+// the row click scrolls the table into view; the drawing has to be back under the camera for the shot
+await level.evaluate(() => {
+  document.querySelector("#planCard").scrollIntoView({ block: "start" });
+  for (const sel of ["#totalsBar", "#planStatus"]) {
+    const n = document.querySelector(sel);
+    if (n) n.style.display = "none";
+  }
+});
+await sleep(900);
 await sleep(800);
 await (await level.$("#planView")).screenshot({ path: `${OUT}/case-plan-areas.png` });
 await (await level.$("#summaryCards")).screenshot({ path: `${OUT}/case-summary.png` });
