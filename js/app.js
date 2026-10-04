@@ -953,12 +953,8 @@ function shapeBadge(raw) {
       : 'outline traced from the drawing';
     return ` <span class="row-badge is-outline" title="${esc(title)}">outline</span>`;
   }
-  if (hasRect) {
-    const title = isPlacedRoom(raw)
-      ? 'box placed where the plan names the room, sized back from the stated area'
-      : 'box drawn on the plan';
-    return ` <span class="row-badge is-box" title="${esc(title)}">box</span>`;
-  }
+  // A placed/drawn BOX gets no badge: it is a locator square sized back from the stated area, so it
+  // tells the user nothing about the area or the load, and owners read the pill as clutter.
   return '';
 }
 
