@@ -142,6 +142,13 @@ const el = {
   roomsEmpty: $('#roomsEmpty'),
   roomsCount: $('#roomsCount'),
   summaryCards: $('#summaryCards'),
+  // Sticky totals bar (UX pass). Its text is written from renderSummary() so it always matches the
+  // summary card exactly. The bar itself is hidden while nothing is included in the load.
+  totalsBar: $('#totalsBar'),
+  tbTr: $('#tbTr'),
+  tbAir: $('#tbAir'),
+  tbRooms: $('#tbRooms'),
+  quickStart: $('#quickStart'),
   levelBody: $('#levelBody'),
   levelTable: $('#levelTable'),
   detailPanel: $('#detailPanel'),
@@ -1061,14 +1068,14 @@ function rowHtml(idx, calc) {
   const nm = room.name || 'room';
   const sys = unitsSys();         // the chosen results system for this row's computed cells
   return `<tr data-idx="${idx}" data-id="${esc(raw.id)}" class="clickable${inc ? '' : ' excluded'}">
-    <td class="c-include"><input type="checkbox" data-field="include" ${inc ? 'checked' : ''}
-      aria-label="Include ${esc(nm)} in the load"></td>
+    <td class="c-include col-in"><input type="checkbox" data-field="include" ${inc ? 'checked' : ''}
+          aria-label="Include ${esc(nm)} in the load"></td>
     <td class="l c-lv"><input type="text" data-field="level" value="${esc(raw.level || '')}"
       placeholder="-" aria-label="Level of ${esc(nm)}"></td>
     <td class="c-num"><input type="text" data-field="number" value="${esc(raw.number || '')}"
       placeholder="-" aria-label="Room number of ${esc(nm)}"></td>
-    <td class="l c-name"><input type="text" data-field="name" value="${esc(raw.name || '')}"
-      placeholder="Room name" aria-label="Room name">${areaBadge(raw)}${shapeBadge(raw)}</td>
+    <td class="l c-name col-name"><input type="text" data-field="name" value="${esc(raw.name || '')}"
+          placeholder="Room name" aria-label="Room name">${areaBadge(raw)}${shapeBadge(raw)}</td>
     <td class="c-type"><select data-field="type" aria-label="Space type of ${esc(nm)}">
       ${Object.keys(SPACE_TYPES).map((k) =>
         `<option value="${k}"${room.type === k ? ' selected' : ''}>${esc(SPACE_TYPES[k].label)}</option>`).join('')}
@@ -1089,7 +1096,7 @@ function rowHtml(idx, calc) {
     <td class="res v-sensible">${fmtPower(r.rsh, sys)}</td>
     <td class="res v-latent">${fmtPower(r.rlh, sys)}</td>
     <td class="res hi v-total">${fmtPower(r.totalW, sys)}</td>
-    <td class="res hi v-tr">${fmt(r.tr, 2)}</td>
+    <td class="res hi v-tr col-tr">${fmt(r.tr, 2)}</td>
     <td class="res v-ls">${r.supplyOk === false ? '-' : fmtAir(r.supplyLs, sys)}</td>
     <td class="res v-sqftPerTr">${fmtValue(areaPerTr(m2PerTr(room.area, r.tr), sys), 0)}</td>
     <td class="c-src" title="Where this room came from">${esc(sourceLabel(raw.source))}</td>
@@ -1101,6 +1108,8 @@ function rowHtml(idx, calc) {
 function renderTable() {
   const calc = currentCalc();
   state.ui.order = sortedIndices(calc);
+  // Quick start strip: the first-run entry point, shown only while the table is empty.
+  if (el.quickStart) el.quickStart.hidden = state.rooms.length > 0;
   if (!state.rooms.length) {
     el.roomsBody.innerHTML = '';
     el.roomsEmpty.classList.remove('hidden');
@@ -1221,7 +1230,36 @@ function renderSummary(calc) {
         <td>${fmtValue(areaPerTr(m2PerTr(t.area, t.tr), sys), 0)}</td>
       </tr>`
     : '<tr><td class="l" colspan="8">No rooms included yet.</td></tr>';
-}
+
+      // Sticky totals bar (UX pass): it repeats the headline numbers so they stay on screen while the
+      // user is editing further down the page. It is hidden entirely when there is nothing included in
+      // the load or the total is 0, so a first-time visitor never sees a hollow "0.00 TR" banner. The TR
+      // text is built from the SAME fmt()/fmtAir()/airUnit() calls as the summary card above, so the two
+      // can never disagree. Marker used to verify the deploy: UXPASS-TOTALSBAR
+      const hasLoad = t.rooms > 0 && t.tr > 0;
+      if (el.totalsBar) {
+        el.totalsBar.hidden = !hasLoad;
+        if (hasLoad) {
+          if (el.tbTr) el.tbTr.textContent = `${fmt(t.tr, 2)} TR`;
+          if (el.tbAir) el.tbAir.textContent = `${t.supplyOk === false ? '-' : fmtAir(t.ls, sys)} ${airUnit(sys)}`;
+          if (el.tbRooms) el.tbRooms.textContent = `${t.rooms} rooms included`;
+        }
+      }
+      // Nothing to print or export while no room is included in the load.
+      setExportEnabled(t.rooms > 0);
+    }
+
+    /** Enable or disable the print / CSV controls. With no room included in the load there is nothing to
+     *  export, so the buttons are disabled and say why, rather than producing an empty file. Driven from
+     *  renderSummary(), i.e. the same render path as everything else. */
+    function setExportEnabled(enabled) {
+      ['#btnPrint', '#btnCsv', '#btnPrint2', '#btnCsv2'].forEach((sel) => {
+        const b = document.querySelector(sel);
+        if (!b) return;
+        b.disabled = !enabled;
+        b.title = enabled ? '' : 'Add rooms first';
+      });
+    }
 
 /** Set the unit in every table header that follows the setting (rooms table + level subtotals).
  *  Every label comes from js/units.js (header()/…Unit()), never a literal in this file. */
@@ -4068,7 +4106,19 @@ function wire() {
   });
 
   $('#btnSample').addEventListener('click', () => loadSample());
-  if ($('#btnSampleHouse')) $('#btnSampleHouse').addEventListener('click', () => loadSample('house'));
+    if ($('#btnSampleHouse')) $('#btnSampleHouse').addEventListener('click', () => loadSample('house'));
+
+    // Quick start strip: upload opens the EXISTING #fileInput (never a second one), and the two sample
+    // buttons just press the existing #btnSample / #btnSampleHouse, so the ?sample= hooks and the
+    // auto-fill are completely unchanged. The strip itself is hidden/shown by renderTable().
+    {
+      const qsUpload = $('#qsUpload');
+      if (qsUpload) qsUpload.addEventListener('click', () => el.fileInput.click());
+      const qsSample = $('#qsSample');
+      if (qsSample) qsSample.addEventListener('click', () => $('#btnSample').click());
+      const qsHouse = $('#qsHouse');
+      if (qsHouse) qsHouse.addEventListener('click', () => { const b = $('#btnSampleHouse'); if (b) b.click(); });
+    }
 
   $('#btnManual').addEventListener('click', () => {
     const room = { id: newId(), name: 'New Room', level: state.ui.level === 'all' ? '' : state.ui.level, area: 20, height: 3, type: 'office', include: true, source: 'manual' };

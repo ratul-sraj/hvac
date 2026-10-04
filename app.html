@@ -58,11 +58,25 @@
       <a href="method.html">Method</a>
       <a href="help.html">Help</a>
     </span>
-  </div>
-</nav>
+      </div>
+    </nav>
+
+    <!-- Sticky totals bar (UX pass): the headline numbers follow the user down the page.
+         Desktop: sticky just under the site header. Mobile (<=700px): fixed to the bottom edge.
+         Hidden (the hidden attribute) while there is nothing included in the load. The content is
+         written by renderSummary() in js/app.js so it can never disagree with the summary card.
+         The "See summary" link jumps to section 4 (#summaryCards). -->
+    <div id="totalsBar" class="totals-bar" hidden>
+      <div class="wrap totals-bar-inner">
+        <span class="tb-total" id="tbTr">0.00 TR</span>
+        <span class="tb-air" id="tbAir">&mdash;</span>
+        <span class="tb-rooms" id="tbRooms">0 rooms included</span>
+        <a class="tb-link" href="#summaryCards">See summary</a>
+      </div>
+    </div>
 
 
-<header class="app-header">
+    <header class="app-header">
   <div class="wrap header-inner">
     <div>
       <h1>LoadLens — cooling load from a floor plan PDF</h1>
@@ -79,6 +93,18 @@
 </header>
 
 <main class="wrap">
+
+  <!-- Quick start: the three things a first-time visitor needs, in one strip at the top of the
+       calculator. The two sample buttons just press the existing #btnSample / #btnSampleHouse
+       buttons (so the ?sample= hooks and the auto-fill stay exactly as they are); upload opens the
+       existing #fileInput. The strip is hidden once rooms exist and shown again when the table is
+       empty (js/app.js, renderTable). -->
+  <div id="quickStart" class="quick-start" role="group" aria-label="Start here">
+    <span class="qs-label">Start here</span>
+    <button type="button" id="qsUpload" class="btn">Upload a PDF or schedule</button>
+    <button type="button" id="qsSample" class="btn btn-ghost">Try sample drawing</button>
+    <button type="button" id="qsHouse" class="btn btn-ghost">Try a house plan</button>
+  </div>
 
   <!-- ---------------- project settings ---------------- -->
   <section class="card" id="projectPanel" aria-labelledby="projectHead">
@@ -138,8 +164,8 @@
          it is dismissible and never overwrites values the visitor already saved. -->
     <div id="geoNote" class="geo-note hidden" role="status" aria-live="polite"></div>
 
-    <details class="adv" open>
-      <summary>Construction and system assumptions</summary>
+    <details class="adv">
+          <summary>Construction and system assumptions <span class="adv-hint">(U values, safety factor, supply &Delta;T; defaults are fine to start)</span></summary>
       <div class="grid grid-project">
         <label class="field">
           <span>Wall U value (W/m&sup2;K)</span>
@@ -421,10 +447,10 @@
       <table class="data-table rooms-table" id="roomsTable">
         <thead>
           <tr>
-            <th class="th-include" data-sort="include">In</th>
+            <th class="th-include col-in" data-sort="include">In</th>
             <th data-sort="level">Level</th>
             <th data-sort="number">No.</th>
-            <th class="l" data-sort="name">Room name</th>
+            <th class="l col-name" data-sort="name">Room name</th>
             <th data-sort="type">Space type</th>
             <th data-sort="area">Area<br>m&sup2;</th>
             <th data-sort="height">Height<br>m</th>
@@ -439,7 +465,7 @@
             <th class="th-res" id="thSensible" data-sort="sensible">Sensible (W)</th>
             <th class="th-res" id="thLatent" data-sort="latent">Latent (W)</th>
             <th class="th-res" id="thTotal" data-sort="total">Total (W)</th>
-            <th class="th-res" data-sort="tr">TR</th>
+            <th class="th-res col-tr" data-sort="tr">TR</th>
             <th class="th-res" id="thLs" data-sort="ls">Supply air (L/s)</th>
             <th class="th-res" id="thApt" data-sort="sqftPerTr">Area/tonne (m&sup2;/TR)</th>
             <th class="th-src" data-sort="source">Source</th>

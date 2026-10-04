@@ -143,6 +143,62 @@ details.adv[open] > summary::before { content: "\25BE "; }
 .row { display: flex; gap: 8px; }
 .wrap-row { flex-wrap: wrap; }
 
+/* ---------- sticky totals bar (#totalsBar) ----------
+   The headline numbers (Total TR, supply air, rooms included) follow the user down the page so the
+   result is never off-screen while editing. It is FIXED to the bottom edge of the viewport (all
+   widths) so it takes NO space in the normal flow: toggling it can never shift the page under the
+   user (a sticky bar in flow pushed the plan view down by its own height the moment the first room
+   arrived, which moved the drawing after the user had aimed at it). body keeps a matching
+   padding-bottom permanently, so the bar covers nothing and showing it still shifts nothing.
+   pointer-events:none means the bar can never swallow a click aimed at the page behind it; only the
+   "See summary" link is clickable. The whole bar carries the [hidden] attribute while nothing is
+   included in the load. Its text is written by renderSummary() in js/app.js, so it can never
+   disagree with the summary card. */
+.totals-bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 40;                    /* below .plan-status (55) and .report-view (60) */
+  background: var(--accent-dark);
+  color: #fff;
+  border-top: 1px solid var(--accent-dark);
+  box-shadow: 0 -2px 8px rgba(20, 40, 70, .18);
+  pointer-events: none;           /* never intercept a click meant for the page */
+}
+.totals-bar[hidden] { display: none !important; }
+body { padding-bottom: 50px; }    /* reserve the bar's space permanently: showing it shifts nothing */
+.totals-bar-inner {
+  display: flex; align-items: center; gap: 6px 18px; flex-wrap: wrap;
+  min-height: 40px; padding-top: 6px; padding-bottom: 6px; font-size: 13px;
+}
+.totals-bar .tb-total { font-size: 16px; font-weight: 700; }
+.totals-bar .tb-air, .totals-bar .tb-rooms { color: #dbe7f2; }
+.totals-bar .tb-link {
+  margin-left: auto; color: #fff; font-weight: 600;
+  text-decoration: underline; white-space: nowrap;
+  pointer-events: auto;           /* the one control that must stay clickable */
+}
+.totals-bar .tb-link:hover { color: #cfe4f7; }
+@media print { .totals-bar { display: none !important; } }
+
+/* ---------- quick start strip (#quickStart) ----------
+   Three buttons at the top of the calculator: upload a file, or load one of the two sample
+   drawings. Hidden once the table has rooms (js/app.js renderTable) and shown again when it is
+   empty. The sample buttons press the existing #btnSample / #btnSampleHouse, so the ?sample= hooks
+   and the auto-fill are untouched. */
+.quick-start {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 16px 0 0; padding: 10px 14px;
+  background: var(--accent-soft); border: 1px solid #cfe0f2; border-radius: var(--radius);
+}
+.quick-start[hidden] { display: none !important; }
+.quick-start .qs-label { font-weight: 700; color: var(--accent-dark); margin-right: 4px; }
+
+/* The parenthetical hint in the "Construction and system assumptions" summary line. */
+details.adv > summary .adv-hint { font-weight: 400; color: var(--ink-soft); }
+
+/* Jump target for the totals bar's "See summary" link: clear the sticky site header. */
+#summaryCards { scroll-margin-top: 72px; }
+
 /* ---------- dropzone ---------- */
 .dropzone {
   border: 2px dashed #b9c6d4;
@@ -352,6 +408,30 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .rooms-table th.th-res, .rooms-table td.res { min-width: 58px; }
 .rooms-table th.th-del, .rooms-table td.c-del { min-width: 34px; }
 .rooms-table input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+
+/* ---------- frozen table columns (#roomsTable) ----------
+   The room table scrolls sideways on desktop and mobile. The In checkbox and the Room name stay
+   pinned to the left, and the TR result to the right, so the row being read keeps its identity and
+   its load in view. The frozen cells need an OPAQUE background (scrolling cells would otherwise
+   show through) and a z-index above the ordinary body cells but below the sticky header (z-index 3);
+   the frozen HEADER cells need a higher z-index still so they win the corner. The In column is
+   exactly 34px wide (see the .th-include / .c-include rule above), which is the left offset for the
+   Room name column. Classes are set on the th in app.html and on the td in js/app.js rowHtml(). */
+.rooms-table th.col-in, .rooms-table td.col-in {
+  position: sticky; left: 0; z-index: 2; width: 34px; background: #fff;
+}
+.rooms-table th.col-name, .rooms-table td.col-name { position: sticky; left: 34px; z-index: 2; background: #fff; }
+.rooms-table th.col-tr, .rooms-table td.col-tr { position: sticky; right: 0; z-index: 2; background: #fff; }
+.rooms-table thead th.col-in, .rooms-table thead th.col-name, .rooms-table thead th.col-tr {
+  z-index: 5; background: #eef3f8;
+}
+/* The frozen body cells follow the row states, so hover / selection still read correctly. */
+.rooms-table tbody tr:hover td.col-in,
+.rooms-table tbody tr:hover td.col-name,
+.rooms-table tbody tr:hover td.col-tr { background: #f7fafd; }
+.rooms-table tbody tr.selected td.col-in,
+.rooms-table tbody tr.selected td.col-name,
+.rooms-table tbody tr.selected td.col-tr { background: #e8f1fa; }
 
 .btn-del {
   border: none;
@@ -563,42 +643,13 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 }
 @media print { .app-nav { display: none; } }
 
-/* ------------------------------------------- hamburger menu on narrow screens */
-.nav-burger {
-  display: none;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  padding: 7px 11px;
-  font: inherit;
-  font-weight: 600;
-  color: #fff;
-  background: rgba(255, 255, 255, .12);
-  border: 1px solid rgba(255, 255, 255, .28);
-  border-radius: 7px;
-  cursor: pointer;
-}
-.nav-burger:hover { background: rgba(255, 255, 255, .22); }
-.nav-burger:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.nav-burger-bars { display: inline-flex; flex-direction: column; gap: 3px; }
-.nav-burger-bars span { display: block; width: 16px; height: 2px; background: currentColor; border-radius: 2px; }
+/* ------------------------------------------- hamburger menu on narrow screens
+   NOTE: the colour rules for .nav-burger live in the block ABOVE (near .app-nav), where the button
+   is dark text on a white pill. This block used to redefine .nav-burger as white text on a
+   translucent-white background — invisible on the light app header, because a later duplicate rule
+   silently overrode the visible one. Only the one unique declaration is kept here; do NOT re-add a
+   .nav-burger colour rule in this block. */
 .nav-burger-text { font-size: 13px; }
-
-@media (max-width: 700px) {
-  nav.app-nav.js-nav .app-nav-inner { flex-wrap: wrap; }
-  nav.app-nav.js-nav .app-nav-brand { order: 1; }
-  nav.app-nav.js-nav .nav-burger { display: inline-flex; order: 2; }
-  nav.app-nav.js-nav .app-nav-links { display: none; order: 3; }
-  nav.app-nav.js-nav.nav-open .app-nav-links {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    width: 100%;
-    margin: 2px 0 6px;
-    gap: 2px;
-  }
-  nav.app-nav.js-nav.nav-open .app-nav-links a { padding: 10px 12px; font-size: 15px; }
-}
 
 /* ---------------- plan view: draw rooms on the drawing ----------------
    js/viewer.js owns the canvas inside .viewer-wrap; js/overlay.js owns the SVG. Both live in

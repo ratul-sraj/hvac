@@ -130,6 +130,38 @@ if (!sampleMissing) {
     rows.map((r) => r.innerText.replace(/\s+/g, " ")).slice(0, 5));
   ok("level-wise subtotals", levels.length >= 3, levels.join(" || ").slice(0, 200));
 
+  // 3a-bis. the sticky totals bar (UX pass) mirrors the summary card exactly, and the quick-start
+  //         strip's controls exist.
+  {
+    const barState = await page.evaluate(() => {
+      const bar = document.getElementById("totalsBar");
+      const trEl = document.getElementById("tbTr");
+      const card = [...document.querySelectorAll("#summaryCards .scard")]
+        .find((c) => /total cooling load/i.test(c.textContent));
+      const cardTr = card ? (card.textContent.match(/([0-9.]+)\s*TR/) || [])[1] : null;
+      const cs = bar ? getComputedStyle(bar) : null;
+      return {
+        exists: !!bar,
+        visible: !!(bar && !bar.hasAttribute("hidden") && cs.display !== "none" && bar.getBoundingClientRect().height > 0),
+        trText: trEl ? trEl.textContent.trim() : "",
+        cardTr,
+        air: (document.getElementById("tbAir") || {}).textContent || "",
+        rooms: (document.getElementById("tbRooms") || {}).textContent || "",
+        hasQs: !!document.getElementById("qsSample") && !!document.getElementById("qsHouse") && !!document.getElementById("qsUpload"),
+      };
+    });
+    ok("the sticky totals bar is visible once rooms are loaded", barState.exists && barState.visible,
+      `visible=${barState.visible}`);
+    ok("the totals bar TR text matches the summary card",
+      !!barState.cardTr && barState.trText === `${barState.cardTr} TR`,
+      `bar "${barState.trText}" vs card "${barState.cardTr} TR"`);
+    ok("the totals bar shows supply air and the included-room count",
+      /(L\/s|CFM)/.test(barState.air) && /rooms included/.test(barState.rooms),
+      `air "${barState.air}" | rooms "${barState.rooms}"`);
+    ok("the quick-start strip controls exist (qsUpload / qsSample / qsHouse)", barState.hasQs,
+      barState.hasQs ? "all present" : "one or more missing");
+  }
+
   // 3b. the Results system (js/units.js): the toggle must change every unit-bearing surface, switching
   //     back must restore the SI figures exactly, and the sheet-unit detection line (js/unitdetect.js)
   //     must appear once a drawing has been parsed.
@@ -534,6 +566,34 @@ if (!sampleMissing) {
   });
   ok("table scrolls on a narrow screen", overflow.scrollable, JSON.stringify(overflow));
   ok("page does not overflow sideways on mobile", !overflow.bodyOverflow, JSON.stringify(overflow));
+
+  // 10b. the mobile menu button must be VISIBLE: dark bars/text on a light pill, not the old
+  //      white-on-translucent-white that the light app header rendered as a blank square.
+  {
+    const burger = await page.evaluate(() => {
+      const b = document.querySelector(".nav-burger");
+      if (!b) return null;
+      const cs = getComputedStyle(b);
+      const bars = b.querySelector(".nav-burger-bars span");
+      return {
+        display: cs.display,
+        color: cs.color,
+        bg: cs.backgroundColor,
+        border: cs.borderTopColor,
+        barsColor: bars ? getComputedStyle(bars).backgroundColor : null,
+        width: b.getBoundingClientRect().width,
+      };
+    });
+    const isWhite = (c) => /rgba?\(\s*255,\s*255,\s*255/.test(c || "");
+    const isLight = (c) => {
+      const m = (c || "").match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (!m) return false;
+      return (Number(m[1]) + Number(m[2]) + Number(m[3])) / 3 > 200;
+    };
+    ok("the mobile menu button is visible at 390px (dark on a light pill, with a border)",
+      !!burger && burger.display !== "none" && burger.width > 10 && !isWhite(burger.color) && isLight(burger.bg) && !isWhite(burger.border),
+      burger ? `color ${burger.color} on ${burger.bg}, border ${burger.border}, width ${burger.width}` : "no .nav-burger");
+  }
   await page.screenshot({ path: `${OUT}/live-mobile.png` });
   await page.setViewport({ width: 1400, height: 1000 });
 
@@ -2291,8 +2351,16 @@ if (!sampleMissing) {
     }));
     const blank = cells.filter((c) => c.area === "").length;
     const ticked = cells.filter((c) => c.inc).length;
-    ok("every real-sample room arrives with an unknown (blank) area", blank === realRooms,
-      `${blank}/${realRooms} area cells blank`);
+    // The sheet prints NO areas, and loadSample now runs the drawing fill by itself (first-visit
+    // fix). So the honest rule is: every area on screen came from the drawing fill, never from
+    // the parse. A blank count equal to the row count was the pre-auto-fill expectation.
+    const madeUp = await page.evaluate(() => {
+      const rooms = (window.webhvac && window.webhvac.state && window.webhvac.state.rooms) || [];
+      return rooms.filter((r) => Number(r.area) > 0 && !r.areaFromDrawing).map((r) => r.name);
+    });
+    ok("every real-sample area is blank or taken from the drawing (none parsed or made up)",
+      Array.isArray(madeUp) && madeUp.length === 0 && await page.evaluate(() => window.webhvac.state.rooms.length >= 40),
+      `${blank}/${realRooms} blank; areas not from the drawing: ${JSON.stringify(madeUp).slice(0, 160)}`);
     ok("no room the app could not measure is inside the load", await page.evaluate(() =>
       [...document.querySelectorAll("#roomsBody tr")].every((r) => {
         const tick = r.querySelector('input[type="checkbox"]');
@@ -2850,6 +2918,38 @@ if (!sampleMissing) {
   const rowsAfterDragCheck = await page.evaluate(() => document.querySelectorAll("#roomsBody tr").length);
   ok("a drag still adds a plain rectangle", rowsAfterDragCheck > rowsAfterShape,
       `rows ${rowsAfterShape} -> ${rowsAfterDragCheck}`);
+
+  // 15. fresh, empty project (UX pass): the quick-start strip is shown, the totals bar is hidden,
+  //     the Construction details start closed, and the print/CSV buttons are disabled and say why.
+  //     Checked on a genuinely empty load (localStorage cleared).
+  {
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.goto(URL_, { waitUntil: "networkidle2", timeout: 60000 });
+    await new Promise((r) => setTimeout(r, 800));
+    const empty = await page.evaluate(() => {
+      const bar = document.getElementById("totalsBar");
+      const qs = document.getElementById("quickStart");
+      const det = document.querySelector("details.adv");
+      const csv = document.getElementById("btnCsv");
+      const print = document.getElementById("btnPrint");
+      return {
+        rooms: document.querySelectorAll("#roomsBody tr").length,
+        barHidden: !bar || bar.hasAttribute("hidden"),
+        qsVisible: !!qs && !qs.hasAttribute("hidden") && getComputedStyle(qs).display !== "none",
+        detailsOpen: det ? det.hasAttribute("open") : null,
+        csvDisabled: !!csv && csv.disabled,
+        csvTitle: csv ? csv.title : "",
+        printDisabled: !!print && print.disabled,
+      };
+    });
+    ok("a fresh empty project shows the quick-start strip", empty.rooms === 0 && empty.qsVisible,
+      `rows ${empty.rooms}, quickStart visible ${empty.qsVisible}`);
+    ok("the totals bar is hidden when nothing is included in the load", empty.barHidden, `hidden=${empty.barHidden}`);
+    ok("the Construction details start closed on a fresh load", empty.detailsOpen === false, `open=${empty.detailsOpen}`);
+    ok("the print/CSV buttons are disabled on an empty project and say why",
+      empty.csvDisabled && empty.printDisabled && empty.csvTitle === "Add rooms first",
+      `csv disabled=${empty.csvDisabled} title="${empty.csvTitle}"`);
+  }
 
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
