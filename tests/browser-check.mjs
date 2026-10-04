@@ -4142,9 +4142,12 @@ if (!sampleMissing) {
             && after.cell !== before.cell,
           `cell ${before.cell} -> ${after.cell} m²; chip "${before.chip}" -> "${after.chip}"`);
 
-        // (iii) the load total is untouched DURING the drag and follows on RELEASE.
-        ok("20 (iii) the load total is unchanged during the drag and updated on release",
-          totalMid === before.total && after.total !== before.total,
+        // (iii) the load total follows the new area ON RELEASE. (It may also tick during the drag:
+        // the live chip/table update was extended to the totals for a vertex drag, so asserting
+        // "unchanged mid-drag" would be asserting something the app no longer promises - measured
+        // on the live site: 21.6 TR before a vertex drag, 20.74 TR mid-drag, 20.74 TR on release.)
+        ok("20 (iii) the load total follows the room's new area on release",
+          after.total !== before.total,
           `total ${before.total} TR -> ${totalMid} TR mid-drag -> ${after.total} TR on release`);
 
         // (iv) a TYPED area on a traced room is never replaced by a vertex drag, and the status says so.
