@@ -5,6 +5,7 @@ import {
   rasterizeWalls, pointToCell, cellToPoint, regionAt, regionHasCell,
   outlineFromRegion, polygonAreaPt2, outlineAreaPt2, pt2ToM2, metresPerPt,
   judgeTrace, traceRooms, traceRegions, morphClose, impliedDenom, pickWallLines, styleCounts, TRACE_BAND,
+  simplifyRing, SIMPLIFY_TOL_PT, SIMPLIFY_AREA_GUARD,
 } from '../js/trace.js';
 
 let pass = 0;
@@ -346,6 +347,82 @@ function twoRoomsDoor(x, y, side, doorPt) {
   const p = { segments: roomWalls(10, 20, side), box: box(200, 200), rooms: [{ id: 'a', area: 25, at: { x: 10 + side / 2, y: 20 + side / 2 } }], denom: DENOM, pxPerPt: 2, thickness: 2 };
   ok('traceRooms with no closeGaps is byte-identical to closeGaps:0',
     JSON.stringify(traceRooms(p)) === JSON.stringify(traceRooms({ ...p, closeGaps: 0 })));
+}
+
+// ------------------------------------------------------------------ ring simplification (RDP + area guard)
+{
+  const ringArea = polygonAreaPt2;
+  // (i) A straight wall drawn as a 200-point raster staircase (collinear) must collapse to its corners.
+  const straight = [];
+  for (let i = 0; i < 200; i += 1) straight.push({ x: (300 * i) / 199, y: 0 });
+  straight.push({ x: 300, y: 300 }, { x: 0, y: 300 });
+  const s1 = simplifyRing(straight, SIMPLIFY_TOL_PT);
+  ok('(i) a 200-point straight (staircase) edge collapses to its corners',
+    s1.length <= 6, `${straight.length} -> ${s1.length} points`);
+  ok('(i) and its enclosed area is identical',
+    Math.abs(ringArea(s1) - ringArea(straight)) <= ringArea(straight) * 1e-9,
+    `${ringArea(s1)} vs ${ringArea(straight)} pt²`);
+
+  // (ii) A quarter-circle door swing (radius 90 pt) in a room boundary: >=80% fewer points, area <1%.
+  const R = 90, N = 200;
+  const arc = [];
+  for (let i = 0; i <= N; i += 1) { const a = (i / N) * Math.PI / 2; arc.push({ x: R * Math.cos(a), y: R * Math.sin(a) }); }
+  const room = arc.concat([{ x: 0, y: 300 }, { x: 300, y: 300 }, { x: 300, y: 0 }]);
+  const s2 = simplifyRing(room, SIMPLIFY_TOL_PT);
+  ok('(ii) a quarter-circle door swing loses at least 80% of its points',
+    s2.length <= room.length * 0.2, `${room.length} -> ${s2.length} points (${(100 - (s2.length / room.length) * 100).toFixed(1)}% fewer)`);
+  ok('(ii) and its area stays within 1%',
+    Math.abs(ringArea(s2) - ringArea(room)) / ringArea(room) <= SIMPLIFY_AREA_GUARD,
+    `${(Math.abs(ringArea(s2) - ringArea(room)) / ringArea(room) * 100).toFixed(4)}% moved`);
+
+  // (iii) A real 90-degree corner (with sub-tolerance jitter along both walls) survives exactly.
+  const jit = [{ x: 0, y: 0 }];
+  for (let i = 1; i < 80; i += 1) jit.push({ x: i * 2.5, y: i % 2 ? 0.3 : -0.3 });
+  jit.push({ x: 200, y: 0 });                                          // the corner
+  for (let i = 1; i < 80; i += 1) jit.push({ x: 200, y: i * 2.5 + (i % 2 ? 0.3 : -0.3) });
+  jit.push({ x: 200, y: 200 }, { x: 0, y: 200 });
+  const s3 = simplifyRing(jit, SIMPLIFY_TOL_PT);
+  ok('(iii) a real 90-degree corner is preserved (the corner point still exists)',
+    s3.some((p) => p.x === 200 && p.y === 0), `${jit.length} -> ${s3.length} points, corner (200,0) kept`);
+  ok('(iii) and the jitter around it is still removed', s3.length < jit.length, `${s3.length} < ${jit.length}`);
+  ok('(iii) the simplified ring starts at the ORIGINAL first vertex and keeps the order',
+    s3[0].x === jit[0].x && s3[0].y === jit[0].y
+      && s3.every((p, i) => { const q = s3[(i + 1) % s3.length]; return !(p.x === q.x && p.y === q.y); }),
+    `first ${JSON.stringify(s3[0])} == ${JSON.stringify(jit[0])}, no duplicate consecutive points`);
+
+  // (iv) Determinism: the same ring gives byte-identical output, twice.
+  ok('(iv) simplification is deterministic (byte-identical output)',
+    JSON.stringify(simplifyRing(jit, SIMPLIFY_TOL_PT)) === JSON.stringify(simplifyRing(jit, SIMPLIFY_TOL_PT)));
+  const side4 = sideFor(25);
+  const p4 = { segments: roomWalls(10, 20, side4), box: box(200, 200), rooms: [{ id: 'a', area: 25, at: { x: 10 + side4 / 2, y: 20 + side4 / 2 } }], denom: DENOM, pxPerPt: 2, thickness: 2 };
+  ok('(iv) and the whole traceRegions pipeline is deterministic',
+    JSON.stringify(traceRegions(p4)) === JSON.stringify(traceRegions(p4)));
+
+  // (v) Area guard: a tolerance that would move the area >1% keeps the ORIGINAL ring.
+  const bump = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }];
+  for (let i = 0; i <= 20; i += 1) { const x = 100 - i * 5; bump.push({ x, y: 100 + (i % 2 ? 5 : 0) }); }   // a 20-tooth sawtooth wall
+  bump.push({ x: 0, y: 100 });
+  const s5 = simplifyRing(bump, 8);
+  ok('(v) a tolerance that would move the area >1% keeps the original points',
+    s5.length === bump.length, `tol 8 pt kept all ${s5.length} points (area guard ${SIMPLIFY_AREA_GUARD * 100}%)`);
+  ok('(v) and the returned ring is the original (area unchanged)',
+    ringArea(s5) === ringArea(bump), `${ringArea(s5)} pt²`);
+
+  // The option is plumbed through outlineFromRegion: default ON, simplifyTolPt:0 OFF.
+  const w6 = 420, h6 = 420, cells6 = [];
+  let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+  for (let y = 1; y <= 400; y += 1) for (let x = 1; x <= 400; x += 1) {
+    if (x + y <= 560) { cells6.push(y * w6 + x); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  const region6 = { cells: cells6, bbox: { x0, y0, x1, y1 }, areaPx: cells6.length };
+  const raw6 = outlineFromRegion(region6, w6, box(300, 300), 2, { simplifyTolPt: 0 });
+  const def6 = outlineFromRegion(region6, w6, box(300, 300), 2);
+  const rawPts = raw6.reduce((a, r) => a + r.length, 0), defPts = def6.reduce((a, r) => a + r.length, 0);
+  ok('the option is plumbed through outlineFromRegion: the default simplifies, simplifyTolPt:0 does not',
+    defPts < rawPts, `default ${defPts} vs off ${rawPts} points (${(100 - (defPts / rawPts) * 100).toFixed(0)}% fewer)`);
+  ok('and the default ring stays within 1% of the un-simplified ring\'s area',
+    Math.abs(outlineAreaPt2(def6) - outlineAreaPt2(raw6)) / outlineAreaPt2(raw6) <= SIMPLIFY_AREA_GUARD,
+    `${outlineAreaPt2(def6).toFixed(1)} vs ${outlineAreaPt2(raw6).toFixed(1)} pt²`);
 }
 
 console.log(`\n${pass}/${pass + fail} trace checks passed`);

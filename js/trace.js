@@ -420,7 +420,8 @@ export function outlineFromRegion(region, w, box, pxPerPt, opts = {}) {
     }
     if (ring.length > 2) rings.push(ring);
   }
-  // Drop collinear runs (a long wall becomes one segment) and convert to PDF space.
+  // Drop collinear runs (a long wall becomes one segment), convert to PDF space, then simplify.
+  const tolPt = opts.simplifyTolPt == null ? SIMPLIFY_TOL_PT : Number(opts.simplifyTolPt);
   const out = [];
   for (const ring of rings) {
     const simp = [];
@@ -430,9 +431,122 @@ export function outlineFromRegion(region, w, box, pxPerPt, opts = {}) {
       if (cross !== 0) simp.push(b);
     }
     if (simp.length < 3) continue;
-    out.push(simp.map((p) => cellToPoint(p.x - 1 + region.bbox.x0, p.y - 1 + region.bbox.y0, box, pxPerPt)));
+    const pts = simp.map((p) => cellToPoint(p.x - 1 + region.bbox.x0, p.y - 1 + region.bbox.y0, box, pxPerPt));
+    out.push(simplifyRing(pts, tolPt));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4b. Ring simplification (OPT-OUT: on by default, tolerance 0 disables it)
+// ---------------------------------------------------------------------------------------------
+// A marching-squares boundary is a 1-cell staircase and a door swing is a flattened curve, so a ring
+// arrives with hundreds of near-collinear points. Every point is one drag in the vertex editor and one
+// entry in the saved project JSON, so the ring is reduced to its significant vertices with
+// Ramer-Douglas-Peucker. The tolerance is in PDF points, which makes it independent of the raster
+// resolution (pxPerPt): 1 pt = 0.0254*denom/72 m, i.e. 3.53 cm at 1:100. The DEFAULT 1.2 pt is
+// ~4.2 cm at 1:100 — inside the 3-5 cm band that still reads as "the same room", large enough to erase
+// the 0.5 pt staircase (pxPerPt=2) and to chord a door arc into a handful of segments, small enough
+// that no wall line visibly moves. Its correctness is enforced by an AREA GUARD: if simplifying a ring
+// would change its enclosed area by more than SIMPLIFY_AREA_GUARD (1%), the ORIGINAL ring is kept.
+export const SIMPLIFY_TOL_PT = 1.2;          // ~4.2 cm at 1:100; 0 disables simplification
+export const SIMPLIFY_AREA_GUARD = 0.01;     // a simplified ring may move its area by at most 1%
+const MIN_RING_POINTS = 4;                   // a simplified ring must stay a polygon
+const CORNER_MIN_TURN_DEG = 45;              // a turn sharper than this, on two real edges, is a corner
+
+/** Perpendicular distance from p to the line a-b (0 when a and b coincide). */
+function perpDist(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len;
+}
+
+/**
+ * Iterative Ramer-Douglas-Peucker over one OPEN chain. Returns the ascending positions (into the
+ * chain) that survive. Ties in the largest-deviation search are broken by LOWEST INDEX (strict `>`),
+ * so the same chain always yields the same result — no randomness anywhere.
+ */
+function rdpPositions(chain, tol) {
+  const n = chain.length;
+  const keep = new Uint8Array(n);
+  keep[0] = 1; keep[n - 1] = 1;
+  const stack = [[0, n - 1]];
+  while (stack.length) {
+    const [s, e] = stack.pop();
+    if (e <= s + 1) continue;
+    let maxD = -1, maxI = -1;
+    for (let i = s + 1; i < e; i += 1) {
+      const d = perpDist(chain[i], chain[s], chain[e]);
+      if (d > maxD) { maxD = d; maxI = i; }
+    }
+    if (maxD > tol) { keep[maxI] = 1; stack.push([s, maxI], [maxI, e]); }
+  }
+  const out = [];
+  for (let i = 0; i < n; i += 1) if (keep[i]) out.push(i);
+  return out;
+}
+
+/**
+ * The set of ORIGINAL ring indices Ramer-Douglas-Peucker keeps for a CLOSED ring. The ring is split
+ * into two open chains at vertex 0 and the vertex farthest from it, so the closing edge is simplified
+ * too. Ties are broken by lowest index (strict `>` in rdpPositions), so the result is deterministic.
+ * @returns {Set<number>} kept vertex indices (always includes 0 and k)
+ */
+function rdpClosedIndices(ring, tol) {
+  const n = ring.length;
+  let k = 1, bestD = -1;
+  for (let i = 1; i < n; i += 1) {
+    const d = Math.hypot(ring[i].x - ring[0].x, ring[i].y - ring[0].y);
+    if (d > bestD) { bestD = d; k = i; }               // strict > -> lowest index wins ties
+  }
+  const kept = new Set([0]);
+  // Chain A: ring[0..k] — positions ARE the original indices.
+  for (const p of rdpPositions(ring.slice(0, k + 1), tol)) kept.add(p);
+  // Chain B: ring[k..n-1] then ring[0] — map positions back to original indices.
+  const chainB = ring.slice(k).concat([ring[0]]);
+  for (const p of rdpPositions(chainB, tol)) kept.add(p <= n - 1 - k ? k + p : 0);
+  return kept;
+}
+
+/**
+ * Simplify one closed ring in PDF space. Keeps the ORIGINAL first vertex, preserves order and closure,
+ * guards real corners, and refuses the simplification (returns the original ring) when it would move
+ * the area by more than SIMPLIFY_AREA_GUARD, or drop the ring below MIN_RING_POINTS vertices.
+ * @param {Array<{x:number,y:number}>} ring
+ * @param {number} tolPt tolerance in PDF points; <= 0 or an already-short ring returns a copy
+ * @returns {Array<{x:number,y:number}>}
+ */
+export function simplifyRing(ring, tolPt = SIMPLIFY_TOL_PT) {
+  const n = ring ? ring.length : 0;
+  if (n === 0) return [];
+  if (!(tolPt > 0) || n <= MIN_RING_POINTS) return ring.map((p) => ({ x: p.x, y: p.y }));
+  const tol = tolPt;
+  const kept = rdpClosedIndices(ring, tol);
+  // A CORNER GUARD (a pass that can only ADD vertices of the original ring, so it can never worsen the
+  // fit): a vertex whose two ORIGINAL edges are both longer than the tolerance is not a marching-squares
+  // step (those are ~one cell = 0.5 pt < tol), and a turn sharper than CORNER_MIN_TURN_DEG at it is a
+  // real corner of the room. It is force-kept so a wall corner is never rounded away by RDP. A
+  // near-collinear point on a long straight wall is NOT a corner and is still removed by RDP.
+  const cosMin = Math.cos((CORNER_MIN_TURN_DEG * Math.PI) / 180);
+  for (let i = 0; i < n; i += 1) {
+    const a = ring[(i - 1 + n) % n], b = ring[i], c = ring[(i + 1) % n];
+    const e1 = Math.hypot(b.x - a.x, b.y - a.y), e2 = Math.hypot(c.x - b.x, c.y - b.y);
+    if (e1 <= tol || e2 <= tol) continue;
+    const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+    const denom = Math.hypot(ux, uy) * Math.hypot(vx, vy);
+    const cosTurn = denom === 0 ? 1 : (ux * vx + uy * vy) / denom;
+    if (cosTurn <= cosMin) kept.add(i);                 // turn is sharp -> a real corner
+  }
+  const idx = [...kept].sort((p, q) => p - q);          // ring[0] is index 0, so order starts there
+  const result = idx.map((i) => ({ x: ring[i].x, y: ring[i].y }));
+  // Length guard: a polygon must stay a polygon.
+  if (result.length < MIN_RING_POINTS) return ring.map((p) => ({ x: p.x, y: p.y }));
+  // Area guard: keep the original ring whenever simplification would move the enclosed area > 1%.
+  const a0 = polygonAreaPt2(ring), a1 = polygonAreaPt2(result);
+  if (!(a0 > 0)) return ring.map((p) => ({ x: p.x, y: p.y }));
+  if (Math.abs(a1 - a0) / a0 > SIMPLIFY_AREA_GUARD) return ring.map((p) => ({ x: p.x, y: p.y }));
+  return result;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -627,7 +741,7 @@ export function traceRegions(p) {
         }
       }
     }
-    const rings = outlineFromRegion(region, w, box, px);
+    const rings = outlineFromRegion(region, w, box, px, { simplifyTolPt: p.simplifyTolPt });
     const areaPt2 = outlineAreaPt2(rings);
     out.push({
       id: `reg${region.index}`,
@@ -683,7 +797,7 @@ export function traceRooms(p) {
       continue;
     }
     const labels = labelsPerRegion.get(region.key) || 0;
-    const rings = outlineFromRegion(region, w, box, pxPerPt);
+    const rings = outlineFromRegion(region, w, box, pxPerPt, { simplifyTolPt: p.simplifyTolPt });
     const tracedM2 = pt2ToM2(outlineAreaPt2(rings), denom);
     const verdict = judgeTrace(tracedM2, s.room.area, labels, p.band);
     results.push({
