@@ -27,6 +27,8 @@
  * rooms it cannot verify, and why the caller runs it on a filtered class of lines and falls back.
  */
 
+import { splitRegion } from './splitregion.js';
+
 // Curve flattening: how many straight pieces one Bezier is cut into. Walls are drawn as lines and
 // rectangles in practice; curves (door swings, rounded corners) only need to be smooth enough that a
 // 1-2 px stroke is continuous.
@@ -565,6 +567,14 @@ export const REGION_MAX_CELLS = 20_000_000;
  * @param {object} p  the same input as traceRooms (segments, box, rooms, denom, pxPerPt, thickness,
  *   maxCells, and the opt-in closeGaps). When `maxCells` is omitted it defaults to REGION_MAX_CELLS so
  *   a name-only plan (no stated areas) still yields its rooms.
+ *   OPT-IN `splitShared: true` (default false): a region that contains several room names is split by
+ *   a seeded watershed (js/splitregion.js) into one sub-region per name, but only where every cut is a
+ *   narrow neck (js/splitregion.js NECK_MAX_M). Each accepted sub-region carries `source:'split'` and
+ *   its `roomId`; a name whose sub-region fails the neck safety test is emitted with `openPlan:true`
+ *   so js/autotrace.js can report it as `open-plan` instead of inventing a boundary. OFF by default:
+ *   the default output is byte-identical to before.
+ * @param {number} [p.neckMaxM]  max acceptable cut length in metres when splitShared (default 2.0)
+ * @param {number} [p.splitMinAreaM2] [p.splitMaxAreaM2]  the sane band for a split sub-region
  * @returns {{regions: Array, stats: object}}
  */
 export function traceRegions(p) {
@@ -573,8 +583,50 @@ export function traceRegions(p) {
   const bh = Math.max(1, Math.ceil((p.box.y1 - p.box.y0) * pxPerPt));
   const core = extractRegions({ ...p, maxCells: p.maxCells != null ? p.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) });
   const { w, box, pxPerPt: px, denom, regions, labelsPerRegion } = core;
+  const splitShared = !!p.splitShared;
+  // Which rooms' names sit in which region (only needed when splitting).
+  const regionRooms = new Map();
+  if (splitShared) {
+    for (const s of core.seeds) {
+      const idx = core.regionOf[s.cell];
+      if (idx < 0) continue;
+      if (!regionRooms.has(idx)) regionRooms.set(idx, []);
+      regionRooms.get(idx).push(s.room);
+    }
+  }
   const out = [];
+  let splitRegions = 0;
   for (const region of regions) {
+    if (splitShared) {
+      const roomList = regionRooms.get(region.index) || [];
+      if (roomList.length > 1) {
+        const split = splitRegion({
+          cells: region.cells, w, h: core.h, box, pxPerPt: px, denom, rooms: roomList,
+          neckMaxM: p.neckMaxM, minAreaM2: p.splitMinAreaM2, maxAreaM2: p.splitMaxAreaM2,
+        });
+        if (split && split.parts.length) {
+          splitRegions += 1;
+          for (let k = 0; k < split.parts.length; k += 1) {
+            const part = split.parts[k];
+            out.push({
+              id: `reg${region.index}s${k}`,
+              rings: part.rings,
+              polygon: part.rings[0] || [],
+              areaPt2: part.areaPt2,
+              areaM2: part.areaM2,
+              closed: part.rings.length > 0,
+              cells: part.cells.length,
+              labels: 1,
+              bbox: part.bbox,
+              source: part.accepted ? 'split' : part.code,
+              roomId: part.roomId,
+              ...(part.accepted ? {} : { openPlan: true, refuseCode: part.code }),
+            });
+          }
+          continue;
+        }
+      }
+    }
     const rings = outlineFromRegion(region, w, box, px);
     const areaPt2 = outlineAreaPt2(rings);
     out.push({
@@ -589,10 +641,14 @@ export function traceRegions(p) {
       bbox: region.bbox,
     });
   }
-  return { regions: out, stats: {
+  // The default stats object is byte-identical to before: the split fields appear only when the
+  // opt-in splitShared is on, so no existing consumer or test sees a changed shape.
+  const stats = {
     regions: out.length, labels: p.rooms.length, closeGaps: core.closeGaps,
     pxPerPt: px, denom, raster: `${core.w}x${core.h}`,
-  } };
+  };
+  if (splitShared) { stats.splitShared = true; stats.splitRegions = splitRegions; }
+  return { regions: out, stats };
 }
 
 /**

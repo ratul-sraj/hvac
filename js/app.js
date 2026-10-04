@@ -2925,6 +2925,8 @@ const FILL_REASON_WORDS = {
   already: 'the room already had an area',
   stairwell: 'a stairwell, which is never cooled',
   unused: 'no room name sits inside the outline',
+  'open-plan': 'the room is open to the next space, so its edge is not on the drawing',
+  'unnamed-space': 'the room joins a space with no name through a doorway',
 };
 function fillReasonWords(code) {
   return FILL_REASON_WORDS[code] || 'the outline could not be verified';
@@ -3117,6 +3119,7 @@ async function planFillAreas() {
               segments: c.segs, box, rooms: roomInput, denom,
               pxPerPt: TRACE_PX_PER_PT, thickness: TRACE_THICKNESS,
               closeGaps: trace.RECOMMENDED_CLOSE_GAPS,
+              splitShared: true,   // SPLITSHARED-ON: split a region holding several names at its door-width necks; unnamed halls go to nobody (js/splitregion.js)
             }).regions;
             const out = auto.matchRoomsToRegions({ rooms: roomInput, regions });
             const n = out.assignments.filter((a) => fillIds.has(a.roomId)).length;

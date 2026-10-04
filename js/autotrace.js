@@ -69,6 +69,8 @@ export const CODES = {
   noOutline: 'no-outline',
   shared: 'shared',
   open: 'open',
+  openPlan: 'open-plan',
+  unnamedSpace: 'unnamed-space',
   badArea: 'bad-area',
   overlap: 'overlap',
   already: 'already',
@@ -84,6 +86,8 @@ export const REASON_LABEL = {
   'no-outline': 'no outline contains the name',
   'shared': 'several names in one outline',
   'open': 'outline is not closed',
+  'open-plan': 'open to the next space',
+  'unnamed-space': 'joined to a space with no name',
   'bad-area': 'outline area looks wrong',
   'overlap': 'outline overlaps another',
   'already': 'already had an area',
@@ -99,6 +103,8 @@ function reasonText(code, detail) {
     case 'no-outline': return 'no traced outline contains this name';
     case 'shared': return `this outline contains ${detail} room names - assign by hand`;
     case 'open': return 'outline is not closed';
+    case 'open-plan': return 'This room is open to the next space along a wide edge, so its boundary is not on the drawing. Draw its shape.';
+    case 'unnamed-space': return 'This room is joined through a doorway to a space with no name, so its boundary cannot be told from the drawing. Draw its shape.';
     case 'bad-area': return `outline area looks wrong (${detail} m2)`;
     case 'overlap': return 'this outline overlaps another traced outline - assign by hand';
     case 'already': return 'this room already had an area';
@@ -235,9 +241,15 @@ export function ringsOverlap(aRings, bRings) {
   // One wholly inside the other: a vertex (or centroid, for identical rings) strictly inside.
   for (const rb of bRings) for (const p of rb) if (rb.length >= 3 && strictlyInside(p.x, p.y, aRings)) return true;
   for (const ra of aRings) for (const p of ra) if (ra.length >= 3 && strictlyInside(p.x, p.y, bRings)) return true;
+  // The vertex-average fallback exists to catch two IDENTICAL rings (no vertex is strictly inside).
+  // It is only trustworthy when that average actually lies inside the region's OWN rings: a ring
+  // with a hole (an outer boundary round a courtyard) or a strongly non-convex corridor can have its
+  // vertex-average OUTSIDE the region, in a neighbouring room — which would flag two adjacent,
+  // genuinely separate regions as overlapping. Requiring the average to be inside its own region
+  // keeps the identical-rings catch and drops the false positive.
   const ca = firstRingCentroid(aRings), cb = firstRingCentroid(bRings);
-  if (ca && strictlyInside(ca.x, ca.y, bRings)) return true;
-  if (cb && strictlyInside(cb.x, cb.y, aRings)) return true;
+  if (ca && pointInRegion(ca.x, ca.y, aRings) === 'in' && strictlyInside(ca.x, ca.y, bRings)) return true;
+  if (cb && pointInRegion(cb.x, cb.y, bRings) === 'in' && strictlyInside(cb.x, cb.y, aRings)) return true;
   return false;
 }
 
@@ -304,6 +316,9 @@ export function matchRoomsToRegions(p = {}) {
   for (let gi = 0; gi < regionInfo.length; gi += 1) {
     const g = regionInfo[gi];
     const detailArea = g.areaM2 == null ? '?' : round2(g.areaM2);
+    // A sub-region the splitter refused because it is open to the next space: report the honest
+    // reason instead of assigning a boundary that is not on the drawing.
+    if (g.region && g.region.openPlan) { status[gi] = { code: g.region.refuseCode || CODES.openPlan }; continue; }
     if (!g.closed) { status[gi] = { code: CODES.open }; continue; }
     if (g.areaM2 == null || g.areaM2 < minArea || g.areaM2 > maxArea) {
       status[gi] = { code: CODES.badArea, detail: detailArea };
@@ -341,14 +356,19 @@ export function matchRoomsToRegions(p = {}) {
     if (st.candidate) {
       const info = st.room;
       assignedRoom.add(info.i);
-      assignments.push({ roomId: info.id, regionId: regionInfo[gi].id, name: info.name, areaM2: round2(regionInfo[gi].areaM2) });
+      const assignment = { roomId: info.id, regionId: regionInfo[gi].id, name: info.name, areaM2: round2(regionInfo[gi].areaM2) };
+      // A sub-region produced by the splitter says so, so the UI can mark it. Regions traced whole
+      // carry no `source` and the assignment keeps its historical shape.
+      const source = regionInfo[gi].region && regionInfo[gi].region.source;
+      if (source) assignment.source = source;
+      assignments.push(assignment);
       continue;
     }
     regionReason.set(gi, { code: st.code, detail: st.detail });
   }
 
   // A room not assigned gets a reason from the regions that contain it, most-ambiguous first.
-  const ROOM_PRIORITY = [CODES.shared, CODES.overlap, CODES.open, CODES.badArea, CODES.onEdge, CODES.stairwell, CODES.already, CODES.unused];
+  const ROOM_PRIORITY = [CODES.openPlan, CODES.unnamedSpace, CODES.shared, CODES.overlap, CODES.open, CODES.badArea, CODES.onEdge, CODES.stairwell, CODES.already, CODES.unused];
   for (const info of roomInfo) {
     if (assignedRoom.has(info.i)) continue;
     if (info.stair) { roomReason.set(info.i, { code: CODES.stairwell }); continue; }
