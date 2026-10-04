@@ -3096,6 +3096,273 @@ if (!sampleMissing) {
       `csv disabled=${empty.csvDisabled} title="${empty.csvTitle}"`);
   }
 
+  // 16. Selection works BOTH ways, Delete from the plan, one-step undo, and Clear-all unloading the
+  //     drawing. Each fix gets its own fresh page so nothing here disturbs the checks above.
+  {
+    const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+    const rows = () => page.evaluate(() => document.querySelectorAll("#roomsBody tr").length);
+    // Re-read the element box immediately before every click: a click outside the viewport silently
+    // does nothing, which once cost two probe cycles.
+    const planRoomBox = () => page.evaluate(() => {
+      for (const g of document.querySelectorAll("#planView .plan-room")) {
+        if (g.getAttribute("data-shape") === "focus") continue;
+        const b = g.querySelector(".plan-room-box");
+        if (!b) continue;
+        const r = b.getBoundingClientRect();
+        if (r.width > 5 && r.height > 5 && r.top >= 4 && r.bottom <= innerHeight - 4
+            && r.left >= 0 && r.right <= innerWidth) {
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
+            id: g.getAttribute("data-room-id"), shape: g.getAttribute("data-shape") };
+        }
+      }
+      return null;
+    });
+    const loadSyntheticWithRects = async () => {
+      // Clear the saved project first so the plan mode really is the SHIPPED DEFAULT (Draw shape):
+      // a previous section may have left "Select / edit" in localStorage, which would load instead.
+      await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+      await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 90000 });
+      await page.waitForSelector("#btnSample", { timeout: 30000 });
+      await page.click("#btnSample");
+      await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100, { timeout: 120000 });
+      await settle(3000);
+      await page.click("#planPlaceAll");
+      await settle(3500);
+    };
+
+    // ---- (i) Select/edit: a click on a room's box marks its ROW selected AND scrolls it into view ----
+    await loadSyntheticWithRects();
+    await page.click("#planModeSelect");
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await settle(500);
+    // Put the room list at its BOTTOM so a clicked room's row (near the top of a 159-row table) is
+    // far outside the table's visible window: this is the scroll the fix must perform (before it, a
+    // plan click left the row wherever it happened to be).
+    await page.evaluate(() => { const c = document.querySelector(".table-rooms"); c.scrollTop = c.scrollHeight; });
+    await settle(300);
+    const contBefore = await page.evaluate(() => Math.round(document.querySelector(".table-rooms").scrollTop));
+    let box = await planRoomBox();
+    const scrollYBefore = await page.evaluate(() => Math.round(scrollY));
+    await page.mouse.click(box.x, box.y);
+    await settle(400);
+    const sel1 = await page.evaluate(() => {
+      const tr = document.querySelector("#roomsBody tr.selected");
+      if (!tr) return { openId: window.webhvac.state.ui.openId, none: true };
+      const c = document.querySelector(".table-rooms");
+      const cr = c.getBoundingClientRect(), rr = tr.getBoundingClientRect();
+      return { openId: window.webhvac.state.ui.openId, count: document.querySelectorAll("#roomsBody tr.selected").length,
+        id: tr.getAttribute("data-id"), flash: tr.classList.contains("row-flash"),
+        // within the room table's own visible area (the drawing must NOT move to achieve this)
+        inTable: rr.top >= cr.top - 1 && rr.bottom <= cr.bottom + 1,
+        inWindow: rr.top >= 0 && rr.bottom <= innerHeight + 1,
+        contScrollTop: Math.round(c.scrollTop), top: Math.round(rr.top), bottom: Math.round(rr.bottom) };
+    });
+    ok("clicking a room's box in Select/edit marks its table row selected",
+      !!sel1.openId && sel1.count === 1 && sel1.id === sel1.openId, JSON.stringify(sel1));
+    ok("...and scrolls that row into view inside the room table, with a brief flash",
+      sel1.inTable === true && sel1.flash === true,
+      `row ${sel1.top}..${sel1.bottom} (table view), inWindow ${sel1.inWindow}, table scrollTop ${contBefore} -> ${sel1.contScrollTop}, flash ${sel1.flash}`);
+    ok("the drawing does not jump when a room is picked on it (the page stays put)",
+      Math.abs(await page.evaluate(() => Math.round(scrollY)) - scrollYBefore) < 2,
+      `scrollY ${scrollYBefore} -> ${await page.evaluate(() => Math.round(scrollY))}`);
+    // the flash is transient
+    await settle(1200);
+    ok("the row flash clears itself after about a second",
+      await page.evaluate(() => !document.querySelector("#roomsBody tr.selected.row-flash")), "no .row-flash left");
+
+    // ---- (ii) the DEFAULT Draw-shape mode: the same plain click selects the room ----
+    await loadSyntheticWithRects();
+    const shapeModeOn = await page.evaluate(() => document.getElementById("planModeShape").checked);
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await settle(500);
+    box = await planRoomBox();
+    await page.mouse.click(box.x, box.y);
+    await settle(400);
+    const sel2 = await page.evaluate(() => {
+      const tr = document.querySelector("#roomsBody tr.selected");
+      const c = document.querySelector(".table-rooms");
+      const cr = c.getBoundingClientRect(), rr = tr ? tr.getBoundingClientRect() : null;
+      return { openId: window.webhvac.state.ui.openId, selected: document.querySelectorAll("#roomsBody tr.selected").length,
+        planSelected: document.querySelectorAll("#planView .plan-room.is-selected").length,
+        inTable: rr ? (rr.top >= cr.top - 1 && rr.bottom <= cr.bottom + 1) : null,
+        flash: tr ? tr.classList.contains("row-flash") : null };
+    });
+    ok("a plain click on a room in the DEFAULT Draw-shape mode selects that room",
+      shapeModeOn && !!sel2.openId && sel2.selected === 1 && sel2.planSelected >= 1, JSON.stringify(sel2));
+    ok("...and its row is brought into view there too", sel2.inTable === true && sel2.flash === true, JSON.stringify(sel2));
+
+    // ---- (iii) Delete with that selection removes exactly that room; ---- (D) one-step undo restores it
+    const selId = sel2.openId;
+    const rowsBeforeDel = await rows();
+    const areaBefore = await page.$eval(`#roomsBody tr[data-id="${selId}"] input[data-field="area"]`, (i) => i.value);
+    const idxBefore = await page.evaluate((id) => [...document.querySelectorAll("#roomsBody tr")].findIndex((t) => t.getAttribute("data-id") === id), selId);
+    await page.keyboard.press("Delete");
+    await settle(500);
+    const del = await page.evaluate(() => {
+      const u = document.getElementById("btnUndoDelete");
+      return { rows: document.querySelectorAll("#roomsBody tr").length,
+        openId: window.webhvac.state.ui.openId,
+        undo: u ? { hidden: u.hidden, disabled: u.disabled, text: u.textContent } : null };
+    });
+    ok("Delete on a plan selection removes exactly that room (row count drops by one)",
+      del.rows === rowsBeforeDel - 1 && del.openId === null, `${rowsBeforeDel} -> ${del.rows}`);
+    ok("the Undo-delete button then appears, labelled with the room's name",
+      del.undo && !del.undo.hidden && del.undo.disabled === false && new RegExp(`Undo delete \\(`).test(del.undo.text)
+        && del.undo.text.length > "Undo delete ()".length,
+      JSON.stringify(del.undo));
+    // undo: restored at its old index with an identical area, and the button disables
+    await page.evaluate(() => document.getElementById("btnUndoDelete").click());
+    await settle(600);
+    const undone = await page.evaluate((id) => {
+      const tr = document.querySelector(`#roomsBody tr[data-id="${id}"]`);
+      const u = document.getElementById("btnUndoDelete");
+      return { rows: document.querySelectorAll("#roomsBody tr").length,
+        back: !!tr, area: tr ? tr.querySelector('input[data-field="area"]').value : null,
+        idx: [...document.querySelectorAll("#roomsBody tr")].findIndex((t) => t.getAttribute("data-id") === id),
+        undoDisabled: u ? u.disabled : null };
+    }, selId);
+    ok("Undo puts the room back at its old position with an identical area",
+      undone.back && undone.rows === rowsBeforeDel && undone.idx === idxBefore && undone.area === areaBefore,
+      `row ${undone.idx} (was ${idxBefore}), area ${undone.area} (was ${areaBefore}), rows ${undone.rows}`);
+    ok("the Undo-delete button disables once the undo has been used", undone.undoDisabled === true, `disabled=${undone.undoDisabled}`);
+
+    // ---- (iv) the WORKING direction: clicking a table row still marks the room on the plan ----
+    await page.click("#planModeSelect");
+    await settle(300);
+    const rowId = await page.evaluate(() => {
+      const tr = [...document.querySelectorAll("#roomsBody tr")].find((t) =>
+        document.querySelector(`#planView .plan-room[data-room-id="${t.getAttribute("data-id")}"]`));
+      if (!tr) return null;
+      const cell = tr.querySelector("td.c-name") || tr.querySelector("td");
+      cell.dispatchEvent(new MouseEvent("click", { bubbles: true, view: window }));
+      return tr.getAttribute("data-id");
+    });
+    void rowId;
+    await settle(800);
+    const marked = await page.evaluate(() => ({
+      openId: window.webhvac.state.ui.openId,
+      planSelected: document.querySelectorAll("#planView .plan-room.is-selected").length,
+      focusMarks: document.querySelectorAll('#planView [data-shape="focus"]').length,
+    }));
+    ok("clicking a table row still marks that room on the plan",
+      !!marked.openId && (marked.planSelected >= 1 || marked.focusMarks >= 1), JSON.stringify(marked));
+
+    // ---- (v) a shape-mode click that is NOT inside a room still starts a many-corner shape ----
+    await loadSyntheticWithRects();
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await settle(500);
+    const emptyPt = await page.evaluate(() => {
+      const vp = window.webhvac.plan.viewer.getViewport();
+      const pg = window.webhvac.plan.page;
+      const rooms = window.webhvac.state.rooms;
+      const inRing = (ring, pt) => { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const a = ring[i], b = ring[j];
+        if (((a.y > pt.y) !== (b.y > pt.y)) && (pt.x < (b.x - a.x) * (pt.y - a.y) / (b.y - a.y) + a.x)) c = !c;
+      } return c; };
+      const insideAnyRoom = (cx, cy) => {
+        const q = vp.convertToPdfPoint(cx, cy);
+        for (const room of rooms) {
+          if (room.poly && (room.polyPage ?? room.page ?? 1) === pg && inRing(room.poly, { x: q[0], y: q[1] })) return true;
+          if (room.rect && room.rect.page === pg && q[0] >= room.rect.x && q[0] <= room.rect.x + room.rect.w
+              && q[1] >= room.rect.y && q[1] <= room.rect.y + room.rect.h) return true;
+        }
+        return false;
+      };
+      const r = document.getElementById("planView").getBoundingClientRect();
+      for (const [fx, fy] of [[0.05, 0.05], [0.95, 0.05], [0.05, 0.95], [0.5, 0.03], [0.5, 0.97], [0.5, 0.5]]) {
+        const cx = Math.round(r.width * fx), cy = Math.round(r.height * fy);
+        const x = Math.round(r.x + cx), y = Math.round(r.y + cy);
+        if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) continue;
+        if (!insideAnyRoom(cx, cy)) return { x, y };
+      }
+      return null;
+    });
+    if (emptyPt) await page.mouse.click(emptyPt.x, emptyPt.y);
+    await settle(300);
+    const draft = await page.evaluate(() => ({
+      n: window.webhvac.plan.overlay.draftCount(), openId: window.webhvac.state.ui.openId,
+      hint: (document.getElementById("planHint") || {}).textContent || "" }));
+    ok("a shape-mode click that lands in no room still starts a many-corner shape (nothing regressed)",
+      !!emptyPt && draft.n >= 1 && draft.openId === null, JSON.stringify(draft));
+    // leave no half-drawn shape behind
+    await page.keyboard.press("Escape");
+    await settle(200);
+
+    // ---- (E) removing a shape from a row takes its OUTLINE off the sheet ----
+    await page.goto(BASE + "app.html?sample=house", { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForSelector("#btnSampleHouse", { timeout: 30000 });
+    await page.click("#btnSampleHouse");
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
+    await settle(3000);
+    await page.click("#planTraceOutlines");
+    await page.waitForFunction(() => window.webhvac.state.rooms.some((r) => r.poly && r.poly.length > 2), { timeout: 120000 });
+    await settle(2500);
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await settle(400);
+    const polyTarget = await page.evaluate(() => {
+      for (const g of document.querySelectorAll('#planView .plan-room[data-shape="poly"]')) {
+        const b = g.querySelector(".plan-room-box"); if (!b) continue;
+        const r = b.getBoundingClientRect();
+        if (r.width > 6 && r.height > 6 && r.top >= 4 && r.bottom <= innerHeight - 4 && r.left >= 0 && r.right <= innerWidth)
+          return { id: g.getAttribute("data-room-id"), x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      }
+      return null;
+    });
+    const polysBefore = await page.evaluate(() => document.querySelectorAll('#planView .plan-room[data-shape="poly"]').length);
+    const planRoomsBefore = await page.evaluate(() => document.querySelectorAll("#planView .plan-room").length);
+    if (polyTarget) { await page.mouse.click(polyTarget.x, polyTarget.y); await settle(600); }
+    await page.evaluate(() => document.getElementById("planLinkDetach").click());
+    await settle(900);
+    const afterDetach = await page.evaluate((id) => ({
+      polys: document.querySelectorAll('#planView .plan-room[data-shape="poly"]').length,
+      planRooms: document.querySelectorAll("#planView .plan-room").length,
+      stillPoly: !!document.querySelector(`#planView .plan-room[data-shape="poly"][data-room-id="${id}"]`),
+      stillAny: !!document.querySelector(`#planView .plan-room[data-room-id="${id}"]`),
+      statePoly: !!(window.webhvac.state.rooms.find((r) => r.id === id) || {}).poly,
+    }), polyTarget ? polyTarget.id : "");
+    ok("removing a shape from a row takes its outline OFF the drawing (repaint, not just state)",
+      !!polyTarget && afterDetach.statePoly === false && afterDetach.polys === polysBefore - 1
+        && afterDetach.stillPoly === false && afterDetach.stillAny === false
+        && afterDetach.planRooms === planRoomsBefore - 1,
+      `outlines ${polysBefore} -> ${afterDetach.polys}; plan rooms ${planRoomsBefore} -> ${afterDetach.planRooms}; room ${polyTarget ? polyTarget.id : "?"} still drawn: ${afterDetach.stillAny}`);
+
+    // ---- (F) Clear all rooms ALSO unloads the drawing, and a reload does not bring it back ----
+    const beforeClear = await page.evaluate(() => ({
+      rows: document.querySelectorAll("#roomsBody tr").length,
+      planRooms: document.querySelectorAll("#planView .plan-room").length,
+      planCardHidden: document.getElementById("planCard").classList.contains("hidden"),
+    }));
+    await page.evaluate(() => { window.confirm = () => true; });
+    await page.click("#btnClear");
+    await settle(1600);
+    const cleared = await page.evaluate(() => ({
+      rows: document.querySelectorAll("#roomsBody tr").length,
+      planRooms: document.querySelectorAll("#planView .plan-room").length,
+      planCardHidden: document.getElementById("planCard").classList.contains("hidden"),
+      page: window.webhvac.plan.page, viewer: !!window.webhvac.plan.viewer, overlay: !!window.webhvac.plan.overlay,
+      fillDisabled: document.getElementById("planFillAreas").disabled,
+      undoFillDisabled: document.getElementById("planFillUndo").disabled,
+    }));
+    ok("Clear all rooms empties the table", beforeClear.rows > 0 && cleared.rows === 0, `${beforeClear.rows} -> ${cleared.rows}`);
+    ok("...and unloads the drawing: no room shapes left and the panel is back to its empty state",
+      beforeClear.planRooms > 0 && cleared.planRooms === 0 && cleared.planCardHidden === true
+        && !cleared.viewer && !cleared.overlay && cleared.page === 1,
+      JSON.stringify(cleared));
+    ok("...and the fill/undo buttons are back to their empty state",
+      cleared.undoFillDisabled === true, `fill disabled=${cleared.fillDisabled}, undo-fill disabled=${cleared.undoFillDisabled}`);
+    await page.reload({ waitUntil: "networkidle2", timeout: 60000 });
+    await settle(3000);
+    const afterReload = await page.evaluate(() => ({
+      rows: document.querySelectorAll("#roomsBody tr").length,
+      planRooms: document.querySelectorAll("#planView .plan-room").length,
+      planCardHidden: document.getElementById("planCard").classList.contains("hidden"),
+      viewer: !!window.webhvac.plan.viewer,
+    }));
+    ok("a reload after Clear all does NOT restore the drawing",
+      afterReload.rows === 0 && afterReload.planRooms === 0 && afterReload.planCardHidden === true && !afterReload.viewer,
+      JSON.stringify(afterReload));
+  }
+
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
   for (let i = 0; i < 60; i++) {

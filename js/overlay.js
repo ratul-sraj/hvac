@@ -396,6 +396,10 @@ export function createOverlay(rootEl, {
   let draft = null;      // { page, startPdf, endPdf, cursorView }
   // Active 'shape' draft: the vertices already placed (PDF points) + the cursor in view pixels.
   let shapeDraft = null; // { page, pts:[{x,y}], cursorView:{x,y} }
+  // Did the CURRENT shape-mode press begin the draft (no corners placed before it)? A plain click
+  // that lands inside a room with geometry selects instead of drawing, but only when it is the FIRST
+  // corner; a later corner of a shape already in progress must never be hijacked.
+  let shapePressFresh = false;
   let downAt = null;     // view px of the pointerdown (click vs drag)
   let captureId = null;
   let hoverId = null;
@@ -1080,6 +1084,7 @@ export function createOverlay(rootEl, {
   function cancelShape() {
     if (!shapeDraft) return;
     shapeDraft = null;
+    shapePressFresh = false;
     downAt = null;
     render();
   }
@@ -1228,7 +1233,9 @@ export function createOverlay(rootEl, {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (mode === 'shape') {
       e.preventDefault?.();
+      const wasDrawing = !!(shapeDraft && shapeDraft.pts.length);
       startShape(e);
+      shapePressFresh = !wasDrawing;
       return;
     }
     if (mode === 'draw') {
@@ -1333,7 +1340,32 @@ export function createOverlay(rootEl, {
       return;
     }
 
-    if (mode === 'shape') { render(); return; }
+    if (mode === 'shape') {
+      // A plain click (no drag) that lands INSIDE an existing room selects it instead of starting a
+      // many-corner shape — the same click-to-select Select/edit has, and what makes the room's
+      // Delete reachable from the default Draw shape mode. Only a FRESH press (this click began the
+      // draft, no corners were placed before it) that finds a room with geometry qualifies: a click
+      // that adds a corner to a shape already in progress is left alone, and a click on empty sheet
+      // still starts a shape. A drawing gesture's first corner is a click with no movement, so the
+      // "inside an existing room" test — not the movement alone — is what tells the two apart.
+      const wasClick = !!downAt
+        && Math.abs(p.x - downAt.x) <= CLICK_SLOP_PX
+        && Math.abs(p.y - downAt.y) <= CLICK_SLOP_PX;
+      const fresh = shapePressFresh;
+      shapePressFresh = false;
+      if (wasClick && fresh) {
+        const room = roomUnder();
+        if (room) {
+          cancelShape();                 // never leave a stray 1-vertex draft behind
+          safeCall(onSelect, room);
+          setHover(room);
+          return;
+        }
+      }
+      downAt = null;
+      render();
+      return;
+    }
     if (mode === 'draw') { finishDraft(e); return; }
     releaseCapture(e);
     const wasClick = downAt

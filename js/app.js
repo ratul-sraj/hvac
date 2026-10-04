@@ -922,13 +922,83 @@ function addRooms(rooms, opts = {}) {
   return { added, skipped };
 }
 
+/* ---- one-step undo for a deleted room -----------------------------------------------------------
+ * Deleting a room is otherwise permanent (state.rooms is auto-saved to this browser), so a mis-click
+ * costs the row. Keep the room OBJECT and its index from the most recent delete only; the small
+ * button beside Add/Clear restores it, fields (area, poly, areaFromDrawing, page, ...) intact. */
+let deleteUndo = null;        // { room, index } of the MOST RECENT delete, or null
+let btnUndoDelete = null;     // the button, created lazily (app.html is not edited for this)
+
+/** Create the Undo-delete button beside #btnClear once, and wire it. Returns the button (or null if
+ *  the toolbar is not in the DOM, e.g. an unusual embed). */
+function ensureUndoDeleteButton() {
+  if (btnUndoDelete) return btnUndoDelete;
+  const clearBtn = $('#btnClear');
+  if (!clearBtn || !clearBtn.parentNode) return null;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.id = 'btnUndoDelete';
+  b.className = 'btn btn-danger-ghost btn-undo-delete';
+  b.hidden = true;
+  b.disabled = true;
+  b.textContent = 'Undo delete';
+  b.addEventListener('click', undoDeleteRoom);
+  clearBtn.parentNode.insertBefore(b, clearBtn.nextSibling);
+  btnUndoDelete = b;
+  return b;
+}
+
+/** Reflect the single undoable delete on the button: labelled with the room, enabled only while a
+ *  delete can still be undone, hidden otherwise. */
+function updateUndoDeleteButton() {
+  const b = ensureUndoDeleteButton();
+  if (!b) return;
+  if (deleteUndo && deleteUndo.room) {
+    b.hidden = false;
+    b.disabled = false;
+    b.textContent = `Undo delete (${deleteUndo.room.name || 'room'})`;
+    b.setAttribute('aria-label', b.textContent);
+  } else {
+    b.hidden = true;
+    b.disabled = true;
+    b.textContent = 'Undo delete';
+    b.setAttribute('aria-label', 'Undo delete');
+  }
+}
+
+/** Forget the undoable delete (used when the whole room list is replaced or cleared). */
+function clearDeleteUndo() {
+  deleteUndo = null;
+  updateUndoDeleteButton();
+}
+
+/** Put the most recently deleted room back at its old index, with every field as it was. */
+function undoDeleteRoom() {
+  if (!deleteUndo || !deleteUndo.room) return;
+  const { room, index } = deleteUndo;
+  deleteUndo = null;                       // the undo is single-use
+  const at = Math.max(0, Math.min(Number(index) || 0, state.rooms.length));
+  state.rooms.splice(at, 0, room);
+  updateUndoDeleteButton();
+  renderAll();
+  saveSoon();
+  setStatus('ok', `Put ${room.name || 'the room'} back at its old place in the table.`);
+  try {
+    const tr = el.roomsBody && el.roomsBody.querySelector(`tr[data-id="${room.id}"]`);
+    if (tr) { scrollRowIntoView(tr); flashTableRow(tr); }
+  } catch (err) { /* ignore */ }
+}
+
 function deleteRoom(idx) {
   const room = state.rooms[idx];
   if (!room) return;
   if (state.ui.openId === room.id) closeDetail();
   state.rooms.splice(idx, 1);
+  deleteUndo = { room, index: idx };       // only the MOST RECENT delete is undoable
   renderAll();
   saveSoon();
+  updateUndoDeleteButton();
+  setStatus('ok', `Removed ${room.name || 'the room'} — press Undo delete (${room.name || 'room'}) to put it back.`);
 }
 
 function visibleIndices() {
@@ -2380,9 +2450,59 @@ function planSync() {
   if (el.planHint) el.planHint.textContent = planHintText();
 }
 
+/** Any change to a room's poly/rect made from the APP side must repaint the overlay. The overlay draws
+ *  straight from state.rooms, so a room whose outline was removed would otherwise keep its shape on
+ *  the sheet until some unrelated redraw. renderAll() already calls overlay.render() — this is called
+ *  by the geometry paths as well so a future change to renderAll can never leave a stale outline on
+ *  the drawing (and the hint follows). Idempotent and safe when no drawing is loaded. */
+function planRenderGeometry() {
+  if (plan.overlay) plan.overlay.render();
+  planSync();
+}
+
 function planSelectRoom(room) {
   if (room) openDetail(room.id, { keepView: true }); else closeDetail();
   if (plan.overlay) plan.overlay.render();
+  if (!room) return;
+  // Drawing -> row: the selection was made ON the sheet, so give the matching table row the other
+  // half of the link — bring it into view and flash it — otherwise on a 56-row table the user sees
+  // nothing happen. If the current search / level filter hides that row, say so instead of silently
+  // doing nothing. A schedule-only project, or any odd DOM, must never break selection.
+  try {
+    const tr = el.roomsBody ? el.roomsBody.querySelector(`tr[data-id="${room.id}"]`) : null;
+    if (tr) {
+      scrollRowIntoView(tr);
+      flashTableRow(tr);
+    } else {
+      setStatus('', `Selected ${room.name || 'the room'} in the load, but the current filter hides its row.`, 'plan');
+    }
+  } catch (err) { /* never throw when no drawing is loaded */ }
+}
+
+/** Bring a table row into view WITHOUT moving the window. scrollIntoView scrolls every scrollable
+ *  ancestor — including the page — which yanks the drawing out of view while the user is working on
+ *  it (a fixed-coordinate click/drag on the plan then lands somewhere else). Scroll the table's own
+ *  scroll container instead; the drawing stays exactly where it is. */
+function scrollRowIntoView(tr) {
+  if (!tr) return;
+  const container = tr.closest ? tr.closest('.table-scroll') : null;
+  if (!container) { try { tr.scrollIntoView({ block: 'nearest' }); } catch (err) { /* ignore */ } return; }
+  const cr = container.getBoundingClientRect();
+  const rr = tr.getBoundingClientRect();
+  if (rr.top < cr.top) container.scrollTop += rr.top - cr.top;
+  else if (rr.bottom > cr.bottom) container.scrollTop += rr.bottom - cr.bottom;
+}
+
+let rowFlashTimer = 0;
+/** Briefly flash a table row so a selection made on the drawing is noticed in a long table. The CSS
+ *  class is removed after ~1.2 s; @media (prefers-reduced-motion: reduce) shows a static ring. */
+function flashTableRow(tr) {
+  if (!tr || !tr.classList) return;
+  tr.classList.remove('row-flash');
+  void tr.offsetWidth;                 // reflow so re-picking the SAME row retriggers the animation
+  tr.classList.add('row-flash');
+  clearTimeout(rowFlashTimer);
+  rowFlashTimer = setTimeout(() => { if (tr.classList) tr.classList.remove('row-flash'); }, 1200);
 }
 
 /* ---- Stage 2: the overlay reports, the app owns the state (see AGENTS.md) --------------------
@@ -2488,6 +2608,7 @@ function planDeleteRoom(id) {
   const idx = state.rooms.indexOf(room);
   if (idx < 0) return;
   deleteRoom(idx);   // splices state, closes the description if it showed this room, renderAll + save
+  planRenderGeometry();   // a deleted room's outline must leave the sheet too
 }
 
 /* ---- "Place all rooms on the plan": a locator box for every room the sheet names -----------------
@@ -3093,6 +3214,7 @@ function planUndoFill() {
   renderAll();
   saveNow();
   planSyncFillButton();
+  planRenderGeometry();
   setStatus('ok', `Undone: ${n} area${n === 1 ? '' : 's'} put back exactly as they were, ` +
     `and the load is back to what it was.`, 'plan');
 }
@@ -3129,6 +3251,7 @@ function planApplyFill(assignments, reasonCount, info) {
   renderAll();
   saveNow();
   planSyncFillButton();
+  planRenderGeometry();
 
   if (!filled.length) {
     const why = fillReasonSummary(reasonCount) || 'no blank room matched one closed outline of the plan.';
@@ -3382,6 +3505,7 @@ function planCommitShape(roomId) {
     room.area = drawnPolyArea(room);
     renderAll();
     saveNow();
+    planRenderGeometry();
     const delta = round2(room.area - before);
     setStatus('ok', `${room.name || 'Room'} was given the drawn shape: its area is now ` +
       `${fmt(room.area, 1)} m² (${delta >= 0 ? '+' : ''}${fmt(delta, 1)} m²), and the load has ` +
@@ -3412,6 +3536,10 @@ function planDetachShape(roomId) {
   if (wasFromDrawing) { room.area = null; room.areaUnknown = true; }
   renderAll();
   saveNow();
+  planRenderGeometry();     // the outline must leave the sheet the moment the row stops claiming it
+  // The shape that was being edited is gone, so drop the selection too: the row keeps its data in the
+  // table, but nothing of it is left on the drawing (no outline, and no lingering focus pointer).
+  closeDetail();
   setStatus('ok', `The shape was removed from ${room.name || 'the room'}. ` +
     (wasFromDrawing
       ? `Its area was the drawn shape, so it now counts as unknown and is left out of the load until you type one.`
@@ -3446,6 +3574,7 @@ function planMoveShapeTo(fromId, toId) {
   delete to.areaUnknown;
   renderAll();
   saveNow();
+  planRenderGeometry();     // the outline moved from one box to another on the sheet
   setStatus('ok', `The drawn shape now belongs to ${to.name || 'the room'}` +
     `${to.level ? ` (${to.level})` : ''}: its area is ${fmt(to.area, 1)} m² and the load uses it. ` +
     (toHadShape ? `Its previous shape was replaced. ` : '') +
@@ -3472,6 +3601,7 @@ function planDrawRoom(rect, info) {
   const res = addRooms([room]);
   renderAll();
   saveSoon();
+  planRenderGeometry();
   if (res.added) {
     setStatus('ok', `${room.name} added — ${room.length} × ${room.width} m, ${room.area} m² at 1:${denom}. ` +
       `Set its name, orientation and glazing below; the load already uses it.`, 'plan');
@@ -3505,6 +3635,7 @@ function planCreateShapeRoom(shape) {
   const res = addRooms([room]);
   renderAll();
   saveNow();
+  planRenderGeometry();
   if (res.added) {
     setStatus('ok', `${room.name} added — ${fmt(room.area, 1)} m² drawn on the plan at 1:${denom}. ` +
       `Set its name, orientation and glazing below; the load already uses it. ` +
@@ -3610,6 +3741,35 @@ async function restoreDrawing() {
   } catch (err) {
     console.warn('[plan] could not restore the drawing:', (err && err.message) || err);
   }
+}
+
+/** Put the plan panel back to its empty (no drawing) state and forget the stored drawing, so a reload
+ *  cannot bring back a sheet the table no longer describes. Called by Clear all rooms. Idempotent and
+ *  safe when no drawing is open. */
+async function unloadPlan() {
+  planClearPreview();
+  if (plan.overlay) { try { plan.overlay.destroy(); } catch (err) { /* ignore */ } }
+  if (plan.viewer) { try { plan.viewer.destroy(); } catch (err) { /* ignore */ } }
+  plan.overlay = null;
+  plan.viewer = null;
+  plan.bytes = null;
+  plan.traceBytes = null;
+  plan.stored = false;
+  plan.page = 1;
+  plan.pages = 1;
+  plan.revealed = false;
+  pendingShape = null;
+  lastFill = null;                 // the fill's Undo belonged to the drawing that is going away
+  if (el.planPage) el.planPage.textContent = '1';
+  if (el.planPages) el.planPages.textContent = '1';
+  if (el.planCard) el.planCard.classList.add('hidden');   // the panel's empty/upload state
+  if (typeof planTraceBusy === 'function') planTraceBusy(false);   // fill/undo/trace back to their empty state
+  // Drop the copy this browser kept, so a reload cannot restore a drawing that no longer matches the
+  // (now empty) table. Never fatal: a browser without IndexedDB costs nothing here.
+  try {
+    const mod = await import('./drawstore.js');
+    await mod.clearDrawing();
+  } catch (err) { /* nothing stored, or no store */ }
 }
 
 /** A normalised room name for matching: trimmed, inner whitespace collapsed, case-insensitive. */
@@ -4222,6 +4382,7 @@ function openProjectFile(file) {
       if (!rooms) throw new Error('no rooms list in this file');
       state.project = mergeProject(data.project);
       state.rooms = rooms.filter((r) => r && typeof r === 'object');
+      clearDeleteUndo();
       state.ui.sort = { key: null, dir: 1 };
       state.ui.level = 'all';
       state.ui.q = '';
@@ -4363,14 +4524,16 @@ function wire() {
 
   $('#btnClear').addEventListener('click', () => {
     if (!state.rooms.length) { setStatus('warn', 'The room list is already empty.'); return; }
-    if (!window.confirm(`Delete all ${state.rooms.length} room(s)? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete all ${state.rooms.length} room(s) and unload the drawing? This cannot be undone.`)) return;
     state.rooms = [];
         state.warnings = [];
+    clearDeleteUndo();
         renderWarnings();
     closeDetail();
     renderAll();
+    unloadPlan();          // also drop the drawing, hide the plan panel, and forget the stored copy
     saveNow();
-    setStatus('ok', 'All rooms cleared.');
+    setStatus('ok', 'All rooms cleared. The drawing was unloaded and will not come back on a reload.');
   });
 
   // table
@@ -4378,6 +4541,9 @@ function wire() {
   el.roomsBody.addEventListener('change', onTableInput);
   el.roomsBody.addEventListener('click', onTableClick);
   el.roomsTable.querySelector('thead').addEventListener('click', onHeaderClick);
+
+  // one-step undo for a deleted room: create/reflect the button beside Add/Clear (app.html untouched)
+  updateUndoDeleteButton();
 
   // filters
   el.filterName.addEventListener('input', () => {
