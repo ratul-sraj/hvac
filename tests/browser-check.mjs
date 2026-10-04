@@ -3975,6 +3975,206 @@ if (!sampleMissing) {
     }
   }
 
+  // ------------------------------------------------------------------ //
+  // 20. A TRACED room's area must follow the outline the user draws.    //
+  //     planRoomMoved/planRoomMoveEnd used to refresh the area of a     //
+  //     HAND-DRAWN room only, so a traced outline kept the plan's own   //
+  //     figure while its ring visibly moved — the number did not        //
+  //     describe the shape on the screen. These checks drag a vertex of //
+  //     a traced room and assert the area follows. The hand-drawn rule  //
+  //     ("dragging a corner changes the row's area to the new shoelace",//
+  //     15b) and the scale-change rule ("changing the drawing scale     //
+  //     leaves a traced outline's area alone", 11f(3)) must stay green  //
+  //     — both are cited, and 15b already re-asserts the first here.    //
+  // ------------------------------------------------------------------ //
+  {
+    const sleepT = (ms) => new Promise((r) => setTimeout(r, ms));
+    const PT_PER_IN = 72, M_PER_IN = 0.0254;
+    // shoelace over the stored PDF-space ring, converted to m² at its own drawing scale — computed
+    // INDEPENDENTLY of the app, so the assertion is not the app grading its own arithmetic.
+    const ringAreaM2 = (poly, denom) => {
+      let s = 0;
+      for (let i = 0; i < poly.length; i += 1) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        s += a.x * b.y - b.x * a.y;
+      }
+      return (Math.abs(s) / 2) * ((denom / PT_PER_IN * M_PER_IN) ** 2);
+    };
+    const readRoom = (id) => page.evaluate((rid) => {
+      const r = (window.webhvac.state.rooms || []).find((x) => x.id === rid) || {};
+      const tr = [...document.querySelectorAll("#roomsBody tr")].find((t) => t.dataset.id === rid);
+      const cell = tr ? (tr.querySelector('input[data-field="area"]') || {}).value : null;
+      const chip = document.querySelector(`.plan-area-chip[data-room-id="${rid}"]`);
+      const m = ((document.getElementById("summaryCards") || {}).innerText || "")
+        .replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/);
+      return {
+        area: Number(r.area),
+        denom: Number(r.scaleDenom) || Number((window.webhvac.state.project || {}).planScale) || 100,
+        areaFromDrawing: !!r.areaFromDrawing, areaUnknown: !!r.areaUnknown, areaTyped: !!r.areaTyped,
+        src: r.source, polyLen: (r.poly || []).length,
+        poly: (r.poly || []).map((p) => ({ x: Number(p.x), y: Number(p.y) })),
+        cell: cell == null || cell === "" ? null : Number(cell),
+        chip: chip ? chip.textContent.trim() : null,
+        total: m ? parseFloat(m[1]) : null,
+      };
+    }, id);
+    const chipNum = (s) => { const m = /(-?[0-9.]+)/.exec(s || ""); return m ? parseFloat(m[1]) : NaN; };
+    const statusText = () => page.evaluate(() => ((document.getElementById("planStatus") || {}).textContent || "")
+      .replace(/\s+/g, " ").trim());
+    // robust switch to Select/edit: a plain click on the radio is swallowed by the sticky nav
+    const toSelectMode = async () => {
+      await page.evaluate(() => document.getElementById("planModeSelect").scrollIntoView({ block: "center" }));
+      await sleepT(250);
+      await page.click("#planModeSelect").catch(() => {});
+      await sleepT(250);
+      if (!(await page.evaluate(() => document.getElementById("planModeSelect").checked))) {
+        await page.evaluate(() => document.getElementById("planModeSelect").click());
+        await sleepT(350);
+      }
+      return page.evaluate(() => document.getElementById("planModeSelect").checked);
+    };
+    // centre the room's shape in the plan panel, then return an in-viewport vertex grip and an
+    // OUTWARD drag target (pulling a corner away from the shape keeps the result a simple polygon).
+    const gripAndTarget = async (id, outPx) => {
+      const centered = await page.evaluate((rid) => {
+        const v = document.getElementById("planView");
+        const box = document.querySelector(`.plan-room[data-room-id="${rid}"] .plan-room-box`);
+        if (!box) return false;
+        const vr = v.getBoundingClientRect(), br = box.getBoundingClientRect();
+        v.scrollLeft += (br.x + br.width / 2) - (vr.x + vr.width / 2);
+        v.scrollTop += (br.y + br.height / 2) - (vr.y + vr.height / 2);
+        v.scrollIntoView({ block: "center" });
+        return true;
+      }, id);
+      if (!centered) return null;
+      await sleepT(500);
+      return page.evaluate((rid, R) => {
+        const r = (window.webhvac.state.rooms || []).find((x) => x.id === rid);
+        if (!r || !Array.isArray(r.poly)) return null;
+        const vp = window.webhvac.plan.viewer.getViewport();
+        const c = document.getElementById("planCanvas").getBoundingClientRect();
+        const pv = document.getElementById("planView").getBoundingClientRect();
+        const tv = (q) => { const p = vp.convertToViewportPoint(q.x, q.y); return { x: c.x + p[0], y: c.y + p[1] }; };
+        const inside = (q, m) => q.x > pv.left + m && q.x < pv.right - m && q.y > pv.top + m && q.y < pv.bottom - m;
+        const cand = r.poly.map((q, i) => ({ i, ...tv(q) })).filter((p) => inside(p, 30));
+        if (!cand.length) return null;
+        const cen = r.poly.reduce((s, q) => { const p = tv(q); return { x: s.x + p.x / r.poly.length, y: s.y + p.y / r.poly.length }; }, { x: 0, y: 0 });
+        // pick a vertex whose OUTWARD drag target also stays on the panel (a drag released outside the
+        // scroll box is still delivered via pointer capture, but keeping it on-panel is steadier).
+        const withTarget = cand.map((g) => {
+          let ux = g.x - cen.x, uy = g.y - cen.y; const m = Math.hypot(ux, uy) || 1; ux /= m; uy /= m;
+          return { ...g, tx: g.x + ux * R, ty: g.y + uy * R };
+        });
+        const best = withTarget.find((g) => inside(g, -8)) || withTarget[0];
+        // clamp the target into the panel so the drag always ends on a point that exists
+        const tx = Math.max(pv.left + 8, Math.min(pv.right - 8, best.tx));
+        const ty = Math.max(pv.top + 8, Math.min(pv.bottom - 8, best.ty));
+        return { gx: Math.round(best.x), gy: Math.round(best.y), tx: Math.round(tx), ty: Math.round(ty), vertex: best.i };
+      }, id, outPx);
+    };
+
+    // fresh sample, then "Trace real outlines" (the fill only assigns areas — it leaves no ring)
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.goto(BASE + "app.html", { waitUntil: "networkidle2", timeout: 90000 });
+    await page.evaluate(() => document.getElementById("btnSample").scrollIntoView({ block: "center" }));
+    await sleepT(500);
+    await page.click("#btnSample").catch(() => {});
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length >= 40,
+      { timeout: 120000, polling: 400 }).catch(() => {});
+    await sleepT(5000);
+    await page.evaluate(() => document.getElementById("planTraceOutlines").scrollIntoView({ block: "center" }));
+    await sleepT(400);
+    await page.click("#planTraceOutlines").catch(() => {});
+    await page.waitForFunction(() => (window.webhvac.state.rooms || [])
+      .some((r) => Array.isArray(r.poly) && r.poly.length > 2), { timeout: 90000, polling: 500 }).catch(() => {});
+    await sleepT(2500);
+
+    const picked = await page.evaluate(() => {
+      const rs = (window.webhvac.state.rooms || [])
+        .filter((r) => r.source !== "drawn" && Array.isArray(r.poly) && r.poly.length > 2 && Number(r.area) > 0);
+      rs.sort((a, b) => Number(b.area) - Number(a.area));
+      return rs[0] ? { id: rs[0].id, name: rs[0].name } : null;
+    });
+    ok("20 the sample has a TRACED room (an outline with an area) to drag", !!picked, JSON.stringify(picked));
+
+    if (picked) {
+      const id = picked.id;
+      ok("20 the traced room is selected in Select/edit before the vertex is dragged",
+        await toSelectMode(), "planModeSelect checked");
+      await page.evaluate((rid) => {
+        const tr = [...document.querySelectorAll("#roomsBody tr")].find((t) => t.dataset.id === rid);
+        (tr.querySelector("td.c-name") || tr.querySelector("td") || tr).click();
+      }, id);
+      await sleepT(700);
+      const gt = await gripAndTarget(id, 45);
+      ok("20 the traced room shows a vertex grip with an outward drag that stays on the panel",
+        !!gt, JSON.stringify(gt));
+
+      if (gt) {
+        const before = await readRoom(id);
+        await page.mouse.move(gt.gx, gt.gy); await sleepT(120);
+        await page.mouse.down(); await sleepT(120);
+        await page.mouse.move((gt.gx + gt.tx) / 2, (gt.gy + gt.ty) / 2, { steps: 6 }); await sleepT(80);
+        await page.mouse.move(gt.tx, gt.ty, { steps: 6 }); await sleepT(300);
+        const mid = await readRoom(id);
+        const totalMid = mid.total;
+        await page.mouse.up(); await sleepT(900);
+        const after = await readRoom(id);
+        const expAfter = ringAreaM2(after.poly, after.denom);
+        const afterStatus = await statusText();
+
+        // (i) the area changed and now IS the ring's shoelace (computed here independently), and the
+        //     provenance is honest: it now comes from the outline.
+        ok("20 (i) dragging a vertex of a TRACED room changes its area to the ring's own shoelace",
+          Math.abs(after.area - before.area) > 0.5
+            && Math.abs(after.area - expAfter) <= Math.max(0.15, expAfter * 0.005)
+            && after.areaFromDrawing === true && after.areaUnknown === false,
+          `${before.area} -> ${after.area} m² (independent shoelace ${expAfter.toFixed(3)} m², ` +
+          `${after.polyLen} ring points, areaFromDrawing ${after.areaFromDrawing}, areaUnknown ${after.areaUnknown})`);
+        ok("20 (i) the plan status says the traced room's area now follows the outline drawn",
+          /follows the outline you drew/i.test(afterStatus), `"${afterStatus.slice(0, 140)}"`);
+
+        // (ii) the TABLE CELL and the on-plan CHIP both carry the new figure.
+        ok("20 (ii) the table cell and the on-plan chip both show the traced room's new area",
+          mid.cell != null && mid.chip != null && after.cell != null && after.chip != null
+            && Math.abs(mid.cell - mid.area) < 0.01 && Math.abs(after.cell - after.area) < 0.01
+            && Math.abs(chipNum(mid.chip) - mid.area) <= 0.05 && Math.abs(chipNum(after.chip) - after.area) <= 0.05
+            && after.cell !== before.cell,
+          `cell ${before.cell} -> ${after.cell} m²; chip "${before.chip}" -> "${after.chip}"`);
+
+        // (iii) the load total is untouched DURING the drag and follows on RELEASE.
+        ok("20 (iii) the load total is unchanged during the drag and updated on release",
+          totalMid === before.total && after.total !== before.total,
+          `total ${before.total} TR -> ${totalMid} TR mid-drag -> ${after.total} TR on release`);
+
+        // (iv) a TYPED area on a traced room is never replaced by a vertex drag, and the status says so.
+        await page.$eval(`tr[data-id="${id}"] input[data-field="area"]`, (inp) => {
+          inp.value = "55.5";
+          inp.dispatchEvent(new Event("input", { bubbles: true }));
+          inp.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await sleepT(700);
+        const typed0 = await readRoom(id);
+        const gt2 = await gripAndTarget(id, 45);
+        ok("20 (iv) the traced room still shows vertex grips after a typed area", !!gt2, JSON.stringify(gt2));
+        if (gt2) {
+          await page.mouse.move(gt2.gx, gt2.gy); await sleepT(120);
+          await page.mouse.down(); await sleepT(120);
+          await page.mouse.move((gt2.gx + gt2.tx) / 2, (gt2.gy + gt2.ty) / 2, { steps: 6 }); await sleepT(80);
+          await page.mouse.move(gt2.tx, gt2.ty, { steps: 6 }); await sleepT(300);
+          await page.mouse.up(); await sleepT(900);
+          const typed1 = await readRoom(id);
+          const typedMsg = await statusText();
+          ok("20 (iv) a TYPED area on a traced room survives a vertex drag, and the status says so",
+            typed0.areaTyped === true && Math.abs(typed1.area - typed0.area) < 0.01
+              && typed1.cell != null && Math.abs(typed1.cell - 55.5) < 0.01
+              && /never replaces a figure you typed/i.test(typedMsg),
+            `typed ${typed0.area} -> ${typed1.area} m² (cell ${typed1.cell}); status "${typedMsg.slice(0, 120)}"`);
+        }
+      }
+    }
+  }
+
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
   for (let i = 0; i < 60; i++) {

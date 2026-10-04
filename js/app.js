@@ -2394,6 +2394,9 @@ const plan = {
   // Identity of the drawing now loaded (see drawingIdentity). Every shape is tagged with the identity
   // of the drawing it was measured on, and the overlay paints only shapes that match this one.
   drawingId: null,
+  // The area a ring-edit gesture started from, so Escape (which restores the original ring with no
+  // `kind`) can put the figure back exactly — a traced room's own figure is the plan's, not its ring's.
+  polyDrag: null,
 };
 
 /* ---- the one-click "trace again at the implied scale" -------------------------------------------
@@ -2739,12 +2742,44 @@ function planRoomMoved(id, payload) {
       return;
     }
     setRoomRing(room, payload.poly, payload.page);
-    // A hand-drawn shape owns its area through the ring, so the live drag refreshes the cell from the
-    // ring — UNLESS the user typed the area, which no geometry edit may replace.
-    if (room.source === 'drawn' && !areaIsTyped(room)) {
-      room.area = drawnPolyArea(room);
-      const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
-      if (inp) inp.value = String(room.area);
+    // Escape / pointercancel: the overlay puts the ORIGINAL ring back and reports it with NO `kind`.
+    // Restore the figure the gesture started from, so an abandoned reshape can never leave a
+    // re-measured area behind (a traced room's own figure is the plan's, not its ring's).
+    if (payload.kind == null) {
+      const snap = plan.polyDrag && plan.polyDrag.id === room.id ? plan.polyDrag : null;
+      if (snap) {
+        room.area = snap.area;
+        if (snap.areaFromDrawing) room.areaFromDrawing = true; else delete room.areaFromDrawing;
+        if (snap.areaUnknown) room.areaUnknown = true; else delete room.areaUnknown;
+        const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
+        if (inp) inp.value = String(room.area);
+      }
+      plan.polyDrag = null;
+      if (plan.overlay) plan.overlay.render();
+      return;
+    }
+    // Remember the pre-drag figure ONCE per gesture, so Escape can put it back exactly.
+    if (!plan.polyDrag || plan.polyDrag.id !== room.id) {
+      plan.polyDrag = {
+        id: room.id, area: room.area,
+        areaFromDrawing: !!room.areaFromDrawing, areaUnknown: !!room.areaUnknown,
+      };
+    }
+    // AREA follows the ring the user is drawing — for a HAND-DRAWN shape on any edit, and now for a
+    // TRACED outline when its VERTICES are dragged (its printed/filled figure described the plan's
+    // shape, not the one the user is now reshaping). A whole-ring MOVE (kind 'move') keeps the
+    // figure: a translation leaves the shoelace unchanged, so re-measuring there would only swap the
+    // plan's figure for a ring-derived one for no reason. A TYPED area is the owner's own measurement
+    // and no geometry edit may replace it. The TOTALS still wait for the release.
+    if (!areaIsTyped(room) && (room.source === 'drawn' || payload.kind === 'vertex')) {
+      const next = ringAreaIfUsable(room);
+      if (next != null) {
+        room.area = next;
+        room.areaFromDrawing = true;
+        delete room.areaUnknown;
+        const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
+        if (inp) inp.value = String(room.area);
+      }
     }
     if (plan.overlay) plan.overlay.render();
     return;
@@ -2800,11 +2835,32 @@ function planRoomMoveEnd(id, payload) {
   if (Array.isArray(payload.poly)) {
     const denom = roomDenom(room);
     const typed = areaIsTyped(room);
+    const snap = plan.polyDrag && plan.polyDrag.id === room.id ? plan.polyDrag : null;
     setRoomRing(room, payload.poly, payload.page);
     if (!room.scaleDenom) room.scaleDenom = denom;
-    const followsShape = room.source === 'drawn' && !typed;
-    if (followsShape) {
-      room.area = drawnPolyArea(room);
+    plan.polyDrag = null;     // the gesture is over: no Escape restore can apply now
+    // AREA follows the ring on a VERTEX drag — a hand-drawn shape and a traced outline alike; a MOVE
+    // keeps the figure (a translation does not change the shoelace). A TYPED area is left alone.
+    const followsRing = !typed && (room.source === 'drawn' || payload.kind === 'vertex');
+    const measured = followsRing ? ringAreaIfUsable(room) : null;
+    if (followsRing && measured != null) {
+      room.area = measured;
+      room.areaFromDrawing = true;
+      delete room.areaUnknown;
+      room.areaSource = 'drawing';
+      // The tracer's verification numbers described the outline as it was traced; after the user
+      // reshapes it they no longer describe anything, so drop them (the badge then just says the
+      // shape is an outline traced from the drawing, which is still true).
+      if (room.source !== 'drawn') { delete room.polyArea; delete room.polyRatio; }
+      const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
+      if (inp) inp.value = String(room.area);
+    } else if (followsRing && snap) {
+      // The ring came back degenerate (empty, a speck, or self-crossing): it cannot describe a room,
+      // so nothing may be measured from it — put back the figure the gesture started from (never 0 or
+      // NaN from a broken ring) and say the shape is unusable.
+      room.area = snap.area;
+      if (snap.areaFromDrawing) room.areaFromDrawing = true; else delete room.areaFromDrawing;
+      if (snap.areaUnknown) room.areaUnknown = true; else delete room.areaUnknown;
       const inp = el.roomsBody.querySelector(`tr[data-id="${room.id}"] input[data-field="area"]`);
       if (inp) inp.value = String(room.area);
     }
@@ -2816,9 +2872,13 @@ function planRoomMoveEnd(id, payload) {
       if (typed) {
         setStatus('ok', `${room.name || 'The room'} was reshaped, but your typed area ` +
           `${fmt(room.area, 1)} m² is unchanged — a geometry edit never replaces a figure you typed.`, 'plan');
-      } else if (followsShape) {
-        setStatus('ok', `${room.name || 'The room'} was reshaped: its area is now ` +
-          `${fmt(room.area, 1)} m² and the load uses it.`, 'plan');
+      } else if (followsRing && measured != null) {
+        setStatus('ok', `${room.name || 'The room'} was reshaped — its area now follows the outline ` +
+          `you drew: ${fmt(room.area, 1)} m², and the load uses it.`, 'plan');
+      } else if (followsRing) {
+        setStatus('warn', `${room.name || 'The room'} was reshaped, but that outline is too small or ` +
+          `crosses itself, so it cannot describe a room. Its area is left as it was ` +
+          `(${fmt(room.area, 1)} m²) — drag the corners back into a real shape.`, 'plan');
       }
     }
     return;
@@ -3833,6 +3893,20 @@ function setRoomRing(room, ring, page) {
 /** The area (m²) a hand-drawn room's own ring represents at its own drawing scale. */
 function drawnPolyArea(room) {
   return round2(polyAreaM2(room.poly, roomDenom(room)));
+}
+
+/** The area (m²) a room's ring represents, but ONLY when that ring is a usable room shape — 3+ points,
+ *  simple (non-self-intersecting) and more than a speck of paper, the same rule the shape tool refuses
+ *  a nonsense draw with (polyshape.ringIsUsable). A degenerate ring returns null so that NO path can
+ *  write an area of 0 or NaN from it: the caller keeps the room's previous area and says the shape is
+ *  unusable. Traced outlines and hand-drawn shapes go through the ONE shoelace (polyshape.polyAreaM2). */
+function ringAreaIfUsable(room) {
+  const ring = room && room.poly;
+  if (!Array.isArray(ring) || ring.length < 3) return null;
+  const denom = roomDenom(room);
+  if (!ringIsUsable(ring, denom)) return null;
+  const area = polyAreaM2(ring, denom);
+  return Number.isFinite(area) && area > 0 ? round2(area) : null;
 }
 
 /** A BOX becoming a POLYGON. The overlay reports the ring (the four corners plus the vertex inserted
