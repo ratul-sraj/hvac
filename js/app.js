@@ -2378,6 +2378,9 @@ async function loadSample(which) {
 const plan = {
   mods: null, viewer: null, overlay: null, bytes: null, traceBytes: null,
   page: 1, pages: 1, wired: false, unavailable: false,
+  // Identity of the drawing now loaded (see drawingIdentity). Every shape is tagged with the identity
+  // of the drawing it was measured on, and the overlay paints only shapes that match this one.
+  drawingId: null,
 };
 
 async function ensurePlanModules() {
@@ -2448,6 +2451,7 @@ function planSync() {
   if (el.planPrev) el.planPrev.disabled = plan.page <= 1;
   if (el.planNext) el.planNext.disabled = plan.page >= plan.pages;
   if (el.planHint) el.planHint.textContent = planHintText();
+  updateStaleShapesButton();   // keep the "old drawing's shapes" control in step with state.rooms
 }
 
 /** Any change to a room's poly/rect made from the APP side must repaint the overlay. The overlay draws
@@ -2458,6 +2462,143 @@ function planSync() {
 function planRenderGeometry() {
   if (plan.overlay) plan.overlay.render();
   planSync();
+}
+
+/* ---- stale shapes from a PREVIOUS drawing --------------------------------------------------------
+ * A room's outline or box belongs to the drawing it was measured on: room.polyDrawing for a traced
+ * outline, room.rectDrawing for a placed or hand-drawn box (both are room-level fields, so a move that
+ * rewrites room.rect never loses the tag). When a DIFFERENT drawing is loaded, the shape is simply not
+ * painted (overlay.shapesOnPage) — but it is NEVER destroyed, because the room's AREA is the user's own
+ * number, not a measurement. The stale shapes are counted, said out loud with their count, and offered
+ * for removal with one control beside the plan's buttons; removing them deletes only the geometry
+ * (poly/polyPage/polyDrawing, rect/rectDrawing) and leaves every area exactly as it was. */
+
+/** A short, stable identity for a loaded drawing. A hash of the bytes (rather than a counter or a
+ *  timestamp) is what makes it survive a page reload: the drawing this browser keeps is byte-identical,
+ *  so a restored room's outline still matches. Only the head and tail are sampled, so it stays fast on
+ *  a 40 MB CAD sheet. */
+const DRAWING_ID_SAMPLE = 64 * 1024;
+function drawingIdentity(bytes) {
+  if (!bytes) return null;
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const n = u8.length;
+  if (!n) return null;
+  let h = 0x811c9dc5;                                  // FNV-1a, 32-bit
+  const step = (b) => { h ^= b; h = Math.imul(h, 0x01000193); };
+  const head = Math.min(n, DRAWING_ID_SAMPLE);
+  for (let i = 0; i < head; i++) step(u8[i]);
+  for (let i = Math.max(head, n - DRAWING_ID_SAMPLE); i < n; i++) step(u8[i]);
+  step(n & 0xff); step((n >>> 8) & 0xff); step((n >>> 16) & 0xff); step((n >>> 24) & 0xff);
+  return 'd' + (h >>> 0).toString(36) + '-' + n.toString(36);
+}
+
+/** Is this room's poly a stale outline — one measured on a drawing other than the one now loaded? */
+function polyIsStale(room) {
+  return !!(room && Array.isArray(room.poly) && plan.drawingId != null
+    && room.polyDrawing != null && String(room.polyDrawing) !== String(plan.drawingId));
+}
+
+/** Is this room's rect a stale box — one measured on a drawing other than the one now loaded? */
+function rectIsStale(room) {
+  return !!(room && room.rect && plan.drawingId != null
+    && room.rectDrawing != null && String(room.rectDrawing) !== String(plan.drawingId));
+}
+
+/** Rooms still carrying geometry whose recorded drawing is not the one now loaded. A room with no
+ *  recorded drawing is not counted: nothing proves its shape is stale (a project saved before drawing
+ *  identity existed keeps working exactly as before). */
+function staleShapeRooms() {
+  return state.rooms.filter((r) => r && (polyIsStale(r) || rectIsStale(r)));
+}
+
+let btnStaleShapes = null;   // created lazily; app.html is not edited for this
+
+/** Create the "remove the old drawing's shapes" button beside the plan's own buttons once, and wire it
+ *  — the same pattern ensureUndoDeleteButton uses for the room table. */
+function ensureStaleShapesButton() {
+  if (btnStaleShapes) return btnStaleShapes;
+  const anchor = el.planTraceClear || el.planPlaceAll;
+  if (!anchor || !anchor.parentNode) return null;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.id = 'planRemoveStaleShapes';
+  b.className = 'btn btn-small btn-danger-ghost';
+  b.hidden = true;
+  b.disabled = true;
+  b.textContent = 'Remove old shapes';
+  b.addEventListener('click', removeStaleShapes);
+  anchor.parentNode.insertBefore(b, anchor.nextSibling);
+  btnStaleShapes = b;
+  return b;
+}
+
+/** Reflect how many rooms still carry a shape from a previous drawing on the button: labelled with the
+ *  count, hidden when there are none. */
+function updateStaleShapesButton() {
+  const b = ensureStaleShapesButton();
+  if (!b) return;
+  const rooms = staleShapeRooms();
+  const n = rooms.length;
+  if (!n) {
+    b.hidden = true;
+    b.disabled = true;
+    b.textContent = 'Remove old shapes';
+    b.removeAttribute('aria-label');
+    b.title = '';
+    return;
+  }
+  const outlines = rooms.filter(polyIsStale).length;
+  const what = outlines === n ? `outline${n === 1 ? '' : 's'}` : `shape${n === 1 ? '' : 's'}`;
+  b.hidden = false;
+  b.disabled = false;
+  b.textContent = `Remove ${n} ${what} from the old drawing`;
+  b.setAttribute('aria-label', b.textContent);
+  b.title = 'Delete the outline/box measured on the previous drawing. Every room KEEPS its area.';
+}
+
+/** Say out loud (once per load) that rooms still carry shapes from a previous drawing; the control
+ *  beside the plan's buttons is the way to clear them. */
+function planAnnounceStaleShapes() {
+  updateStaleShapesButton();
+  const rooms = staleShapeRooms();
+  const n = rooms.length;
+  if (!n) return;
+  const outlines = rooms.filter(polyIsStale).length;
+  const what = outlines === n ? `outline${n === 1 ? '' : 's'}` : `shape${n === 1 ? '' : 's'}`;
+  const lead = n === 1
+    ? `1 room still carries ${outlines === n ? 'an outline' : 'a shape'} measured on the previous drawing, so it is not shown on this sheet`
+    : `${n} rooms still carry ${outlines === n ? 'outlines' : 'shapes'} measured on the previous drawing, so they are not shown on this sheet`;
+  const areasWord = n === 1 ? 'Its area is untouched' : 'Their areas are untouched';
+  setStatus('warn', `${lead}. ${areasWord} — press "Remove ${n} ${what} from the old drawing" ` +
+    `beside the plan buttons if you want the old shape gone.`, 'plan');
+}
+
+/** Delete ONLY the geometry measured on a previous drawing (never the area, never a shape belonging to
+ *  the drawing now loaded). Every room keeps the area the user can still see and use. */
+function removeStaleShapes() {
+  const rooms = staleShapeRooms();
+  if (!rooms.length) {
+    updateStaleShapesButton();
+    setStatus('warn', 'There are no shapes left from an earlier drawing.', 'plan');
+    return;
+  }
+  let n = 0;
+  for (const room of rooms) {
+    if (polyIsStale(room)) {
+      delete room.poly;
+      delete room.polyPage;
+      delete room.polyArea;
+      delete room.polyRatio;
+      delete room.polyDrawing;
+    }
+    if (rectIsStale(room)) { delete room.rect; delete room.rectDrawing; }
+    n += 1;
+  }
+  updateStaleShapesButton();
+  renderAll();
+  saveNow();
+  setStatus('ok', `Removed the outline/box measured on an earlier drawing from ${n} room${n === 1 ? '' : 's'}. ` +
+    `Every room kept its area — nothing about the load has changed.`, 'plan');
 }
 
 function planSelectRoom(room) {
@@ -2652,6 +2793,7 @@ async function planPlaceAllRooms() {
     if (!rect) { noArea += 1; continue; }
     // each room's box goes on ITS OWN page, not the page the user happens to be looking at
     room.rect = { ...rect, page: room.page || 1 };
+    room.rectDrawing = plan.drawingId;   // the drawing this box was measured on
     placed += 1;
   }
 
@@ -2693,6 +2835,7 @@ function planClearPlaced() {
   for (const room of state.rooms) {
     if (!isPlacedRoom(room)) continue;
     delete room.rect;       // area, name, include and source are deliberately left alone
+    delete room.rectDrawing;
     removed += 1;
   }
   if (!removed) {
@@ -2880,7 +3023,7 @@ async function planTraceOutlines() {
     try {
       // Every room we are about to re-check loses any outline from an EARLIER trace: a shape that this
       // run refuses must not survive as a stale outline from the last one. Boxes are never touched.
-      for (const r of withPos) { delete r.poly; delete r.polyPage; delete r.polyArea; delete r.polyRatio; }
+      for (const r of withPos) { delete r.poly; delete r.polyPage; delete r.polyDrawing; delete r.polyArea; delete r.polyRatio; }
 
       const byPage = new Map();
       for (const r of withPos) {
@@ -2943,6 +3086,7 @@ async function planTraceOutlines() {
             const ring = ringFor(res.rings, room.at, trace);
             room.poly = ring.map((pt) => ({ x: round2(pt.x), y: round2(pt.y) }));
             room.polyPage = p;
+            room.polyDrawing = plan.drawingId;   // the drawing this outline was traced from
             // the module's own verdict numbers: the traced area the accept rule was judged on
             room.polyArea = round2(Number(res.tracedM2) || 0);
             room.polyRatio = Number((Number(res.ratio) || 0).toFixed(3));
@@ -3109,6 +3253,7 @@ function planTraceClear() {
     if (room.source === 'drawn') continue;
     delete room.poly;
     delete room.polyPage;
+    delete room.polyDrawing;
     delete room.polyArea;
     delete room.polyRatio;
     removed += 1;
@@ -3426,12 +3571,14 @@ function setRoomRing(room, ring, page) {
   const pts = roundRing(ring);
   room.poly = pts;
   room.polyPage = page != null ? page : (room.polyPage || plan.page || 1);
+  room.polyDrawing = plan.drawingId;   // this ring is measured on the drawing now loaded
   const bbox = ringBBox(pts);
   if (bbox) {
     room.rect = {
       page: room.polyPage, x: round2(bbox.x), y: round2(bbox.y),
       w: round2(bbox.w), h: round2(bbox.h),
     };
+    room.rectDrawing = plan.drawingId;
   }
 }
 
@@ -3529,7 +3676,9 @@ function planDetachShape(roomId) {
   const oldArea = Number(room.area);
   delete room.poly;
   delete room.polyPage;
+  delete room.polyDrawing;
   delete room.rect;
+  delete room.rectDrawing;
   delete room.areaFromDrawing;
   delete room.areaSource;
   room.source = 'manual';
@@ -3764,6 +3913,9 @@ async function unloadPlan() {
   if (el.planPages) el.planPages.textContent = '1';
   if (el.planCard) el.planCard.classList.add('hidden');   // the panel's empty/upload state
   if (typeof planTraceBusy === 'function') planTraceBusy(false);   // fill/undo/trace back to their empty state
+  // With no drawing there is nothing to fill or trace: leave those buttons off rather than enabled-but-inert.
+  if (el.planFillAreas) el.planFillAreas.disabled = true;
+  if (el.planFillUndo) el.planFillUndo.disabled = true;
   // Drop the copy this browser kept, so a reload cannot restore a drawing that no longer matches the
   // (now empty) table. Never fatal: a browser without IndexedDB costs nothing here.
   try {
@@ -4172,6 +4324,9 @@ function planWire() {
 async function openPlan(bytes, opts) {
   if (!bytes || !el.planCard) return;
   const o = opts || {};
+  // Give this drawing an identity BEFORE anything can detach or copy the bytes: every shape measured
+  // from it is tagged with it, and the overlay paints only shapes that match the drawing now loaded.
+  plan.drawingId = drawingIdentity(bytes);
   // pdf.js DETACHES the ArrayBuffer it is handed — it transfers it to its worker — so a buffer shared
   // with the parser is already dead for whoever asks second ("ArrayBuffer at index 0 is already
   // detached"). The plan view therefore gets its own copy, taken synchronously here, before any await,
@@ -4209,6 +4364,7 @@ async function openPlan(bytes, opts) {
         getPage: () => plan.page,
         getSelectedId: () => state.ui.openId || null,
         getScaleDenom: planScaleDenom,
+        getDrawingId: () => plan.drawingId,
         getMode: () => state.ui.planMode,
         onDraw: planDrawRoom,
         onDrawShape: planDrawShape,
@@ -4244,6 +4400,10 @@ async function openPlan(bytes, opts) {
     if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
     planSync();
     if (keep) storeDrawing(keep, o.name);
+    // A drawing just loaded: if rooms still carry shapes measured on an EARLIER drawing, say so (with
+    // the count) and keep the one-click removal control in step. A restore of the SAME drawing finds
+    // no stale shapes, so nothing is said and nothing changes.
+    planAnnounceStaleShapes();
     // bring the drawing into view the first time one loads: the panel is below the upload box, and
     // 'nearest' only scrolls when it is actually off-screen, so it never yanks a visible page around.
     // Never on a restore: reloading a page should leave the reader where they are.

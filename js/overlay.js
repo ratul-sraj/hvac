@@ -20,6 +20,9 @@
  *     getPage,         // () => number   current page, 1-based
  *     getSelectedId,   // () => string|null
  *     getScaleDenom,   // () => number   drawing scale N in 1:N (for the live area readout)
+ *     getDrawingId,    // () => string|null  identity of the drawing now loaded; a shape tagged with a
+ *                      //   DIFFERENT drawing (room.polyDrawing / room.rectDrawing) is NOT painted —
+ *                      //   see shapesOnPage(). null (no identity in play) filters nothing.
  *     getMode,         // () => 'draw' | 'select'
  *     onDraw,          // (rect, {page}) => void   rect = {x,y,w,h} PDF points; only when usable
  *     onDrawShape,     // (ring, {page}) => void   a hand-drawn polygon (PDF space); see DRAWN SHAPES
@@ -317,19 +320,32 @@ function shapeAreaPt2(entry) {
   return Math.abs(r.w * r.h);
 }
 
+/** Does a shape tagged with `tag` belong to the drawing now loaded (`drawingId`)? A tag that was never
+ *  recorded (a project saved before drawing identity existed) belongs to every drawing, so an upgrade
+ *  never makes a user's shape vanish; with no drawing id in play (the overlay harness) nothing is
+ *  filtered either. A recorded tag that differs is geometry measured on an EARLIER drawing: it must
+ *  not be painted on the sheet now loaded. */
+function belongsToDrawing(tag, drawingId) {
+  if (tag == null || drawingId == null) return true;
+  return String(tag) === String(drawingId);
+}
+
 /** Rooms of one page that can be drawn — outlines first-class, rectangles unchanged — biggest first
- *  so small rooms stay clickable and labels stay readable. */
-function shapesOnPage(rooms, page) {
+ *  so small rooms stay clickable and labels stay readable. THE single paint gate: a shape whose
+ *  recorded drawing (room.polyDrawing / room.rectDrawing) is not the drawing now loaded is left out,
+ *  so a previous drawing's outline or box is never painted on a new sheet. */
+function shapesOnPage(rooms, page, drawingId) {
   const out = [];
   for (const room of rooms || []) {
     if (!room) continue;
     const ring = ringOfRoom(room);
     if (ring) {
       // A traced outline belongs to its own page. A ring whose page is elsewhere is not this page's.
-      if (polyPageOf(room) === page) out.push({ room, ring });
+      if (polyPageOf(room) === page && belongsToDrawing(room.polyDrawing, drawingId)) out.push({ room, ring });
       continue;
     }
-    if (isDrawnRoom(room) && room.rect.page === page) out.push({ room, ring: null });
+    if (isDrawnRoom(room) && room.rect.page === page
+        && belongsToDrawing(room.rectDrawing, drawingId)) out.push({ room, ring: null });
   }
   out.sort((a, b) => shapeAreaPt2(b) - shapeAreaPt2(a));
   return out;
@@ -365,6 +381,7 @@ export function createOverlay(rootEl, {
   getPage = () => 1,
   getSelectedId = () => null,
   getScaleDenom = () => 100,
+  getDrawingId = () => null,
   getMode = () => 'select',
   onDraw = null,
   onDrawShape = null,
@@ -886,7 +903,7 @@ export function createOverlay(rootEl, {
     if (!vp) { draftG.replaceChildren(); return; }   // no page rendered yet: draw nothing, throw nothing
 
     const page = safeCall(getPage) ?? 1;
-    const shapes = shapesOnPage(safeCall(getRooms) || [], page);
+    const shapes = shapesOnPage(safeCall(getRooms) || [], page, safeCall(getDrawingId));
     const selectedId = safeCall(getSelectedId) ?? null;
     // How many PLACED locators share this page? Past the limit they pile up and hide the sheet, so
     // they are drawn as small diamonds (see markerShape).

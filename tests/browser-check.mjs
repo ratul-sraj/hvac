@@ -3327,6 +3327,17 @@ if (!sampleMissing) {
       `outlines ${polysBefore} -> ${afterDetach.polys}; plan rooms ${planRoomsBefore} -> ${afterDetach.planRooms}; room ${polyTarget ? polyTarget.id : "?"} still drawn: ${afterDetach.stillAny}`);
 
     // ---- (F) Clear all rooms ALSO unloads the drawing, and a reload does not bring it back ----
+    // Establish the state this check needs instead of inheriting whatever the section above left:
+    // a drawing on the sheet WITH a shape drawn on it, so "the shapes are gone" means something.
+    await page.goto(BASE + "app.html?sample=house", { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForSelector("#btnSampleHouse", { timeout: 30000 });
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.click("#btnSampleHouse");
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
+    await settle(2500);
+    await page.click("#planPlaceAll");
+    await page.waitForFunction(() => document.querySelectorAll("#planView .plan-room").length > 0, { timeout: 60000 }).catch(() => {});
+    await settle(1500);
     const beforeClear = await page.evaluate(() => ({
       rows: document.querySelectorAll("#roomsBody tr").length,
       planRooms: document.querySelectorAll("#planView .plan-room").length,
@@ -3361,6 +3372,126 @@ if (!sampleMissing) {
     ok("a reload after Clear all does NOT restore the drawing",
       afterReload.rows === 0 && afterReload.planRooms === 0 && afterReload.planCardHidden === true && !afterReload.viewer,
       JSON.stringify(afterReload));
+  }
+
+  // 17. A PREVIOUS drawing's outlines/boxes must not be painted on a NEWLY loaded drawing. The stale
+  //     shapes are reported with a COUNT and offered for removal with ONE control that deletes only the
+  //     geometry — never the user's AREA. And the identity a shape records must survive a page reload,
+  //     so the SAME drawing still paints its outlines after a refresh.
+  {
+    const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+    const planRooms = () => page.evaluate(() => document.querySelectorAll("#planView .plan-room").length);
+
+    // (v) the normal case is untouched: a fresh drawing paints its outlines + boxes, no stale control.
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await page.goto(BASE + "app.html?sample=house", { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForSelector("#btnSampleHouse", { timeout: 30000 });
+    await page.click("#btnSampleHouse");
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
+    await settle(3000);
+    await page.click("#planTraceOutlines");
+    await page.waitForFunction(() => window.webhvac.state.rooms.some((r) => r.poly && r.poly.length > 2), { timeout: 120000 });
+    await page.click("#planPlaceAll");
+    await settle(3500);
+    const fresh = await page.evaluate(() => {
+      const b = document.getElementById("planRemoveStaleShapes");
+      return {
+        planRooms: document.querySelectorAll("#planView .plan-room").length,
+        polys: window.webhvac.state.rooms.filter((r) => Array.isArray(r.poly)).length,
+        rects: window.webhvac.state.rooms.filter((r) => r.rect).length,
+        taggedPolys: window.webhvac.state.rooms.filter((r) => Array.isArray(r.poly) && r.polyDrawing != null).length,
+        // each room is drawn ONCE, as its outline when it has one and as its box otherwise
+        distinct: window.webhvac.state.rooms.filter((r) => (Array.isArray(r.poly) && r.poly.length > 2) || r.rect).length,
+        staleBtnShown: !!(b && !b.hidden),
+      };
+    });
+    ok("(v) a fresh drawing paints its traced outlines and placed boxes normally (no stale control)",
+      fresh.polys >= 1 && fresh.rects >= 2 && fresh.planRooms === fresh.distinct
+        && fresh.taggedPolys === fresh.polys && fresh.staleBtnShown === false,
+      JSON.stringify(fresh));
+
+    // (iv) reload with the SAME drawing: the stored bytes hash to the same identity, so the restored
+    //      rooms' outlines still match and are still painted.
+    await page.reload({ waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForFunction(() => document.querySelectorAll("#planView .plan-room").length > 0, { timeout: 90000 })
+      .catch(() => {});
+    await settle(1500);
+    const afterReloadSame = await page.evaluate(() => ({
+      planRooms: document.querySelectorAll("#planView .plan-room").length,
+      drawingId: window.webhvac.plan.drawingId,
+      polys: window.webhvac.state.rooms.filter((r) => Array.isArray(r.poly)).length,
+    }));
+    ok("(iv) a reload of the SAME drawing still paints its traced outlines (identity survived the reload)",
+      afterReloadSame.planRooms > 0 && afterReloadSame.polys > 0 && afterReloadSame.drawingId != null,
+      JSON.stringify(afterReloadSame));
+
+    // (i)+(ii) upload a DIFFERENT drawing through the page's own file input.
+    const input = await page.$('input[type="file"]');
+    await input.uploadFile("D:/webhvac/tests/samples/sample-plan.pdf");
+    await page.waitForFunction(() => !window.webhvac.state.ui.busy, { timeout: 120000 }).catch(() => {});
+    await settle(2500);
+    const afterUpload = await page.evaluate(() => {
+      const id = window.webhvac.plan.drawingId;
+      const staleOf = (r) => (Array.isArray(r.poly) && r.polyDrawing != null && String(r.polyDrawing) !== String(id))
+        || (r.rect && r.rectDrawing != null && String(r.rectDrawing) !== String(id));
+      const b = document.getElementById("planRemoveStaleShapes");
+      return {
+        planRooms: document.querySelectorAll("#planView .plan-room").length,
+        stale: window.webhvac.state.rooms.filter(staleOf).length,
+        statusText: (document.getElementById("planStatus") || {}).textContent || "",
+        btn: b ? { hidden: b.hidden, disabled: b.disabled, text: b.textContent } : null,
+      };
+    });
+    ok("(i) a previous drawing's outlines/boxes are NOT painted on the newly loaded drawing",
+      afterUpload.planRooms === 0, `${afterUpload.planRooms} plan room(s) painted (expected 0)`);
+    ok("(ii) the status line reports the number of stale shapes",
+      afterUpload.stale > 0 && afterUpload.statusText.includes(String(afterUpload.stale)),
+      `stale ${afterUpload.stale}, status "${afterUpload.statusText}"`);
+    ok("(ii) the remove control appears, labelled with that count",
+      !!afterUpload.btn && !afterUpload.btn.hidden && afterUpload.btn.disabled === false
+        && afterUpload.btn.text.includes(String(afterUpload.stale)) && /old drawing/i.test(afterUpload.btn.text),
+      JSON.stringify(afterUpload.btn));
+
+    // (iii) press it: the stale geometry goes, every room's AREA stays exactly.
+    const staleAreas = await page.evaluate(() => {
+      const id = window.webhvac.plan.drawingId;
+      const out = {};
+      for (const r of window.webhvac.state.rooms) {
+        const pst = Array.isArray(r.poly) && r.polyDrawing != null && String(r.polyDrawing) !== String(id);
+        const rst = r.rect && r.rectDrawing != null && String(r.rectDrawing) !== String(id);
+        if (pst || rst) out[r.id] = r.area;
+      }
+      return out;
+    });
+    const staleIds = Object.keys(staleAreas);
+    const btnBox = await page.evaluate(() => {
+      const b = document.getElementById("planRemoveStaleShapes");
+      b.scrollIntoView({ block: "center" });
+      const r = b.getBoundingClientRect();
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    });
+    await page.mouse.click(btnBox.x, btnBox.y);
+    await settle(1500);
+    const afterRemove = await page.evaluate((ids) => {
+      const id = window.webhvac.plan.drawingId;
+      const rooms = window.webhvac.state.rooms;
+      const areas = {};
+      for (const rid of ids) { const r = rooms.find((x) => x.id === rid); if (r) areas[rid] = r.area; }
+      const b = document.getElementById("planRemoveStaleShapes");
+      return {
+        areas,
+        stillStale: rooms.filter((r) => (Array.isArray(r.poly) && r.polyDrawing != null && String(r.polyDrawing) !== String(id))
+          || (r.rect && r.rectDrawing != null && String(r.rectDrawing) !== String(id))).length,
+        anyPoly: rooms.filter((r) => Array.isArray(r.poly)).length,
+        anyRect: rooms.filter((r) => r.rect).length,
+        planRooms: document.querySelectorAll("#planView .plan-room").length,
+        btnHidden: b ? b.hidden : null,
+      };
+    }, staleIds);
+    const areasKept = staleIds.length > 0 && staleIds.every((id) => afterRemove.areas[id] === staleAreas[id]);
+    ok("(iii) pressing it clears the stale outlines/boxes while every room's AREA is unchanged",
+      areasKept && afterRemove.stillStale === 0 && afterRemove.btnHidden === true,
+      `areas kept ${areasKept}; stale left ${afterRemove.stillStale}; plan rooms ${afterRemove.planRooms}; button hidden ${afterRemove.btnHidden}`);
   }
 
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
