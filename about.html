@@ -224,7 +224,7 @@
         logged. There is no third-party analytics, no tracking cookies and no account. The only measurement
         is an anonymous count of which buttons are used, of coarse reader/source properties and of coarse outcome categories (a failure reason, an error area, or how far a visit got), plus the
         four <code>utm_</code> campaign tags from the page URL if present &mdash; no cookie, no id, no IP
-        address, no file name, no room name, and never your drawing or its contents.
+        address, no file name, no room name, and never your drawing or its contents. This is a recent change: the site's own web server keeps ordinary access logs &mdash; the IP address that asked for which page, and the browser type it gave &mdash; so that unique visitors can be counted; those logs stay in the owner's own AWS account and are never shared, and no drawing or file content is ever in them.
       </p>
       <div class="callout tip">
         <h3>Contributing</h3>
