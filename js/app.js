@@ -2001,13 +2001,26 @@ async function loadSample(which) {
     // out of the load (the parser also pushes its own note into the warning box). Say the headline and
     // the exact next step rather than a hollow "please check the areas".
     const unknown = out.rooms.filter((x) => x && x.areaUnknown).length;
-    if (r.added && unknown >= r.added) {
-      noteCalcEmpty('sample');
-      setStatus('warn',
-        `Sample drawing loaded: ${r.added} room(s). This drawing prints no room areas, so every room ` +
-        `came in with its area unknown and is left out of the load. Give each room an area — type it ` +
-        `in the Area column, or drag a rectangle over the room on the plan and set it to that room's ` +
-        `row — then tick its Include box. Click a row to open its Load breakdown.`);
+    if (out.rooms.length && unknown >= out.rooms.length) {
+      // This sheet prints room NAMES but no AREAS, so the page would open on a load of zero.
+      // A first-time visitor must not have to discover the "Fill areas" button to see a number:
+      // the drawing's own outlines can supply those areas, so try that once, here, first.
+      await planFillAreas();
+      if (!currentCalc().totals.rooms) {
+        noteCalcEmpty('sample');   // still honestly nothing to compute, recorded only now
+        setStatus('warn',
+          `Sample drawing loaded: ${r.added} room(s). This drawing prints no room areas, so every room ` +
+          `came in with its area unknown and is left out of the load. Give each room an area — type it ` +
+          `in the Area column, or drag a rectangle over the room on the plan and set it to that room's ` +
+          `row — then tick its Include box. Click a row to open its Load breakdown.`);
+      } else {
+        const measured = state.rooms.filter((x) => x && !x.areaUnknown && roomHasArea(x)).length;
+        const total = state.rooms.length;
+        setStatus('ok',
+          `Sample drawing loaded: ${r.added} room(s). The drawing prints no areas, so ${measured} of the ` +
+          `${total} areas were measured from the outline the drawing itself draws — the load below is real. ` +
+          `The rest stay blank on purpose. Click any row to open its breakdown.`);
+      }
     } else {
       setStatus('ok', r.added
         ? `Sample drawing loaded: ${r.added} room(s) added${r.skipped ? `, ${r.skipped} duplicate(s) skipped` : ''}. Please check the areas.`
@@ -2847,7 +2860,10 @@ function planApplyFill(assignments, reasonCount, info) {
     // areas would change no total at all, which is the whole point of the feature.
     room.include = !NON_AC_WORDS.test(room.name || '');
   }
-  lastFill = filled.length ? filled : null;
+  // Only a run that CHANGED something becomes the Undo step. A run that filled nothing must leave the
+  // previous Undo intact — otherwise pressing Fill areas a second time (which changes nothing, and says
+  // so) silently destroys the user's one chance to put the earlier fill back.
+  if (filled.length) lastFill = filled;
   renderAll();
   saveNow();
   planSyncFillButton();

@@ -2293,8 +2293,12 @@ if (!sampleMissing) {
     const ticked = cells.filter((c) => c.inc).length;
     ok("every real-sample room arrives with an unknown (blank) area", blank === realRooms,
       `${blank}/${realRooms} area cells blank`);
-    ok("no real-sample room is included in the load until an area is set", ticked === 0,
-      `${ticked} room(s) ticked`);
+    ok("no room the app could not measure is inside the load", await page.evaluate(() =>
+      [...document.querySelectorAll("#roomsBody tr")].every((r) => {
+        const tick = r.querySelector('input[type="checkbox"]');
+        const area = r.querySelector('input[data-field="area"]');
+        return !(tick && tick.checked) || (area && area.value !== "");
+      })), "every included room carries an area");
 
     // the honest "no printed areas" note is visible (the <li> lives in #warnList; read its
     // textContent, because a closed <details> does not RENDER its body, so innerText is empty)
@@ -2319,8 +2323,22 @@ if (!sampleMissing) {
       const m = e.innerText.replace(/\s+/g, " ").match(/Rooms included (\d+)/);
       return m ? parseInt(m[1], 10) : NaN;
     });
-    ok("the real sample invents no load (0.00 TR, 0 rooms included)", realTr === 0 && incl === 0,
-      `${realTr} TR, ${incl} room(s) included`);
+    // The app now measures what it can from the sheet's own outlines without being asked
+    // (the funnel showed strangers leaving an all-zero page), so wait for that to settle.
+    await page.waitForFunction(
+      () => /Filled \d+ area|no printed areas/i.test((document.getElementById("planStatus") || {}).textContent || ""),
+      { timeout: 120000, polling: 400 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 600));
+    const settled = await page.$eval("#summaryCards", (e) => {
+      const t = e.innerText.replace(/\s+/g, " ");
+      return {
+        tr: Number((t.match(/Total cooling load ([0-9.]+) TR/) || [])[1]),
+        incl: Number((t.match(/Rooms included (\d+)/) || [])[1]),
+      };
+    });
+    ok("the real sample reaches a real load with NO click from the visitor",
+      settled.tr > 0 && settled.incl > 0 && settled.incl <= 21,
+      `${settled.tr} TR, ${settled.incl} of 21 measured room(s) included (was ${realTr} TR / ${incl} before)`);
     await page.screenshot({ path: `${OUT}/live-real-sample.png`, fullPage: false });
   }
 
@@ -2345,10 +2363,7 @@ if (!sampleMissing) {
       !!fillControl && fillControl.aria === "false" && /named room/i.test(fillControl.title),
       fillControl ? `aria-disabled=${fillControl.aria}; "${fillControl.title}"` : "");
 
-    await page.click("#planFillAreas");
-    await page.waitForFunction(
-      () => /Filled \d+ area/.test((document.getElementById("planStatus") || {}).textContent || ""),
-      { timeout: 120000, polling: 400 }).catch(() => {});
+    // No click: the fill runs by itself when the sample arrives with no printed areas.
     await new Promise((r) => setTimeout(r, 400));
 
     const fill = await page.evaluate(() => {
@@ -2384,8 +2399,29 @@ if (!sampleMissing) {
       fresh.length >= 2 && Math.abs(rowsFresh.reduce((a, b) => a + b, 0) - totalFresh) <= 2,
       `rows ${rowsFresh.join("+")} vs total ${totalFresh}`);
 
+    // A second press must say there is nothing left rather than pretend to work.
+    await page.click("#planFillAreas");
+    await new Promise((r) => setTimeout(r, 800));
+    const secondPress = await page.evaluate(() =>
+      ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim());
+    ok("pressing Fill areas again reports honestly that nothing is left",
+      /nothing to fill|already has an area|No area could be filled|Nothing was changed/i.test(secondPress),
+      secondPress.slice(0, 140));
+
+    // The plan status clears itself after a few seconds, so poll and REMEMBER every message seen
+    // instead of reading once at the end — otherwise a correct undo reports an empty status.
     await page.click("#planFillUndo");
-    await new Promise((r) => setTimeout(r, 500));
+    let undoneStatus = "";
+    for (let i = 0; i < 75; i += 1) {
+      await new Promise((r) => setTimeout(r, 400));
+      const seen = await page.evaluate(() => {
+        const st = ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim();
+        const m = (document.getElementById("summaryCards") || {}).innerText || "";
+        return { st, done: /Total cooling load 0\.00 TR/.test(m) };
+      });
+      if (seen.st) undoneStatus = seen.st;
+      if (seen.done) break;
+    }
     const undone = await page.evaluate(() => {
       const st = ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim();
       const cards = document.getElementById("summaryCards").innerText.replace(/\s+/g, " ");
@@ -2399,7 +2435,8 @@ if (!sampleMissing) {
     ok("Undo puts every area back and the load returns to 0.00 TR",
       undone.badges === 0 && undone.tr === 0 && undone.blank === 56,
       `${undone.badges} badge(s), ${undone.tr} TR, ${undone.blank} blank areas`);
-    ok("Undo says what it put back", /Undone: 21 areas/.test(undone.status), undone.status);
+    ok("Undo says what it put back", /Undone: 21 areas/.test(undone.status || undoneStatus),
+      undone.status || undoneStatus);
   }
 
   // ------------------------------------------------------------------ //
