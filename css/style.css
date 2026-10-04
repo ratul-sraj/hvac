@@ -357,6 +357,11 @@ table.data-table { border-collapse: separate; border-spacing: 0; width: 100%; fo
 .rooms-table input:hover, .rooms-table select:hover { border-color: var(--line); background: #fff; }
 .rooms-table input:focus, .rooms-table select:focus { border-color: var(--accent); background: #fff; }
 .rooms-table td.c-name input { min-width: 170px; }
+/* The name input is width:100%, so the "box"/"outline"/"area from drawing" badges after it used to
+   overflow into the Space type cell (and, now the name column is sticky, paint over its select).
+   Let the input size itself and keep input + badges on one line inside their own cell. */
+.rooms-table td.c-name { white-space: nowrap; }
+.rooms-table td.c-name input { width: 170px; }
 .rooms-table td.c-num input { min-width: 62px; }
 .rooms-table td.c-num { text-align: right; }
 .rooms-table td.l input { min-width: 110px; }
