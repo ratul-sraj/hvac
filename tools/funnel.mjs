@@ -123,13 +123,20 @@ const FUNNEL = [
   { step: "converted", events: ["export_csv", "report_opened", "share_link_copied"] },
 ];
 const FAILURE_EVENTS = ["calc_empty"];
+// The failure / drop-off signals reported in their OWN section below. They are known events (never
+// counted as "unknown") but belong to no funnel step and are NOT printed in the funnel or failure
+// sections, so those stay exactly as they were.
+const SIGNAL_EVENTS = ["parse_failed", "fill_none", "js_error", "left_page"];
 
 // ONE source of truth. The known-event list and the event -> step map are both derived from FUNNEL
 // and FAILURE_EVENTS, so an event can no longer be listed as known while belonging to no step. The
 // old code did FUNNEL.find(...).step and threw a TypeError on exactly that mismatch — which is what
 // share_link_copied and calc_empty did — printing nothing at all.
 const STEP_OF = new Map(FUNNEL.flatMap((f) => f.events.map((e) => [e, f.step])));
-const ALL_EVENTS = [...new Set([...FUNNEL.flatMap((f) => f.events), ...FAILURE_EVENTS])];
+const ALL_EVENTS = [...new Set([...FUNNEL.flatMap((f) => f.events), ...FAILURE_EVENTS, ...SIGNAL_EVENTS])];
+// The events printed in the existing "Events" section — unchanged from before this tool grew a
+// "Where they fail" section, so that output stays identical above it.
+const LISTED_EVENTS = [...new Set([...FUNNEL.flatMap((f) => f.events), ...FAILURE_EVENTS])];
 const COLUMNS = [...FUNNEL.map((f) => f.step), "failed"];
 
 const utm = (obj, key) => (obj && typeof obj[key] === "string" && obj[key]) || "(none)";
@@ -141,8 +148,14 @@ function tally(lines) {
   const failures = Object.fromEntries(FAILURE_EVENTS.map((e) => [e, 0]));
   const campaigns = new Map(); // campaign -> { <step> | failed -> count }
   const contents = new Map();
+  const signals = new Map(); // campaign -> { parse_failed:{reason:n}, fill_none:n, js_error:{area:n}, left_page:{stage:n} }
   const unknownNames = new Set();
   let malformed = 0, unknown = 0, total = 0;
+
+  const signalRecord = (k) => {
+    if (!signals.has(k)) signals.set(k, { parse_failed: {}, fill_none: 0, js_error: {}, left_page: {} });
+    return signals.get(k);
+  };
 
   for (const line of lines) {
     let ev;
@@ -155,10 +168,31 @@ function tally(lines) {
     }
     total++;
     perEvent[ev.e] += 1;
+
+    // The failure / drop-off signals: recorded per campaign, but they are NOT funnel steps and NOT
+    // the existing failure bucket, so the sections above stay exactly as they were.
+    if (SIGNAL_EVENTS.includes(ev.e)) {
+      const p = (ev.p && typeof ev.p === "object") ? ev.p : {};
+      const rec = signalRecord(utm(ev, "utm_campaign"));
+      if (ev.e === "parse_failed") {
+        const r = typeof p.reason === "string" ? p.reason : "(none)";
+        rec.parse_failed[r] = (rec.parse_failed[r] || 0) + 1;
+      } else if (ev.e === "fill_none") {
+        rec.fill_none += 1;
+      } else if (ev.e === "js_error") {
+        const a = typeof p.area === "string" ? p.area : "(none)";
+        rec.js_error[a] = (rec.js_error[a] || 0) + 1;
+      } else {
+        const st = typeof p.stage === "string" ? p.stage : "(none)";
+        rec.left_page[st] = (rec.left_page[st] || 0) + 1;
+      }
+    }
+
     const step = STEP_OF.get(ev.e);
     if (step) stepCount[step] += 1;
-    else failures[ev.e] += 1;
-    const column = step || "failed";
+    else if (FAILURE_EVENTS.includes(ev.e)) failures[ev.e] += 1;
+    const column = step || (FAILURE_EVENTS.includes(ev.e) ? "failed" : null);
+    if (!column) continue;   // a signal event: already recorded above, not part of these tables
 
     for (const [map, key] of [[campaigns, "utm_campaign"], [contents, "utm_content"]]) {
       const k = utm(ev, key);
@@ -166,7 +200,7 @@ function tally(lines) {
       map.get(k)[column] += 1;
     }
   }
-  return { perEvent, stepCount, failures, campaigns, contents, unknownNames, malformed, unknown, total };
+  return { perEvent, stepCount, failures, campaigns, contents, signals, unknownNames, malformed, unknown, total };
 }
 
 /* ------------------------------- report --------------------------------- */
@@ -174,8 +208,55 @@ const pct = (part, whole) => (whole ? ` (${((100 * part) / whole).toFixed(1)}% o
 const pad = (s, n) => String(s).padEnd(n);
 const padL = (s, n) => String(s).padStart(n);
 
+const SIGNAL_STAGE_ORDER = ["nothing", "loaded", "has_rooms", "has_load", "exported"];
+const sumCounts = (obj) => Object.values(obj).reduce((n, v) => n + v, 0);
+
+// The new section: what went wrong and how far visits got, per campaign. It is printed at the END,
+// so everything above it is byte-for-byte the output this tool always produced.
+function printWhereTheyFail(signals) {
+  console.log("Where they fail (per utm_campaign — failures and drop-off, NOT funnel steps)");
+  if (!signals.size) {
+    console.log("  (no parse_failed / fill_none / js_error / left_page events in this window)");
+    console.log("");
+    return;
+  }
+  const rowTotal = (r) => sumCounts(r.parse_failed) + r.fill_none + sumCounts(r.js_error) + sumCounts(r.left_page);
+  const keys = [...signals.keys()].sort((a, b) => {
+    if (a === "(none)") return 1;
+    if (b === "(none)") return -1;
+    return rowTotal(signals.get(b)) - rowTotal(signals.get(a));
+  });
+  const nameW = Math.max(8, ...keys.map((k) => k.length));
+  const bucket = (obj) => {
+    const parts = Object.keys(obj).sort().map((k) => `${k} ${obj[k]}`);
+    return parts.length ? parts.join("   ") : "—";
+  };
+
+  console.log("  parse_failed by reason");
+  for (const k of keys) console.log(`    ${pad(k.slice(0, nameW), nameW)}  ${bucket(signals.get(k).parse_failed)}`);
+
+  console.log("  fill_none (fill ran, 0 areas)");
+  for (const k of keys) console.log(`    ${pad(k.slice(0, nameW), nameW)}  ${signals.get(k).fill_none}`);
+
+  console.log("  js_error by area");
+  for (const k of keys) console.log(`    ${pad(k.slice(0, nameW), nameW)}  ${bucket(signals.get(k).js_error)}`);
+
+  console.log("  left_page stage (count and % of that campaign's left_page)");
+  for (const k of keys) {
+    const rec = signals.get(k).left_page;
+    const n = sumCounts(rec);
+    const parts = SIGNAL_STAGE_ORDER.map((st) => {
+      const c = rec[st] || 0;
+      const p = n ? ((100 * c) / n).toFixed(1) : "0.0";
+      return `${st} ${c} (${p}%)`;
+    });
+    console.log(`    ${pad(k.slice(0, nameW), nameW)}  ${parts.join("   ")}`);
+  }
+  console.log("");
+}
+
 function printReport(t, opts, window) {
-  const { perEvent, stepCount, failures, campaigns, contents, unknownNames, malformed, unknown, total } = t;
+  const { perEvent, stepCount, failures, campaigns, contents, signals, unknownNames, malformed, unknown, total } = t;
 
   console.log(`LoadLens usage funnel — last ${opts.days} day(s)`);
   console.log(`  log group : ${opts.logGroup}   region: ${opts.region}`);
@@ -194,7 +275,7 @@ function printReport(t, opts, window) {
   console.log("");
 
   console.log("Events");
-  for (const e of ALL_EVENTS) console.log(`  ${pad(e, 18)} ${padL(perEvent[e], 7)}`);
+  for (const e of LISTED_EVENTS) console.log(`  ${pad(e, 18)} ${padL(perEvent[e], 7)}`);
   if (malformed) console.log(`  ${pad("(unparsable)", 18)} ${padL(malformed, 7)}`);
   if (unknown) console.log(`  ${pad("(unknown event)", 18)} ${padL(unknown, 7)}`);
   console.log(`  ${pad("(total lines)", 18)} ${padL(total, 7)}`);
@@ -238,6 +319,8 @@ function printReport(t, opts, window) {
     console.log("No usage events in this window yet. Nothing is broken — that just means");
     console.log("nobody has used the tool in the window you asked about (or the ads have not run).");
   }
+
+  printWhereTheyFail(signals);
 }
 
 /* -------------------------------- main ---------------------------------- */
@@ -289,6 +372,7 @@ function main() {
       window: { start, end },
       steps: t.stepCount, events: t.perEvent, failures: t.failures,
       campaigns: Object.fromEntries(t.campaigns), contents: Object.fromEntries(t.contents),
+      signals: Object.fromEntries(t.signals),
       malformed: t.malformed, unknown: t.unknown, unknownEvents: [...t.unknownNames],
       total: t.total,
     }, null, 2));
@@ -299,7 +383,7 @@ function main() {
   process.exit(0); // always success: an empty window is not an error
 }
 
-export { FUNNEL, FAILURE_EVENTS, ALL_EVENTS, STEP_OF, COLUMNS, tally, printReport, parseArgs, readUsageLines, stripPrefix };
+export { FUNNEL, FAILURE_EVENTS, SIGNAL_EVENTS, ALL_EVENTS, LISTED_EVENTS, STEP_OF, COLUMNS, tally, printReport, printWhereTheyFail, parseArgs, readUsageLines, stripPrefix };
 
 // Only run the CLI when this file is executed directly; importing it (tests) must not touch AWS.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

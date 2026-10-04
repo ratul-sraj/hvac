@@ -9,6 +9,7 @@
 // anything oversized or unknown with a bare 204.
 import {
   EVENTS, PROP_VALUES, TRACKABLE, parseUtms, buildPayload, track,
+  rateLimitExceeded, resetRateLimits,
 } from "../js/usage.js";
 import {
   EVENT_NAMES, EVENT_MAX_BYTES, eventLogLine, handleEventRequest,
@@ -20,9 +21,10 @@ const ok = (label, cond, detail = "") => {
   else { fail++; console.log(`FAIL  ${label}${detail ? "  — " + detail : ""}`); }
 };
 
-const TEN_EVENTS = [
+const ALL_EVENTS = [
   "app_open", "sample_loaded", "plan_parsed", "schedule_imported", "trace_run",
   "rooms_placed", "export_csv", "report_opened", "share_link_copied", "calc_empty",
+  "parse_failed", "fill_none", "js_error", "left_page",
 ];
 
 // a request shaped like a Lambda Function URL (payload format 2.0) event
@@ -40,15 +42,15 @@ const postEvent = (rawBody, { base64 = false, path = "/api/event", method = "POS
 
 /* ---------- the allowlist is the surface -------------------------------- */
 ok("js/usage.js exposes the surface for tests (TRACKABLE boolean)", TRACKABLE === true);
-ok("js/usage.js exports exactly the ten funnel events",
-  Array.isArray(EVENTS) && EVENTS.length === 10 && TEN_EVENTS.every((e) => EVENTS.includes(e)),
+ok("js/usage.js exports exactly the fourteen events",
+  Array.isArray(EVENTS) && EVENTS.length === 14 && ALL_EVENTS.every((e) => EVENTS.includes(e)),
   EVENTS.join(","));
-ok("the Lambda accepts exactly the same ten events (single source of truth)",
-  EVENT_NAMES instanceof Set && EVENT_NAMES.size === 10 && TEN_EVENTS.every((e) => EVENT_NAMES.has(e)));
+ok("the Lambda accepts exactly the same fourteen events (single source of truth)",
+  EVENT_NAMES instanceof Set && EVENT_NAMES.size === 14 && ALL_EVENTS.every((e) => EVENT_NAMES.has(e)));
 ok("lambda rejects an event that js/usage.js does not list",
   !EVENT_NAMES.has("page_scroll") && !EVENTS.includes("page_scroll"));
 ok("coarse property vocabulary has no free-text key",
-  Object.keys(PROP_VALUES).sort().join(",") === "reader,source",
+  Object.keys(PROP_VALUES).sort().join(",") === "area,reader,reason,source,stage",
   Object.keys(PROP_VALUES).join(","));
 
 /* ---------- UTM parsing (from a URL string) ----------------------------- */
@@ -103,6 +105,51 @@ try {
 } catch { threw = true; }
 ok("track() swallows junk and never throws", !threw);
 
+/* ---------- the new failure / drop-off events --------------------------- */
+const NEW_EVENTS = ["parse_failed", "fill_none", "js_error", "left_page"];
+ok("js/usage.js exports the new failure / drop-off events",
+  NEW_EVENTS.every((e) => EVENTS.includes(e)), EVENTS.join(","));
+ok("the Lambda accepts the new events too (client and server cannot drift)",
+  NEW_EVENTS.every((e) => EVENT_NAMES.has(e)));
+
+ok("parse_failed carries an allowlisted reason",
+  (buildPayload("parse_failed", { reason: "no_text" }, utms).p || {}).reason === "no_text");
+ok("parse_failed drops an UNLISTED reason",
+  buildPayload("parse_failed", { reason: "the server said: boom" }, utms).p === undefined);
+ok("fill_none is accepted with no property",
+  buildPayload("fill_none", {}, utms).e === "fill_none");
+ok("js_error carries an allowlisted area",
+  (buildPayload("js_error", { area: "calc" }, utms).p || {}).area === "calc");
+ok("js_error drops an UNLISTED area",
+  buildPayload("js_error", { area: "javascript/index.js" }, utms).p === undefined);
+ok("left_page carries an allowlisted stage",
+  (buildPayload("left_page", { stage: "has_load" }, utms).p || {}).stage === "has_load");
+ok("left_page drops an UNLISTED stage",
+  buildPayload("left_page", { stage: "50% scrolled" }, utms).p === undefined);
+
+// an error message / stack / URL / line number must be impossible to send
+const errPayload = buildPayload("js_error", {
+  area: "ui",
+  message: "Cannot read properties of undefined (reading 'x')",
+  stack: "TypeError: boom\n    at calcRoom (https://loadlens.net/js/calc.js:412:9)",
+  filename: "https://loadlens.net/js/calc.js",
+  lineno: 412, url: "https://loadlens.net/js/calc.js",
+}, utms);
+const errJson = JSON.stringify(errPayload);
+ok("only the coarse area survives a js_error payload full of error detail",
+  errPayload.p && errPayload.p.area === "ui" && Object.keys(errPayload.p).length === 1, errJson);
+ok("no message / stack / URL / line number can ride along",
+  !/Cannot read|TypeError|calc\.js|412|loadlens\.net|boom/.test(errJson), errJson);
+
+// js_error is capped at 3 per page load (the cap lives in js/usage.js)
+resetRateLimits();
+ok("js_error is allowed three times", rateLimitExceeded("js_error") === false &&
+  rateLimitExceeded("js_error") === false && rateLimitExceeded("js_error") === false);
+ok("the fourth js_error is over the cap", rateLimitExceeded("js_error") === true);
+ok("the cap applies only to js_error", rateLimitExceeded("parse_failed") === false);
+resetRateLimits();
+ok("resetRateLimits() clears the cap", rateLimitExceeded("js_error") === false);
+
 /* ---------- the Lambda handler ------------------------------------------ */
 const valid = JSON.stringify({ e: "sample_loaded", p: { source: "sample" },
   utm_source: "google", utm_medium: "cpc", utm_campaign: "kerala-hvac", utm_content: "ad-3" });
@@ -124,6 +171,10 @@ ok("an IP / user-agent / referer in the body never reaches the log line",
   !/203\.0\.113|Mozilla|referer|Secret/.test(scrub) && JSON.parse(scrub).p.reader === "server", scrub);
 ok("a malformed utm token is not forwarded",
   !("utm_campaign" in JSON.parse(eventLogLine({ e: "app_open", utm_campaign: "a b c" }))));
+ok("eventLogLine accepts parse_failed with its coarse reason",
+  JSON.parse(eventLogLine({ e: "parse_failed", p: { reason: "too_big" } })).p.reason === "too_big");
+ok("eventLogLine drops an unlisted reason",
+  JSON.parse(eventLogLine({ e: "parse_failed", p: { reason: "disk full" } })).p === undefined);
 
 // handler: status + routing
 const rGood = handleEventRequest(postEvent(valid));

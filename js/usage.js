@@ -34,6 +34,10 @@ export const EVENTS = [
   'report_opened',     // the printable report was opened
   'share_link_copied', // the link to LoadLens was copied to the clipboard
   'calc_empty',        // a calculation ran but produced zero included rooms
+  'parse_failed',      // a PDF / scan / schedule upload failed or produced zero rooms
+  'fill_none',         // "Fill areas from the drawing" ran and filled 0 areas
+  'js_error',          // the page threw an uncaught error (coarse source area only)
+  'left_page',         // the page was left — the furthest stage reached is reported
 ];
 
 /** Coarse property names -> the ONLY values each may carry. Anything else is dropped. */
@@ -42,6 +46,12 @@ export const PROP_VALUES = {
   source: ['sample', 'upload', 'schedule', 'manual', 'stored'],
   // who read a file
   reader: ['server', 'browser', 'ocr', 'schedule'],
+  // why an upload failed — one coarse word, never the error text or the file name
+  reason: ['no_text', 'no_rooms', 'server_error', 'timeout', 'bad_file', 'too_big', 'other'],
+  // which part of the app threw — a file group only, never a message, stack, URL or line number
+  area: ['parse', 'trace', 'calc', 'ui', 'other'],
+  // how far a visit got before the page was left (the furthest stage reached)
+  stage: ['nothing', 'loaded', 'has_rooms', 'has_load', 'exported'],
 };
 
 /** The only URL parameters this module reads or forwards. */
@@ -77,6 +87,28 @@ export function normaliseUtm(value) {
 
 const ENDPOINT = '/api/event';
 const MAX_BYTES = 900; // far below the Lambda's 1 KB cap
+
+// Events that may be sent at most N times per page load. js_error is capped so one broken loop cannot
+// flood the counter with the same failure; the cap lives HERE so it is unit-testable and the app only
+// has to call track('js_error', …). Every other event is unlimited.
+const RATE_LIMIT = { js_error: 3 };
+const sentCounts = Object.create(null);
+
+/**
+ * True when this call is OVER the cap for a rate-limited event and must be dropped. It is the one
+ * place the limit is enforced (track() calls it), so counting it here also makes it testable.
+ */
+export function rateLimitExceeded(name) {
+  const cap = RATE_LIMIT[name];
+  if (cap === undefined) return false;
+  sentCounts[name] = (sentCounts[name] || 0) + 1;
+  return sentCounts[name] > cap;
+}
+
+/** Forget the per-page counters (tests only). */
+export function resetRateLimits() {
+  for (const k of Object.keys(sentCounts)) delete sentCounts[k];
+}
 
 /**
  * Pull utm_source / utm_medium / utm_campaign / utm_content out of a URL or a
@@ -174,6 +206,7 @@ function send(data) {
 export function track(name, props) {
   try {
     if (!TRACKABLE) return;
+    if (rateLimitExceeded(name)) return;   // js_error and any future capped event
     const payload = buildPayload(name, props);
     if (!payload) return;
     send(payload);

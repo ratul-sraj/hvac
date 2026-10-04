@@ -336,6 +336,85 @@ function noteCalcEmpty(source) {
   track('calc_empty', { source });
 }
 
+// Anonymous, once-per-upload signal that a drawing / scan / schedule upload FAILED or produced no
+// rooms. The reason is one coarse allowlisted word (js/usage.js) — never the error message, the file
+// name or anything from the plan. The first reason seen in an upload attempt wins.
+let parseFailedSent = false;
+let uploadFailReason = '';
+function noteParseFailed(reason) {
+  if (parseFailedSent) return;
+  parseFailedSent = true;
+  track('parse_failed', { reason });
+}
+
+// The one drop-off signal: how far a visit got, sent on the way out (pagehide, or a hidden tab as a
+// fallback) through the existing beacon path. `exportedThisLoad` is set by the CSV download and by
+// opening the report; the rest is read live from state, so a restored project counts too.
+let leftSent = false;
+let exportedThisLoad = false;
+function leftPageStage() {
+  try {
+    if (exportedThisLoad) return 'exported';
+    if (currentCalc().totals.tr > 0) return 'has_load';
+    if (state.rooms && state.rooms.length) return 'has_rooms';
+    return 'loaded';
+  } catch (e) {
+    return 'nothing';
+  }
+}
+function sendLeftPage() {
+  if (leftSent) return;
+  leftSent = true;
+  try { track('left_page', { stage: leftPageStage() }); } catch (e) { /* never break the unload */ }
+}
+function initDropoffTracking() {
+  try {
+    if (typeof window === 'undefined' || !window.addEventListener) return;
+    window.addEventListener('pagehide', sendLeftPage);
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') sendLeftPage();
+      });
+    }
+  } catch (e) { /* counting must never break the app */ }
+}
+
+// Which FILE GROUP an uncaught error came from, most specific first. Only the group is ever sent
+// (js/usage.js) — never the message, the stack, a URL or a line number. track() caps js_error at 3
+// per page load, so a broken loop cannot flood the counter.
+const JS_ERROR_AREAS = [
+  [/pdfparse|ocr|schedule/i, 'parse'],
+  [/trace|autotrace|overlay|planview/i, 'trace'],
+  [/calc/i, 'calc'],
+  [/app|viewer|report/i, 'ui'],
+];
+function jsErrorArea(source) {
+  const s = String(source == null ? '' : source);
+  for (const [re, area] of JS_ERROR_AREAS) if (re.test(s)) return area;
+  return 'other';
+}
+function noteJsError(source) {
+  try { track('js_error', { area: jsErrorArea(source) }); } catch (e) { /* swallowed */ }
+}
+function initErrorTracking() {
+  try {
+    if (typeof window === 'undefined' || !window.addEventListener) return;
+    window.addEventListener('error', (ev) => {
+      try {
+        const src = (ev && (ev.filename || (ev.error && ev.error.stack))) || '';
+        noteJsError(src);
+      } catch (e) { /* the handler itself must never throw */ }
+    });
+    window.addEventListener('unhandledrejection', (ev) => {
+      try {
+        const r = ev && ev.reason;
+        // classify by the stack only (a file name); a bare reason has no source file -> 'other'
+        noteJsError((r && typeof r === 'object' && r.stack) || '');
+      } catch (e) { /* the handler itself must never throw */ }
+    });
+  } catch (e) { /* counting must never break the app */ }
+}
+
 /* ------------------------------------------------------------------ */
 /* persistence                                                        */
 /* ------------------------------------------------------------------ */
@@ -1736,6 +1815,8 @@ function updateParseWhere() {
 
 // The server takes at most 10 files per request, so a bigger selection is split.
 const SERVER_FILES_PER_REQUEST = 10;
+// How long to wait for one POST /api/parse batch before giving up and reading in the browser.
+const SERVER_PARSE_TIMEOUT_MS = 60000;
 
 // POST the files as multipart/form-data, one field named "files" per file, and
 // merge the answer of every batch into one { rooms, warnings, files }.
@@ -1749,14 +1830,36 @@ async function parseFilesOnServer(files) {
     const batch = files.slice(i, i + SERVER_FILES_PER_REQUEST);
     const body = new FormData();
     for (const f of batch) body.append('files', f, f.name);
-    const res = await fetch('api/parse', { method: 'POST', body });
+    // A generous ceiling so a hung server cannot leave the upload spinning forever; the abort is the
+    // only way the 'timeout' reason can be reached. The reason code rides on the Error and is mapped
+    // to one coarse allowlisted word by the caller — the message itself is never counted.
+    const ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), SERVER_PARSE_TIMEOUT_MS) : null;
+    let res;
+    try {
+      res = await fetch('api/parse', { method: 'POST', body, signal: ctrl ? ctrl.signal : undefined });
+    } catch (e) {
+      const err = new Error(e && e.name === 'AbortError'
+        ? 'the server took too long to read the file'
+        : 'the server could not be reached');
+      err.reason = (e && e.name === 'AbortError') ? 'timeout' : 'server_error';
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     let data = null;
     try { data = await res.json(); } catch (e) { data = null; }
     if (!res.ok) {
       // 400 and 413 come back as { error: "..." } — show the server's own words
-      throw new Error((data && data.error) ? data.error : `the server answered HTTP ${res.status}`);
+      const err = new Error((data && data.error) ? data.error : `the server answered HTTP ${res.status}`);
+      err.reason = res.status === 413 ? 'too_big' : (res.status === 400 ? 'bad_file' : 'server_error');
+      throw err;
     }
-    if (!data || typeof data !== 'object') throw new Error('the server sent an unexpected answer');
+    if (!data || typeof data !== 'object') {
+      const err = new Error('the server sent an unexpected answer');
+      err.reason = 'server_error';
+      throw err;
+    }
     if (Array.isArray(data.rooms)) rooms.push(...data.rooms);
     if (Array.isArray(data.warnings)) warnings.push(...data.warnings);
     if (Array.isArray(data.files)) {
@@ -1792,7 +1895,11 @@ function finishUpload(added, skipped, failed, notes, serverError, readers, scann
     if (ocrEmpty) msg += ` | ${OCR_NO_ROOMS_MSG}`;
     if (serverError) msg = `Server: ${serverError}. These files were read in your browser. ${msg}`;
     setStatus(scanned || ocrEmpty ? 'warn' : (failed && !added ? 'err' : (failed || skipped || serverError ? 'warn' : 'ok')), msg);
-  if (!added) noteCalcEmpty('upload');   // nothing usable came out of this upload
+  if (!added) {
+    // No usable room came out of this upload: record ONE coarse reason, then the calc-empty signal.
+    noteParseFailed(uploadFailReason || (ocrEmpty ? 'no_rooms' : scanned ? 'no_text' : 'no_rooms'));
+    noteCalcEmpty('upload');   // nothing usable came out of this upload
+  }
 }
 
 async function handleFiles(fileList) {
@@ -1819,6 +1926,9 @@ async function handleFiles(fileList) {
   // OCR is a choice for this upload: with it on, PDFs are read here in the
   // browser with tesseract, also when the Express server is there.
   const useOcr = !!(el.ocrCheck && el.ocrCheck.checked);
+  // A fresh upload attempt: forget the last attempt's reason so this attempt's first reason wins.
+  parseFailedSent = false;
+  uploadFailReason = '';
 
   // --- 1. room schedules: always read here in the browser ------------------
   for (let i = 0; i < schedules.length; i++) {
@@ -1834,12 +1944,14 @@ async function handleFiles(fileList) {
       }
       readers.add('schedule');
       track('schedule_imported', { reader: 'schedule' });
+      if (!res.added) uploadFailReason = uploadFailReason || 'no_rooms';   // read, but no rooms
       const bits = [`${res.added} room(s) from the schedule`];
       if (out.rowCount) bits.push(`${out.rowCount} row(s) read`);
       if (out.sheetName) bits.push(`sheet "${out.sheetName}"`);
       notes.push(`${f.name}: ${bits.join(', ')}`);
     } catch (err) {
       failed += 1;
+      uploadFailReason = uploadFailReason || 'bad_file';   // the schedule could not be read
       const msg = (err && err.message) ? err.message : String(err);
       pushWarnings([`${f.name}: could not be read — ${msg}`]);
       notes.push(`${f.name}: FAILED — ${shortReason(msg)}`);
@@ -1882,11 +1994,13 @@ async function handleFiles(fileList) {
       } else {
         notes.push(`${pdfs.length} file(s) read on the server`);
       }
+      if (!res.added) uploadFailReason = uploadFailReason || (scanned ? 'no_text' : 'no_rooms');
       finishUpload(added, skipped, failed, notes, '', readers, scanned);
       return;
     } catch (err) {
       clearTimeout(readingTimer);
       serverError = (err && err.message) ? err.message : String(err);
+      uploadFailReason = (err && err.reason) || 'server_error';   // coarse code set by parseFilesOnServer
       setStatus('warn', `Server: ${serverError}. Reading the file(s) in your browser instead.`);
       // fall through to the local path below, the user still gets a result
     }
@@ -1916,6 +2030,8 @@ async function handleFiles(fileList) {
       notes.push(`${f.name}: ${res.added} room(s)${out.pages ? ` from ${out.pages} page(s)` : ''}${ocrPages}`);
       // no rooms and no text layer: one clear line about the OCR box
       if (!useOcr && (!out.rooms || !out.rooms.length) && await pdfLooksScanned(out)) scanned = true;
+      // zero rooms out of this file: a scan has no text layer, anything else simply has no rooms
+      if (!res.added) uploadFailReason = uploadFailReason || (scanned ? 'no_text' : 'no_rooms');
       // OCR ran and read the page(s) but found no rooms: say why, and what works better.
       if (useOcr && !res.added && out.pages) {
         ocrEmpty = true;
@@ -1923,6 +2039,7 @@ async function handleFiles(fileList) {
       }
     } catch (err) {
       failed += 1;
+      uploadFailReason = uploadFailReason || 'bad_file';   // pdf.js / OCR could not read the file
       const msg = (err && err.message) ? err.message : String(err);
       pushWarnings([`${f.name}: could not be read — ${msg}`]);
       notes.push(`${f.name}: FAILED — ${shortReason(msg)}`);
@@ -2904,6 +3021,7 @@ function planApplyFill(assignments, reasonCount, info) {
 
   if (!filled.length) {
     const why = fillReasonSummary(reasonCount) || 'no blank room matched one closed outline of the plan.';
+    track('fill_none');   // the fill ran but filled nothing — a coarse failure signal (js/usage.js)
     setStatus('warn', `No area could be filled from the drawing: ${why} Nothing was changed.`, 'plan');
     return;
   }
@@ -3899,6 +4017,7 @@ function exportCsv() {
   if (!state.rooms.length) { setStatus('warn', 'There are no rooms to export yet.'); return; }
   download(safeName() + '-cooling-load.csv', toCsv(state.project, currentCalc()), 'text/csv;charset=utf-8');
   track('export_csv');
+  exportedThisLoad = true;   // the furthest stage for the left_page signal
   setStatus('ok', 'CSV downloaded.');
 }
 
@@ -3944,6 +4063,7 @@ function printReport() {
     }
     w.document.open(); w.document.write(html); w.document.close();
     track('report_opened');
+    exportedThisLoad = true;   // the furthest stage for the left_page signal
     setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* the user can press the button */ } }, 500);
     setStatus('ok', 'Report opened in a new window.');
     return;
@@ -3953,6 +4073,7 @@ function printReport() {
   document.body.classList.add('reporting');
   el.reportClose.focus();
   track('report_opened');
+  exportedThisLoad = true;   // the furthest stage for the left_page signal
   setStatus(null);
 }
 
@@ -4251,6 +4372,8 @@ function wire() {
 /* ------------------------------------------------------------------ */
 
 function start() {
+  initErrorTracking();     // catch anything the startup below throws (coarse area only)
+  initDropoffTracking();   // the one left_page signal, on the way out
   track('app_open');   // once per page load — the calculator was opened
   fillCountrySelect();
   const restored = loadStored();

@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tally, FUNNEL, FAILURE_EVENTS, ALL_EVENTS, STEP_OF, stripPrefix } from "../tools/funnel.mjs";
+import { tally, FUNNEL, FAILURE_EVENTS, SIGNAL_EVENTS, ALL_EVENTS, STEP_OF, stripPrefix } from "../tools/funnel.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -31,6 +31,10 @@ const FIXTURE = [
   '2026-10-01T10:02:00.000Z\treq-3\tINFO\t{"evt":"usage","e":"share_link_copied","utm_campaign":"g-oct2"}',
   '2026-10-01T10:03:00.000Z\treq-4\tINFO\t{"evt":"usage","e":"calc_empty","utm_campaign":"g-oct2"}',
   '2026-10-01T10:04:00.000Z\treq-5\tINFO\t{"evt":"usage","e":"export_csv","utm_campaign":"m-oct2"}',
+  '2026-10-01T10:04:10.000Z\treq-7\tINFO\t{"evt":"usage","e":"parse_failed","p":{"reason":"no_rooms"},"utm_campaign":"g-oct2"}',
+  '2026-10-01T10:04:20.000Z\treq-8\tINFO\t{"evt":"usage","e":"fill_none","utm_campaign":"g-oct2"}',
+  '2026-10-01T10:04:30.000Z\treq-9\tINFO\t{"evt":"usage","e":"js_error","p":{"area":"calc"},"utm_campaign":"g-oct2"}',
+  '2026-10-01T10:04:40.000Z\treq-10\tINFO\t{"evt":"usage","e":"left_page","p":{"stage":"loaded"},"utm_campaign":"g-oct2"}',
   "{not json",
   '2026-10-01T10:05:00.000Z\treq-6\tINFO\t{"evt":"usage","e":"something_new"}',
 ].join("\n") + "\n";
@@ -57,8 +61,8 @@ function firstJson(s) {
 /* ---------- the crash fix: every known event maps to a step or a failure bucket ------ */
 ok("FUNNEL has four success steps", FUNNEL.length === 4, FUNNEL.map((f) => f.step).join(","));
 for (const e of ALL_EVENTS) {
-  const mapped = STEP_OF.has(e) || FAILURE_EVENTS.includes(e);
-  ok(`event "${e}" maps to a step or the failure bucket (never neither)`, mapped);
+  const mapped = STEP_OF.has(e) || FAILURE_EVENTS.includes(e) || SIGNAL_EVENTS.includes(e);
+  ok(`event "${e}" maps to a step, the failure bucket or a signal (never neither)`, mapped);
 }
 ok("share_link_copied belongs to the converted step (no more TypeError)",
   STEP_OF.get("share_link_copied") === "converted");
@@ -81,6 +85,19 @@ ok("tally counts the malformed line", !!t && t.malformed === 1);
 ok("tally attributes the campaign through share_link_copied and calc_empty",
   !!t && t.campaigns.has("g-oct2") && t.campaigns.get("g-oct2").converted === 1 &&
   t.campaigns.get("g-oct2").failed === 1);
+ok("SIGNAL_EVENTS is exported and holds the new signals",
+  Array.isArray(SIGNAL_EVENTS) && SIGNAL_EVENTS.includes("parse_failed") &&
+  SIGNAL_EVENTS.includes("left_page"));
+ok("tally records parse_failed by reason, per campaign",
+  !!t && t.signals.has("g-oct2") && t.signals.get("g-oct2").parse_failed.no_rooms === 1,
+  t ? JSON.stringify(t.signals.get("g-oct2")) : "no result");
+ok("tally records fill_none", !!t && t.signals.get("g-oct2").fill_none === 1);
+ok("tally records js_error by area", !!t && t.signals.get("g-oct2").js_error.calc === 1);
+ok("tally records the left_page stage", !!t && t.signals.get("g-oct2").left_page.loaded === 1);
+ok("signal events are known, not counted as unknown (still 1 unknown)",
+  !!t && t.unknown === 1 && t.perEvent.parse_failed === 1 && t.perEvent.left_page === 1);
+ok("signal events never inflate the funnel 'failed' column",
+  !!t && t.campaigns.get("g-oct2").failed === 1);
 
 /* ---------- the CLI itself completes end-to-end ------------------------------------- */
 const run = spawnSync(process.execPath, [TOOL, "--file", file, "--json"], { encoding: "utf8", cwd: ROOT });
@@ -91,6 +108,9 @@ ok("CLI output names share_link_copied", /share_link_copied/.test(run.stdout));
 ok("CLI output reports calc_empty under failure signals",
   /Failure signals/.test(run.stdout) && /calc_empty/.test(run.stdout));
 ok("CLI names the unknown event", /something_new/.test(run.stdout));
+ok("CLI prints the 'Where they fail' section", /Where they fail/.test(run.stdout));
+ok("CLI reports the parse_failed reason and the left_page stage",
+  /no_rooms/.test(run.stdout) && /left_page stage/.test(run.stdout) && /loaded 1/.test(run.stdout));
 
 const parsed = firstJson(run.stdout);
 ok("CLI emits parsable JSON with the step counts", !!parsed &&
@@ -98,6 +118,8 @@ ok("CLI emits parsable JSON with the step counts", !!parsed &&
 ok("CLI JSON reports calc_empty as a failure, not a step", !!parsed &&
   parsed.failures && parsed.failures.calc_empty === 1 && parsed.steps.worked === 0);
 ok("CLI JSON reports the unknown event", !!parsed && parsed.unknown === 1);
+ok("CLI JSON carries the signals", !!parsed && parsed.signals && parsed.signals["g-oct2"] &&
+  parsed.signals["g-oct2"].parse_failed.no_rooms === 1);
 
 /* ---------- an empty window still exits 0 ------------------------------------------- */
 const emptyFile = path.join(dir, "empty.log");
