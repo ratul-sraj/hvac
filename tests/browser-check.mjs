@@ -41,6 +41,16 @@ try {
 }
 await page.setViewport({ width: 1400, height: 1000 });
 
+// Long plan operations (a trace, a fill, placing every room) now YIELD to the browser instead of
+// freezing the thread, so their controls are genuinely disabled while they run and a click aimed at
+// one of them is dropped by the browser. Before a check drives such a button it therefore waits for
+// the app to be idle. This changes no assertion — it only stops a check from clicking a disabled
+// control.
+const waitIdle = () => page
+  .waitForFunction(() => !(window.webhvac && window.webhvac.state && window.webhvac.state.ui.traceBusy),
+    { timeout: 120000, polling: 250 })
+  .catch(() => {});
+
 // ---- deterministic location auto-detect ------------------------------------------------
 // The app asks a free IP-geolocation service on a first visit (js/climates.js + autoDetectClimate
 // in js/app.js). The checks below must not depend on where this machine happens to sit, and the
@@ -1946,6 +1956,7 @@ if (!sampleMissing) {
 
     ok("no region is on the drawing before placing", before.placed === 0, `${before.placed} placed, ${before.drawn} drawn`);
 
+    await waitIdle();
     await page.click("#planPlaceAll");
     await new Promise((r) => setTimeout(r, 1500));
     const after = await roomsNow();
@@ -2025,6 +2036,7 @@ if (!sampleMissing) {
       (await totalOf()) === totalBeforeClear, `"${totalBeforeClear}" -> "${await totalOf()}"`);
 
     // and they come back after a refresh: the regions are part of the saved project
+    await waitIdle();
     await page.click("#planPlaceAll");
     await new Promise((r) => setTimeout(r, 1200));
     await page.reload({ waitUntil: "load" });
@@ -2058,6 +2070,7 @@ if (!sampleMissing) {
     await page.click("#planFit");
     await new Promise((r) => setTimeout(r, 1200));
     const rowsBeforeTrace = await rows4();
+    await waitIdle();
     await page.click("#planTraceOutlines");
     await page.waitForFunction(() => {
       const s = document.getElementById("planStatus");
@@ -2088,6 +2101,7 @@ if (!sampleMissing) {
     // a WRONG scale finds ~0 rooms: the one-click fix must appear (next to the buttons, on screen) and work
     await page.select("#planScale", "500");
     await new Promise((r) => setTimeout(r, 400));
+    await waitIdle();
     await page.click("#planTraceOutlines");
     const fixAppeared = await page.waitForFunction(() => {
       const b = document.getElementById("planScaleFix");
@@ -2508,6 +2522,7 @@ if (!sampleMissing) {
       `rows ${rowsFresh.join("+")} vs total ${totalFresh}`);
 
     // A second press must say there is nothing left rather than pretend to work.
+    await waitIdle();
     await page.click("#planFillAreas");
     await new Promise((r) => setTimeout(r, 800));
     const secondPress = await page.evaluate(() =>
@@ -2576,6 +2591,7 @@ if (!sampleMissing) {
     ok("with every area already known, the control says there is nothing to fill",
       nothingBtn.aria === "true" && /nothing to fill/i.test(nothingBtn.title), JSON.stringify(nothingBtn));
 
+    await waitIdle();
     await page.click("#planFillAreas");
     await new Promise((r) => setTimeout(r, 600));
     const afterFill = await page.evaluate(() => {
@@ -3046,6 +3062,7 @@ if (!sampleMissing) {
 
     // (d) a room that ALREADY has a drawn/placed shape uses the existing selected outline, not a
     //     second focus mark (no double outline)
+    await waitIdle();
     await page.click("#planPlaceAll");
     await new Promise((r) => setTimeout(r, 2500));
     const placedPick = await pickRow(true);
@@ -3126,7 +3143,8 @@ if (!sampleMissing) {
       await page.click("#btnSample");
       await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100, { timeout: 120000 });
       await settle(3000);
-      await page.click("#planPlaceAll");
+      await waitIdle();
+    await page.click("#planPlaceAll");
       await settle(3500);
     };
 
@@ -3294,6 +3312,7 @@ if (!sampleMissing) {
     await page.click("#btnSampleHouse");
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
     await settle(3000);
+    await waitIdle();
     await page.click("#planTraceOutlines");
     await page.waitForFunction(() => window.webhvac.state.rooms.some((r) => r.poly && r.poly.length > 2), { timeout: 120000 });
     await settle(2500);
@@ -3335,6 +3354,7 @@ if (!sampleMissing) {
     await page.click("#btnSampleHouse");
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
     await settle(2500);
+    await waitIdle();
     await page.click("#planPlaceAll");
     await page.waitForFunction(() => document.querySelectorAll("#planView .plan-room").length > 0, { timeout: 60000 }).catch(() => {});
     await settle(1500);
@@ -3389,8 +3409,10 @@ if (!sampleMissing) {
     await page.click("#btnSampleHouse");
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
     await settle(3000);
+    await waitIdle();
     await page.click("#planTraceOutlines");
     await page.waitForFunction(() => window.webhvac.state.rooms.some((r) => r.poly && r.poly.length > 2), { timeout: 120000 });
+    await waitIdle();
     await page.click("#planPlaceAll");
     await settle(3500);
     const fresh = await page.evaluate(() => {
@@ -3517,7 +3539,8 @@ if (!sampleMissing) {
       };
     });
     const traceAndWait = async () => {
-      await page.click("#planTraceOutlines");
+      await waitIdle();
+    await page.click("#planTraceOutlines");
       await page.waitForFunction(() => {
         const s = document.getElementById("planStatus");
         return s && !/Tracing the plan/.test(s.textContent) && /point to|outline|traced/i.test(s.textContent);
@@ -3840,6 +3863,41 @@ if (!sampleMissing) {
         ok("JOB4 (ii) a box corner-resize updates the chip MID-DRAG (before pointer up)",
           !!mid && mid !== before && mid === after && /m²|ft²/.test(mid),
           `before "${before}" → mid-drag "${mid}" → after "${after}"`);
+      }
+
+      // (vi) the chip belongs to the room's NAME: directly below it, on the same axis, and it travels
+      //      with the name when the outline is moved. Reported from real use: dragging an outline moved
+      //      the name (drawn at the shape's centre) while the area stayed at the sheet's printed name
+      //      position, so the two visibly parted company.
+      {
+        const idShape = await drawRect(0.60, 0.52, 0.16, 0.16);
+        await setMode("select");
+        await centerPlan();
+        const labelChip = (rid) => page.evaluate((r) => {
+          const chip = document.querySelector(`.plan-area-chip[data-room-id="${r}"]`);
+          const g = document.querySelector(`.plan-room[data-room-id="${r}"]`);
+          const label = g ? g.querySelector(".plan-room-label") : null;
+          const mid = (el) => { const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+          return { chip: chip ? mid(chip) : null, label: label ? mid(label) : null };
+        }, rid);
+        const a0 = await labelChip(idShape);
+        ok("JOB4 (vi) the area chip sits directly below the room's name, on its axis",
+          !!a0.chip && !!a0.label && a0.chip.y > a0.label.y && Math.abs(a0.chip.x - a0.label.x) <= 6,
+          `name ${JSON.stringify(a0.label)} chip ${JSON.stringify(a0.chip)}`);
+        const bb = await boxOf(idShape);
+        await page.mouse.move(bb.x + bb.w / 2, bb.y + bb.h / 2);
+        await page.mouse.down();
+        await page.mouse.move(bb.x + bb.w / 2 + 60, bb.y + bb.h / 2 + 40, { steps: 8 });
+        await page.mouse.up();
+        await sleepT(700);
+        const a1 = await labelChip(idShape);
+        const dN = a0.label && a1.label ? { x: a1.label.x - a0.label.x, y: a1.label.y - a0.label.y } : null;
+        const dC = a0.chip && a1.chip ? { x: a1.chip.x - a0.chip.x, y: a1.chip.y - a0.chip.y } : null;
+        ok("JOB4 (vii) the chip travels with the name when the outline is moved",
+          !!dN && !!dC && Math.abs(dN.x - dC.x) <= 2 && Math.abs(dN.y - dC.y) <= 2 && Math.abs(dN.x) + Math.abs(dN.y) > 15,
+          `name moved ${JSON.stringify(dN)} chip moved ${JSON.stringify(dC)}`);
+        ok("JOB4 (vii) the chip is still below the name after the move",
+          !!a1.chip && !!a1.label && a1.chip.y > a1.label.y, `${JSON.stringify(a1.label)} ${JSON.stringify(a1.chip)}`);
       }
 
       // (iii) inert: the chip is never the hit-target, and a click at its centre still selects the room.
@@ -4176,6 +4234,181 @@ if (!sampleMissing) {
         }
       }
     }
+  }
+
+  // ---- Long operations say what they are doing, and the bar can actually paint ------------------
+  //      The tracer is synchronous main-thread code, so it now yields between work units and the plan
+  //      panel gained a real ARIA progressbar. These checks prove: the bar appears with a count that
+  //      increases, the button that started the work is disabled and says so, the bar goes when the
+  //      work ends, and the RESULT is unchanged (the fixture's own 105 of 159). The owner's words:
+  //      "people shouldnt have ambiguity".
+  {
+    const settleP = (ms) => new Promise((r) => setTimeout(r, ms));
+    // A tiny in-page recorder: it watches #planProgress and the button while an operation runs.
+    const installRecorder = (buttonId, watchWord) => page.evaluate((bid, word) => {
+      const el = document.getElementById("planProgress");
+      const txt = document.getElementById("planProgressText");
+      const btn = document.getElementById(bid);
+      const watch = new RegExp(word);
+      window.__prog = { vals: [], texts: [], sawIndet: false, indetNoNow: false, sawDisabled: false, sawLabel: false,
+        role: el.getAttribute("role"), min: null, max: null };
+      const rec = () => {
+        if (el.dataset.active !== "1") return;
+        const n = el.getAttribute("aria-valuenow");
+        if (n != null && window.__prog.vals[window.__prog.vals.length - 1] !== Number(n)) window.__prog.vals.push(Number(n));
+        const tx = txt.textContent;
+        if (tx && window.__prog.texts[window.__prog.texts.length - 1] !== tx) window.__prog.texts.push(tx);
+        if (el.classList.contains("indeterminate")) {
+          window.__prog.sawIndet = true;
+          // NEVER invent a number: while the total is unknown there must be no aria-valuenow at all.
+          if (el.getAttribute("aria-valuenow") == null) window.__prog.indetNoNow = true;
+        }
+        if (btn.disabled) window.__prog.sawDisabled = true;
+        if (watch.test(btn.textContent)) window.__prog.sawLabel = true;
+        window.__prog.min = el.getAttribute("aria-valuemin");
+        window.__prog.max = el.getAttribute("aria-valuemax");
+      };
+      new MutationObserver(rec).observe(el, { attributes: true });
+      new MutationObserver(rec).observe(txt, { characterData: true, childList: true });
+      rec();
+    }, buttonId, watchWord);
+
+    // (1) TRACE on the synthetic fixture: still exactly 105 of 159 rooms.
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForFunction(() => !window.webhvac.state.ui.busy, { timeout: 60000 }).catch(() => {});
+    if ((await page.$$eval("#roomsBody tr", (t) => t.length)) === 0) await page.click("#btnSample");
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100, { timeout: 120000, polling: 400 });
+    await settleP(1500);
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await page.click("#planFit");
+    await settleP(1000);
+    await installRecorder("planTraceOutlines", "Tracing");
+    const tTrace = Date.now();
+    await waitIdle();
+    await page.click("#planTraceOutlines");
+    // The bar must APPEAR first — an "it has finished" wait would otherwise be satisfied by the idle
+    // state before the click takes effect — and only then must it go when the work ends.
+    await page.waitForFunction(() => document.getElementById("planProgress").dataset.active === "1",
+      { timeout: 60000, polling: 100 }).catch(() => {});
+    await page.waitForFunction(() => {
+      const el = document.getElementById("planProgress");
+      const s = document.getElementById("planStatus");
+      return el && el.dataset.active === "0" && s && !/Tracing the plan/.test(s.textContent);
+    }, { timeout: 120000, polling: 300 }).catch(() => {});
+    const traceMs = Date.now() - tTrace;
+    await settleP(800);
+    const tp = await page.evaluate(() => {
+      const el = document.getElementById("planProgress");
+      const btn = document.getElementById("planTraceOutlines");
+      const p = window.__prog || {};
+      return { vals: p.vals || [], vCount: (p.vals || []).length,
+        monotonic: (p.vals || []).every((v, i, a) => i === 0 || v >= a[i - 1]),
+        texts: (p.texts || []).join(" | "), sawIndet: !!p.sawIndet, indetNoNow: !!p.indetNoNow, sawDisabled: !!p.sawDisabled, sawLabel: !!p.sawLabel,
+        role: p.role, min: p.min, max: p.max,
+        active: el.dataset.active, ariaHidden: el.getAttribute("aria-hidden"), vis: getComputedStyle(el).visibility,
+        btnText: btn.textContent, btnDisabled: btn.disabled,
+        status: (document.getElementById("planStatus") || {}).textContent.replace(/\s+/g, " ").trim(),
+        accepted: window.webhvac.plan.lastTrace ? window.webhvac.plan.lastTrace.accepted : null,
+        attempted: window.webhvac.plan.lastTrace ? window.webhvac.plan.lastTrace.attempted : null };
+    });
+    ok("the trace shows a progress bar whose count increases while it runs",
+      tp.vCount >= 2 && tp.monotonic && tp.vals[tp.vCount - 1] > tp.vals[0],
+      `aria-valuenow ${tp.vCount} samples: ${tp.vals.slice(0, 12).join(",")}… (last ${tp.vals[tp.vCount - 1]}) in ${traceMs} ms`);
+    ok("the trace bar is a real progressbar and names the operation with a room count",
+      tp.role === "progressbar" && tp.min === "0" && tp.max === "159" && /Tracing outlines - \d+ of 159 rooms/.test(tp.texts),
+      `role=${tp.role} min=${tp.min} max=${tp.max} texts "${String(tp.texts).slice(0, 90)}"`);
+    ok("the trace button is disabled and says it is working while the trace runs",
+      tp.sawDisabled && tp.sawLabel && tp.btnDisabled === false && /^Trace real outlines$/.test(tp.btnText),
+      `disabled-during=${tp.sawDisabled}, working-label=${tp.sawLabel}, after "${tp.btnText}" disabled=${tp.btnDisabled}`);
+    ok("the progress bar disappears when the trace ends",
+      tp.active === "0" && tp.ariaHidden === "true" && tp.vis === "hidden",
+      `active=${tp.active} aria-hidden=${tp.ariaHidden} visibility=${tp.vis}`);
+    ok("the trace result is unchanged on the fixture — 105 of 159 rooms",
+      tp.accepted === 105 && tp.attempted === 159 && /Real outlines for 105 of 159 room\(s\)/.test(tp.status),
+      `accepted ${tp.accepted}/${tp.attempted}; status "${tp.status.slice(0, 80)}"`);
+    // While the total is genuinely unknown (the tracer is still preparing), the bar is INDETERMINATE:
+    // no aria-valuenow, no made-up percentage, just "Working..."-style text.
+    ok("while the total is unknown the bar is indeterminate — no aria-valuenow, no invented number",
+      tp.sawIndet && tp.indetNoNow,
+      `indeterminate-seen=${tp.sawIndet}, without-aria-valuenow=${tp.indetNoNow}`);
+
+    // (2) FILL on the default sample (LEVEL 11: 56 rooms, none with a printed area, so this button is
+    //     the only way its areas appear at all) — its own bar, its own count, yielding so it paints.
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(BASE + "app.html", { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForSelector("#btnSample", { timeout: 30000 });
+    await settleP(1200);
+    await installRecorder("planFillAreas", "Filling");
+    const tFill = Date.now();
+    await page.click("#btnSample");   // the sample auto-runs the fill for a sheet that prints no areas
+    await page.waitForFunction(() => {
+      const el = document.getElementById("planProgress");
+      return el && el.dataset.active === "0" && window.webhvac && window.webhvac.state.rooms.length > 50
+        && !window.webhvac.state.ui.busy;
+    }, { timeout: 180000, polling: 300 }).catch(() => {});
+    const fillMs = Date.now() - tFill;
+    await settleP(1200);
+    const fp = await page.evaluate(() => {
+      const el = document.getElementById("planProgress");
+      const p = window.__prog || {};
+      return { vals: p.vals || [], vCount: (p.vals || []).length,
+        monotonic: (p.vals || []).every((v, i, a) => i === 0 || v >= a[i - 1]),
+        texts: (p.texts || []).join(" | "), sawIndet: !!p.sawIndet, sawDisabled: !!p.sawDisabled, sawLabel: !!p.sawLabel,
+        role: p.role, min: p.min, max: p.max,
+        active: el.dataset.active, ariaHidden: el.getAttribute("aria-hidden"), vis: getComputedStyle(el).visibility,
+        btnText: document.getElementById("planFillAreas").textContent,
+        fillBtnDisabled: document.getElementById("planFillAreas").disabled,
+        rooms: window.webhvac.state.rooms.length,
+        withArea: window.webhvac.state.rooms.filter((r) => Number(r.area) > 0).length,
+        status: (document.getElementById("planStatus") || {}).textContent.replace(/\s+/g, " ").trim() };
+    });
+    ok("the fill shows a progress bar naming it and counting rooms (the sample prints no areas)",
+      fp.role === "progressbar" && fp.vCount >= 2 && fp.monotonic && /Filling areas from the drawing - \d+ of 56 rooms/.test(fp.texts),
+      `${fp.vCount} samples "${String(fp.texts).slice(0, 80)}" in ${fillMs} ms`);
+    ok("the fill button is disabled and says it is working, and the bar goes when it ends",
+      fp.sawDisabled && fp.sawLabel && fp.active === "0" && fp.vis === "hidden" && /^Fill areas from the drawing$/.test(fp.btnText),
+      `disabled-during=${fp.sawDisabled} working=${fp.sawLabel} active=${fp.active} vis=${fp.vis} after "${fp.btnText}"`);
+    ok("the sample's own fill result is unchanged — 22 of 56 areas measured from the drawing",
+      fp.withArea === 22 && /Filled 22 areas from the drawing/.test(fp.status),
+      `rooms ${fp.rooms}, with area ${fp.withArea}; status "${fp.status.slice(0, 80)}"`);
+
+    // (3) PLACE ALL on the same sample: its own bar, its own room count, the button disabled while it
+    //     runs and the bar gone when it ends.
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(BASE + "app.html", { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForSelector("#btnSample", { timeout: 30000 });
+    await settleP(1200);
+    await page.click("#btnSample");
+    await page.waitForFunction(() => window.webhvac && window.webhvac.state.rooms.length > 50
+      && !window.webhvac.state.ui.busy, { timeout: 180000, polling: 300 }).catch(() => {});
+    await settleP(1000);
+    await installRecorder("planPlaceAll", "Placing");
+    await waitIdle();
+    await page.click("#planPlaceAll");
+    await page.waitForFunction(() => document.getElementById("planProgress").dataset.active === "1",
+      { timeout: 60000, polling: 100 }).catch(() => {});
+    await page.waitForFunction(() => {
+      const el = document.getElementById("planProgress");
+      return el && el.dataset.active === "0" && !window.webhvac.state.ui.busy;
+    }, { timeout: 120000, polling: 300 }).catch(() => {});
+    await settleP(1000);
+    const pp = await page.evaluate(() => {
+      const el = document.getElementById("planProgress");
+      const p = window.__prog || {};
+      return { vCount: (p.vals || []).length, texts: (p.texts || []).join(" | "),
+        sawDisabled: !!p.sawDisabled, sawLabel: !!p.sawLabel,
+        active: el.dataset.active, vis: getComputedStyle(el).visibility,
+        btnText: document.getElementById("planPlaceAll").textContent,
+        placed: window.webhvac.state.rooms.filter((r) => r.rect).length };
+    });
+    ok("Place all rooms shows the same bar, counting rooms as it places them",
+      pp.vCount >= 1 && /Placing rooms on the plan - \d+ of \d+ rooms/.test(pp.texts),
+      `${pp.vCount} sample(s) "${String(pp.texts).slice(0, 80)}"`);
+    ok("...and its button is disabled and says it is working, and the bar goes when it ends",
+      pp.sawDisabled && pp.sawLabel && pp.active === "0" && pp.vis === "hidden"
+        && /^Place all rooms on the plan$/.test(pp.btnText) && pp.placed > 0,
+      `disabled-during=${pp.sawDisabled} working=${pp.sawLabel} active=${pp.active} placed=${pp.placed} after "${pp.btnText}"`);
   }
 
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });

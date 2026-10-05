@@ -704,21 +704,30 @@ export function createOverlay(rootEl, {
     return wrap;
   }
 
-  /** The room name, centred in the box — or null when the box cannot fit it. */
-  function roomLabel(room, box) {
-    const name = String(room.name == null ? '' : room.name).trim();
-    if (!name || box.w < 8 || box.h < 8) return null;
-    // shrink to fit, and give up rather than draw something illegible
+  /** Where a room's NAME sits on the plan (view px) and how big it is drawn — or null when the box is
+   *  too small to carry a legible name. ONE source for the label and for the area chip below it: the
+   *  owner reported that dragging an outline moved the name (drawn at the box centre) while the area
+   *  stayed at the sheet's printed name position, so the two visibly parted company. */
+  function labelAnchor(room, box) {
+    const name = String(room && room.name == null ? '' : (room && room.name)).trim();
+    if (!name || !box || box.w < 8 || box.h < 8) return null;
     const fitted = Math.min(MAX_LABEL_PX, box.h * 0.4, (box.w * 0.92) / Math.max(1, name.length * 0.55));
     if (fitted < MIN_LABEL_PX) return null;
+    return { x: box.x + box.w / 2, y: box.y + box.h / 2, fitted };
+  }
+
+  /** The room name, centred in the box — or null when the box cannot fit it. */
+  function roomLabel(room, box) {
+    const anchor = labelAnchor(room, box);
+    if (!anchor) return null;
     const t = document.createElementNS(SVG_NS, 'text');
     t.setAttribute('class', 'plan-room-label');
-    t.setAttribute('x', num(box.x + box.w / 2));
-    t.setAttribute('y', num(box.y + box.h / 2));
+    t.setAttribute('x', num(anchor.x));
+    t.setAttribute('y', num(anchor.y));
     t.setAttribute('text-anchor', 'middle');
     t.setAttribute('dominant-baseline', 'middle');
-    t.setAttribute('font-size', num(fitted));
-    t.textContent = name;
+    t.setAttribute('font-size', num(anchor.fitted));
+    t.textContent = String(room.name).trim();
     return t;
   }
 
@@ -965,14 +974,21 @@ export function createOverlay(rootEl, {
 
   /** Where a room's chip goes (view px): just below the room's own name point (`at`, the PDF's printed
    *  name position) when it has one, otherwise CHIP_GAP_PX below the shape's box centre. */
-  function chipAnchor(room, vp, box) {
+  function chipAnchor(room, vp, box, opts) {
+    // A drawn shape carries its own name, centred in the box, and that name MOVES with the shape. The
+    // area belongs directly under it, so the two travel together through a drag or a resize instead of
+    // the area sitting still at the sheet's printed name position (reported from real use).
+    if (!opts || opts.followLabel !== false) {
+      const lab = labelAnchor(room, box);
+      if (lab) return { x: lab.x, y: lab.y + lab.fitted * 0.75 + CHIP_GAP_PX, followed: 'label' };
+    }
     const at = room && room.at;
     if (at && Number.isFinite(Number(at.x)) && Number.isFinite(Number(at.y))
         && (room.page == null || Number(room.page) === (safeCall(getPage) ?? 1))) {
       const p = pdfPointToView(vp, { x: Number(at.x), y: Number(at.y) });
-      return { x: p.x, y: p.y + CHIP_GAP_PX };
+      return { x: p.x, y: p.y + CHIP_GAP_PX, followed: 'printed-name' };
     }
-    return { x: box.x + box.w / 2, y: box.y + box.h / 2 + CHIP_GAP_PX };
+    return { x: box.x + box.w / 2, y: box.y + box.h / 2 + CHIP_GAP_PX, followed: 'centre' };
   }
 
   function render() {
@@ -1013,7 +1029,7 @@ export function createOverlay(rootEl, {
         const full = rectToViewBox(vp, room.rect);
         roomsG.appendChild(markerShape(room, { x: full.x + full.w / 2, y: full.y + full.h / 2 },
           room.id === selectedId, dragging));
-        const chip = areaChip(room, chipAnchor(room, vp, full), safeCall(getAreaText, room));
+        const chip = areaChip(room, chipAnchor(room, vp, full, { followLabel: false }), safeCall(getAreaText, room));
         if (chip) chipsG.appendChild(chip);
         continue;
       }

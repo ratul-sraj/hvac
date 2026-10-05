@@ -198,6 +198,9 @@ const el = {
   planLinkTarget: $('#planLinkTarget'), planLinkMove: $('#planLinkMove'), planLinkDetach: $('#planLinkDetach'),
   planStatus: $('#planStatus'),
   planScaleFix: $('#planScaleFix'),
+  planProgress: $('#planProgress'),
+  planProgressText: $('#planProgressText'),
+  planProgressFill: $('#planProgressFill'),
   projectPanel: $('#projectPanel'),
   unitsSi: $('#proj-units-si'),
   unitsIp: $('#proj-units-ip'),
@@ -306,10 +309,26 @@ function hidePlanStatus() {
 }
 
 function setProgress(text, pct) {
-  if (text === null) { el.progressBox.classList.add('hidden'); return; }
+  if (text === null) {
+    el.progressBox.classList.add('hidden');
+    el.progressBox.classList.remove('indeterminate');
+    el.progressBox.setAttribute('aria-hidden', 'true');
+    return;
+  }
   el.progressBox.classList.remove('hidden');
+  el.progressBox.removeAttribute('aria-hidden');
   el.progressText.textContent = text;
-  el.progressFill.style.width = Math.max(0, Math.min(100, pct || 0)) + '%';
+  if (pct == null) {
+    // The total is genuinely unknown: an INDETERMINATE bar. No aria-valuenow, no made-up percentage.
+    el.progressBox.classList.add('indeterminate');
+    el.progressBox.removeAttribute('aria-valuenow');
+    el.progressFill.style.width = '';
+    return;
+  }
+  el.progressBox.classList.remove('indeterminate');
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  el.progressBox.setAttribute('aria-valuenow', String(Math.round(p)));
+  el.progressFill.style.width = p + '%';
 }
 
 function currentCalc() {
@@ -1772,7 +1791,9 @@ function onParseProgress(info, fileName, fileIdx, fileCount, total2) {
     pages = info.pages || info.pageCount || info.total || 0;
     phase = info.phase || info.status || info.stage || 'reading';
   }
-  const pct = pages ? (100 * page) / pages : (page ? 15 : 5);
+  // Total pages known -> a real percentage; unknown -> leave `pct` null so setProgress shows an
+  // INDETERMINATE bar. A made-up percentage is worse than no number.
+  const pct = pages ? (100 * page) / pages : null;
   setProgress(
     `File ${fileIdx + 1} of ${fileCount}: ${fileName} — ${phase} ${page ? `page ${page}` : ''}${pages ? ` of ${pages}` : ''}`.replace(/\s+/g, ' '),
     pct,
@@ -1892,9 +1913,12 @@ function onOcrProgress(info, fileName, fileIdx, fileCount) {
   const pages = i.pages || 0;
   const inner = typeof i.progress === 'number' ? Math.max(0, Math.min(1, i.progress)) : 0;
   const part = pages ? ((page ? page - 1 : 0) + inner) / pages : inner;
+  // Only a percentage when the share is really known (a page count, or a real inner fraction);
+  // otherwise an INDETERMINATE bar — never a made-up number.
+  const known = pages > 0 || typeof i.progress === 'number';
   setProgress(
     `File ${fileIdx + 1} of ${fileCount}: ${fileName} — ${phase}${page ? ` page ${page}${pages ? ` of ${pages}` : ''}` : ''}`.replace(/\s+/g, ' '),
-    part * 100,
+    known ? part * 100 : null,
   );
 }
 
@@ -2125,7 +2149,7 @@ async function handleFiles(fileList) {
   // --- 1. room schedules: always read here in the browser ------------------
   for (let i = 0; i < schedules.length; i++) {
     const f = schedules[i];
-    setProgress(`File ${i + 1} of ${schedules.length}: ${f.name} — reading the room schedule`, 8);
+    setProgress(`File ${i + 1} of ${schedules.length}: ${f.name} — reading the room schedule`);
     try {
       const out = await parseScheduleFile(f);
       const res = addRooms(withSource(out.rooms, 'schedule'));
@@ -2155,10 +2179,11 @@ async function handleFiles(fileList) {
   if (pdfs.length && !useOcr && state.server.available) {
     setProgress(pdfs.length === 1
       ? `Uploading file 1 of 1: ${pdfs[0].name} …`
-      : `Uploading ${pdfs.length} files to the server …`, 10);
+      : `Uploading ${pdfs.length} files to the server …`);
     // the server reads the whole file at once and answers in one piece,
-    // so after the upload we only have one line left to show
-    const readingTimer = setTimeout(() => setProgress('Reading PDF on the server …', 60), 500);
+    // so after the upload we only have one line left to show — indeterminate, since the work left
+    // is genuinely unknown here.
+    const readingTimer = setTimeout(() => setProgress('Reading PDF on the server …', null), 500);
     // the plan panel needs the bytes too; the parse below reads the File itself
     if (pdfs[0] && pdfs[0].size <= 25 * 1024 * 1024) {
       pdfs[0].arrayBuffer().then(openPlan).catch(() => {});
@@ -2201,7 +2226,7 @@ async function handleFiles(fileList) {
   // --- local path: pdf.js, or tesseract OCR when the box is ticked ---------
   for (let i = 0; i < pdfs.length; i++) {
     const f = pdfs[i];
-    setProgress(`File ${i + 1} of ${pdfs.length}: ${f.name} — ${useOcr ? 'preparing OCR' : 'opening'}`, 3);
+    setProgress(`File ${i + 1} of ${pdfs.length}: ${f.name} — ${useOcr ? 'preparing OCR' : 'opening'}`);
     try {
       const buf = await f.arrayBuffer();
       if (i === 0) openPlan(buf, { name: f.name });   // show the drawing while it is being read
@@ -2295,7 +2320,7 @@ async function loadSample(which) {
   if (state.ui.busy) return;
   state.ui.busy = true;
   setStatus(null);
-  setProgress('Downloading the sample drawing ...', 5);
+  setProgress('Downloading the sample drawing ...');
   const paths = samplePaths(which);
   let buf = null, used = '';
   let lastErr = null;
@@ -2330,7 +2355,7 @@ async function loadSample(which) {
   try {
     openPlan(buf, { name: used });   // show the sample drawing straight away
     setSampleCredit(which);          // and name whichever drawing this is, under its licence
-    setProgress(`Reading ${used} ...`, 15);
+    setProgress(`Reading ${used} ...`);
     const out = await parseOne(buf, used, 0, 1);
     const r = addRooms(out.rooms);
     if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
@@ -2942,6 +2967,13 @@ async function planPlaceAllRooms() {
     return;
   }
 
+  // The button that started this is disabled and says it is working until it ends, and the bar beside
+  // the buttons counts the rooms as they are placed (the owner: "people shouldnt have ambiguity").
+  const restorePlaceBtn = planButtonWorking(el.planPlaceAll, 'Placing…');
+  planProgressShow('Placing rooms on the plan');
+  planProgressIndeterminate('Placing rooms on the plan - preparing…');
+  try {
+
   // A project saved before the parser recorded WHERE the sheet names each room has no `at`, so
   // nothing can be placed and the user is told the sheet does not name the rooms — even though it
   // does, and re-uploading the same drawing works. The drawing is still kept in this browser
@@ -2956,8 +2988,14 @@ async function planPlaceAllRooms() {
     : '';
 
   const denom = planScaleDenom();
-  let placed = 0, noAt = 0, noArea = 0, already = 0, handDrawn = 0;
+  const progressTotal = state.rooms.length;
+  let placed = 0, noAt = 0, noArea = 0, already = 0, handDrawn = 0, seen = 0;
   for (const room of state.rooms) {
+    seen += 1;
+    if (seen % 10 === 0 || seen === progressTotal) {
+      planProgressCount(seen, progressTotal, `Placing rooms on the plan - ${seen} of ${progressTotal} rooms`);
+      await yieldToBrowser();
+    }
     if (isPlacedRoom(room)) { already += 1; continue; }        // already has a locator box
     if (roomHasShape(room)) { handDrawn += 1; continue; }       // a hand-drawn box/outline already sits where it was traced
     if (!room.at) { noAt += 1; continue; }                      // the plan does not name this room
@@ -3000,6 +3038,10 @@ async function planPlaceAllRooms() {
   msg += notes.length ? `${notes.join('; ')}.` : 'Each box is a locator centred on the point that names the room, sized back from its own area — the load has not changed.';
   track('rooms_placed');
   setStatus('ok', msg, 'plan');
+  } finally {
+    planProgressHide();
+    restorePlaceBtn();
+  }
 }
 
 /** Remove ONLY the locator boxes made by "Place all rooms on the plan". Hand-drawn rooms and rooms
@@ -3141,6 +3183,106 @@ function planTraceBusy(on) {
   if (!on) planSyncFillButton();
 }
 
+/** Keep the fixed plan-progress bar beside the buttons: pin it just under the plan toolbar, clamped
+ *  into the viewport, re-measured on scroll/resize. It is OUT OF FLOW, so it can never move #planView
+ *  — an in-flow strip did move it, and the plan-gesture checks then failed because their targets had
+ *  shifted off-screen. */
+function placePlanProgress() {
+  const t = el.planProgress;
+  if (!t || t.dataset.active !== '1') return;
+  const vh = window.innerHeight || 0;
+  const h = t.offsetHeight || 0;
+  const tb = document.querySelector('.plan-toolbar');
+  let top = 64;
+  if (tb) top = tb.getBoundingClientRect().bottom + 6;
+  if (top + h > vh - 8) top = Math.max(8, vh - h - 8);
+  t.style.top = Math.round(top) + 'px';
+}
+
+/* ---- The plan panel's own progress bar ---------------------------------------------------------
+ * A long plan operation must say what it is doing and how far it has got, and never invent a number
+ * (the owner, twice: "people shouldnt have ambiguity"). The bar lives beside the buttons; while the
+ * total is KNOWN it is a real ARIA progressbar counting ROOMS (aria-valuenow/valuemin/valuemax); when
+ * the total is genuinely unknown it is INDETERMINATE — no aria-valuenow, no fake percentage, just
+ * "Working...". */
+function planProgressShow(label) {
+  const b = el.planProgress;
+  if (!b) return;
+  b.dataset.active = '1';
+  b.removeAttribute('aria-hidden');
+  b.classList.remove('indeterminate');
+  b.removeAttribute('aria-valuenow');
+  b.setAttribute('aria-valuemin', '0');
+  b.setAttribute('aria-valuemax', '100');
+  if (el.planProgressText) el.planProgressText.textContent = label || 'Working...';
+  if (el.planProgressFill) el.planProgressFill.style.width = '0%';
+  placePlanProgress();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(placePlanProgress);
+}
+
+/** Show progress against a KNOWN total: the aria-* values carry the real counts and the fill width is
+ *  the same fraction. `label` is the plain sentence naming the operation and the count. */
+function planProgressCount(done, total, label) {
+  const b = el.planProgress;
+  if (!b || b.dataset.active !== '1') return;
+  const t = Math.max(1, Number(total) || 0);
+  const n = Math.max(0, Math.min(t, Number(done) || 0));
+  b.classList.remove('indeterminate');
+  b.setAttribute('aria-valuemin', '0');
+  b.setAttribute('aria-valuemax', String(t));
+  b.setAttribute('aria-valuenow', String(n));
+  if (el.planProgressFill) el.planProgressFill.style.width = (100 * n / t).toFixed(2) + '%';
+  if (el.planProgressText && label != null) el.planProgressText.textContent = label;
+}
+
+/** The total is genuinely unknown: an INDETERMINATE bar. No aria-valuenow, no made-up percentage. */
+function planProgressIndeterminate(label) {
+  const b = el.planProgress;
+  if (!b || b.dataset.active !== '1') return;
+  b.classList.add('indeterminate');
+  b.removeAttribute('aria-valuenow');
+  b.setAttribute('aria-valuemin', '0');
+  b.setAttribute('aria-valuemax', '100');
+  if (el.planProgressFill) el.planProgressFill.style.width = '';
+  if (el.planProgressText && label != null) el.planProgressText.textContent = label || 'Working...';
+}
+
+function planProgressHide() {
+  const b = el.planProgress;
+  if (!b) return;
+  b.dataset.active = '0';
+  b.setAttribute('aria-hidden', 'true');
+  b.classList.remove('indeterminate');
+  b.removeAttribute('aria-valuenow');
+  if (el.planProgressFill) el.planProgressFill.style.width = '0%';
+}
+
+/** Mark the button that started a long job as working — disabled, its label saying so — and return a
+ *  function that restores its idle label and enabled state. */
+function planButtonWorking(btn, busyLabel) {
+  if (!btn) return () => {};
+  if (btn.dataset.idleLabel == null) btn.dataset.idleLabel = btn.textContent;
+  btn.textContent = busyLabel;
+  btn.disabled = true;
+  return () => {
+    if (btn.dataset.idleLabel != null) { btn.textContent = btn.dataset.idleLabel; delete btn.dataset.idleLabel; }
+    btn.disabled = false;
+  };
+}
+
+/** Let the browser paint: one macrotask hop, awaited between work units so the bar actually repaints
+ *  while a synchronous-but-chunked job runs. A MessageChannel task is used rather than setTimeout(0)
+ *  because DOM timers are clamped to ~1 s on a hidden/inactive tab (and in headless), which would turn
+ *  a 20 s trace into minutes; a MessageChannel macrotask is never clamped and still lets the browser
+ *  run its rendering steps between units. */
+const yieldChannel = (typeof MessageChannel === 'function') ? new MessageChannel() : null;
+let yieldResolvers = [];
+if (yieldChannel) yieldChannel.port1.onmessage = () => { const r = yieldResolvers.shift(); if (r) r(); };
+function yieldToBrowser() {
+  if (!yieldChannel) return new Promise((resolve) => setTimeout(resolve, 0));
+  return new Promise((resolve) => { yieldResolvers.push(resolve); yieldChannel.port2.postMessage(0); });
+}
+
 /** Read the plan's own linework and give every room it can verify a real outline. */
 async function planTraceOutlines() {
   if (state.ui.traceBusy) return;
@@ -3157,6 +3299,7 @@ async function planTraceOutlines() {
   // tracer: it used to be set only after those (≈1 s in on a live sheet), so a second click in that
   // window re-entered the trace — double work, a doubled status. Cleared in the finally on every path.
   planTraceBusy(true);
+  const restoreTraceBtn = planButtonWorking(el.planTraceOutlines, 'Tracing…');
   try {
 
   // A project saved before the parser recorded WHERE the sheet names each room has no `at`; recover
@@ -3183,6 +3326,10 @@ async function planTraceOutlines() {
 
   planHideScaleFix();   // a stale one-click fix must not survive the trace that replaces it
   setStatus(null, "Tracing the plan's linework… this can take a second or two on a big sheet.", 'plan');
+  // A real progress bar beside the buttons: it starts INDETERMINATE (the room total is known, but no
+  // room has been processed yet) and switches to a count as the tracer reports work done.
+  planProgressShow('Tracing outlines');
+  planProgressIndeterminate('Tracing outlines - preparing…');
   await nextFrame();
 
   try {
@@ -3212,12 +3359,20 @@ async function planTraceOutlines() {
       const ratios = [];
       let accepted = 0, refused = 0, refusedWithRect = 0, emptyPages = 0, badPages = 0;
 
+      // Progress, in ROOMS across every page: the honest denominator is the number of rooms being
+      // traced. `progressDone` counts rooms a page's trace has fully finished (or skipped outright).
+      const progressTotal = withPos.length;
+      let progressDone = 0;
+      let uiTick = 0;    // DOM text is refreshed every unit, but the paint hop is throttled (see below)
+      const tickProgress = (label) => planProgressCount(progressDone, progressTotal, label);
+
       for (const p of [...byPage.keys()].sort((a, b) => a - b)) {
         const list = byPage.get(p);
         if (p < 1 || p > doc.numPages) {
           refused += list.length;
           refusedWithRect += list.filter((r) => r.rect).length;
           list.forEach(() => bump(reasonCount, 'are on a page the drawing does not have'));
+          progressDone += list.length; tickProgress(`Tracing outlines - ${Math.min(progressDone, progressTotal)} of ${progressTotal} rooms`);
           continue;
         }
         const pg = await doc.getPage(p);
@@ -3230,6 +3385,7 @@ async function planTraceOutlines() {
           refused += list.length;
           refusedWithRect += list.filter((r) => r.rect).length;
           list.forEach(() => bump(reasonCount, 'are on a page with no wall lines'));
+          progressDone += list.length; tickProgress(`Tracing outlines - ${Math.min(progressDone, progressTotal)} of ${progressTotal} rooms`);
           continue;
         }
         if (!segmentsInBox(segs, box, 2)) {
@@ -3239,6 +3395,7 @@ async function planTraceOutlines() {
           list.forEach(() => bump(reasonCount, 'could not be placed in the sheet’s own space'));
           console.warn(`[trace] skipped page ${p}: the linework falls outside the page MediaBox — ` +
             `the app and the tracer disagree on the page space, so no shape is stored for it.`);
+          progressDone += list.length; tickProgress(`Tracing outlines - ${Math.min(progressDone, progressTotal)} of ${progressTotal} rooms`);
           continue;
         }
 
@@ -3247,9 +3404,21 @@ async function planTraceOutlines() {
         // MEP sheet the symbol hatch outnumbered the walls, so "most common class" traced symbols and
         // merged rooms. pickWallLines tries the few most common classes plus every line and keeps
         // whichever verifies the most rooms; the winner's class is named in the status line.
-        const out = trace.pickWallLines(segs, {
+        // The ASYNC tracer does the same maths but yields to the browser between rooms, so this bar
+        // actually repaints while a big sheet is being traced.
+        const out = await trace.pickWallLinesAsync(segs, {
           box, rooms: roomsIn, denom, pxPerPt: TRACE_PX_PER_PT, thickness: TRACE_THICKNESS, topN: 3,
+        }, async (prog) => {
+          const frac = prog.total ? Math.min(1, prog.units / prog.total) : 1;
+          const shown = Math.min(progressTotal, progressDone + Math.round(frac * (prog.rooms || list.length)));
+          planProgressCount(shown, progressTotal, `Tracing outlines - ${shown} of ${progressTotal} rooms`);
+          // The text/aria update above is cheap; a full macrotask hop per update is not (hundreds of
+          // them add seconds), so the browser is only handed the loop every few updates — still visibly
+          // live, and the trace stays close to its un-chunked wall-clock time.
+          uiTick += 1;
+          if (uiTick % 6 === 0) await yieldToBrowser();
         });
+        progressDone += list.length; tickProgress(`Tracing outlines - ${Math.min(progressDone, progressTotal)} of ${progressTotal} rooms`);
         winKeys.add(out.key);
 
         for (const res of out.results) {
@@ -3360,7 +3529,9 @@ async function planTraceOutlines() {
       `The rooms and the load are unchanged.`, 'plan');
   }
   } finally {
+    planProgressHide();
     planTraceBusy(false);
+    restoreTraceBtn();
   }
 }
 
@@ -3675,6 +3846,8 @@ function planApplyFill(assignments, reasonCount, info) {
   // previous Undo intact — otherwise pressing Fill areas a second time (which changes nothing, and says
   // so) silently destroys the user's one chance to put the earlier fill back.
   if (filled.length) lastFill = filled;
+  // Remember the state this run finished in, so a repeat press with nothing changed answers at once.
+  state.ui.fillSig = planFillSignature();
   renderAll();
   saveNow();
   planSyncFillButton();
@@ -3695,6 +3868,17 @@ function planApplyFill(assignments, reasonCount, info) {
     `They now count in the load, unless the name means a space that is not cooled. Undo puts them back.`, 'plan');
 }
 
+/** Everything a fill result depends on: the drawing, the scale, and the rooms (name, whether they
+ *  already have an area, and the outline/box they use). Two fills with the same signature MUST agree,
+ *  so a repeat run with nothing changed cannot find a single new area. */
+function planFillSignature() {
+  const rooms = (state.rooms || []).map((r) => [
+    r.id, r.name || '', Number(r.area) > 0 ? 'A' : '-',
+    r.poly ? r.poly.length : 0, r.rect ? 1 : 0, r.include === false ? 0 : 1,
+  ].join('|')).join('~');
+  return `${plan.drawingId || ''}@${planScaleDenom()}#${rooms}`;
+}
+
 /** Read the plan's own linework and give the blank named rooms an area — but only where the match is
  *  unambiguous. Never overwrites an area, never touches a stairwell, never invents a number. */
 async function planFillAreas() {
@@ -3713,11 +3897,20 @@ async function planFillAreas() {
     setStatus('warn', 'Open a drawing in the plan view first, then fill the blank areas from its outlines.', 'plan');
     return;
   }
+  // A fill is DETERMINISTIC for a given drawing, scale and set of rooms: re-running it with nothing
+  // changed in between cannot find one new area. Saying so at once beats spending the same minutes to
+  // learn the same thing — "a second press must say there is nothing left rather than pretend to work".
+  if (state.ui.fillSig && state.ui.fillSig === planFillSignature()) {
+    setStatus('warn', 'Nothing was changed since the last fill, so no new area could be measured from ' +
+      'the drawing. Move a room, redraw its shape or change the scale first, then fill again.', 'plan');
+    return;
+  }
 
   planTraceBusy(true);
+  const restoreFillBtn = planButtonWorking(el.planFillAreas, 'Filling…');
   try {
     // A project saved before the parser recorded WHERE the sheet names each room has no `at`; recover
-    // the positions exactly as Place all rooms / Trace real outlines do.
+    // the positions exactly like Place all rooms / Trace real outlines do.
     if (!state.rooms.some((r) => r.at && Number.isFinite(r.at.x) && Number.isFinite(r.at.y))) {
       const n = await rehydratePositions();
       if (n) saveSoon();
@@ -3730,6 +3923,8 @@ async function planFillAreas() {
 
     planHideScaleFix();
     setStatus(null, "Reading the plan's linework to fill the blank areas… this can take a few seconds on a big sheet.", 'plan');
+    planProgressShow('Filling areas from the drawing');
+    planProgressIndeterminate('Filling areas from the drawing - preparing…');
     await nextFrame();
 
     try {
@@ -3747,19 +3942,28 @@ async function planFillAreas() {
         const reasonCount = new Map();
         let pagesRead = 0, pagesSkipped = 0, regionsTotal = 0, passKey = null;
 
+        // Progress in ROOMS to fill, across pages; a skipped page still advances the count.
+        const progTotal = fillable.length;
+        let progDone = 0;
+        let fillTick = 0;
+        const fillOnPage = (pno) => state.rooms.filter((r) => (Number(r.page) || 1) === pno && fillIds.has(r.id)).length;
+        const tickFill = () => planProgressCount(progDone, progTotal,
+          `Filling areas from the drawing - ${Math.min(progDone, progTotal)} of ${progTotal} rooms`);
+
         for (const p of pages) {
-          if (p < 1 || p > doc.numPages) { pagesSkipped += 1; continue; }
+          if (p < 1 || p > doc.numPages) { pagesSkipped += 1; progDone += fillOnPage(p); tickFill(); continue; }
           const pg = await doc.getPage(p);
           const v = pg.view;
           const box = { x0: v[0], y0: v[1], x1: v[2], y1: v[3] };
           const opList = await pg.getOperatorList();
           const segs = lineSegmentsForPage(opList.fnArray, opList.argsArray, pdfjs.OPS, trace);
-          if (!segs.length || !segmentsInBox(segs, box, 2)) { pagesSkipped += 1; continue; }
+          if (!segs.length || !segmentsInBox(segs, box, 2)) { pagesSkipped += 1; progDone += fillOnPage(p); tickFill(); continue; }
 
           // EVERY room on the page goes in, not only the blank ones: "exactly one name inside the
           // outline" must be judged against every name, so a region holding a blank room AND a named
           // room is refused (shared) rather than wrongly handed to the blank one.
           const pageRooms = state.rooms.filter((r) => (Number(r.page) || 1) === p);
+          const pageFillCount = pageRooms.filter((r) => fillIds.has(r.id)).length;
           const roomInput = pageRooms.map((r) => ({
             id: r.id, name: r.name, at: r.at,
             area: roomHasArea(r) ? Number(r.area) : null,
@@ -3773,17 +3977,25 @@ async function planFillAreas() {
             .map(([key]) => ({ key, segs: trace.filterByStyle(segs, key) }));
           cands.push({ key: 'all lines', segs });
           let best = null;
-          for (const c of cands) {
-            const regions = trace.traceRegions({
+          for (let ci = 0; ci < cands.length; ci += 1) {
+            const c = cands[ci];
+            const regions = (await trace.traceRegionsAsync({
               segments: c.segs, box, rooms: roomInput, denom,
               pxPerPt: TRACE_PX_PER_PT, thickness: TRACE_THICKNESS,
               closeGaps: trace.RECOMMENDED_CLOSE_GAPS,
               splitShared: true,   // SPLITSHARED-ON: split a region holding several names at its door-width necks; unnamed halls go to nobody (js/splitregion.js)
-            }).regions;
+            }, async (prog) => {
+              const pageFrac = (ci + (prog.total ? prog.done / prog.total : 1)) / cands.length;
+              const shown = Math.min(progTotal, progDone + Math.round(pageFrac * pageFillCount));
+              planProgressCount(shown, progTotal, `Filling areas from the drawing - ${shown} of ${progTotal} rooms`);
+              fillTick += 1;
+              if (fillTick % 6 === 0) await yieldToBrowser();
+            })).regions;
             const out = auto.matchRoomsToRegions({ rooms: roomInput, regions });
             const n = out.assignments.filter((a) => fillIds.has(a.roomId)).length;
             if (!best || n > best.n) best = { key: c.key, regions, out, n };
           }
+          progDone += pageFillCount; tickFill();
           pagesRead += 1;
           regionsTotal += best.regions.length;
           if (!passKey) passKey = best.key;
@@ -3812,7 +4024,9 @@ async function planFillAreas() {
         `The rooms and the load are unchanged.`, 'plan');
     }
   } finally {
+    planProgressHide();
     planTraceBusy(false);
+    restoreFillBtn();
   }
 }
 
@@ -5114,8 +5328,8 @@ function wire() {
   $('#btnCloseDetail').addEventListener('click', closeDetail);
 
   // The plan toast is fixed; keep it clear of the drawing as the page scrolls or the window resizes.
-  window.addEventListener('scroll', placePlanStatus, { passive: true });
-  window.addEventListener('resize', placePlanStatus);
+  window.addEventListener('scroll', () => { placePlanStatus(); placePlanProgress(); }, { passive: true });
+  window.addEventListener('resize', () => { placePlanStatus(); placePlanProgress(); });
 
   // export / import
   $('#btnCsv').addEventListener('click', exportCsv);

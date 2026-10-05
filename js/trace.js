@@ -612,7 +612,33 @@ export function judgeTrace(tracedM2, statedArea, labelsInRegion, band = TRACE_BA
  * @returns {{w,h,pxPerPt,denom,box,grid,closeGaps,regions,labelsPerRegion,regionByRoom,regionOf,seeds}}
  *   `regions` are raw internal regions ({cells, areaPx, bbox, index, key}); callers add rings/areas.
  */
-function extractRegions(p) {
+/** Drain a progress generator, ignoring every yield. The synchronous API is built on this, so its
+ *  maths stays byte-identical to before while the async API below can yield to the browser. */
+function drainSync(gen) {
+  let r = gen.next();
+  while (!r.done) r = gen.next();
+  return r.value;
+}
+
+/** Drive a progress generator, awaiting `onProgress(progress)` at every yield so a caller can let the
+ *  browser paint between work units. Returns the generator's return value. The progress object is
+ *  `{ done, total }` in ROOM labels — never a made-up figure. */
+export async function driveGen(gen, onProgress) {
+  let r = gen.next();
+  while (!r.done) {
+    if (onProgress) await onProgress(r.value);
+    r = gen.next();
+  }
+  return r.value;
+}
+
+/**
+ * Generator form of extractRegions: identical maths and thresholds, but it yields `{ done, total }`
+ * once per room label processed, so an async driver can yield to the browser. `extractRegions` below
+ * drains it synchronously, which is how every existing caller (and the module's own tests) still see
+ * exactly the same result.
+ */
+function* extractRegionsGen(p) {
   const pxPerPt = p.pxPerPt || 2;
   const denom = p.denom || 100;
   const box = p.box;
@@ -642,21 +668,24 @@ function extractRegions(p) {
   const regionOf = new Int32Array(w * h).fill(-1);
   const counts = [];
   const regions = [];
+  let processed = 0;
   for (const s of seeds) {
-    if (s.cell < 0 || grid[s.cell] || seen[s.cell]) continue;     // off-page, on a wall, or already flooded
-    const region = regionAt(grid, w, h, s.cx, s.cy, { seen, maxCells });
-    if (region && region.over) {
-      // Too big to be a room: mark its cells so its labels get a clear reason, and keep nothing.
-      for (const c of region.cells) regionOf[c] = -2;
-      continue;
+    if (!(s.cell < 0 || grid[s.cell] || seen[s.cell])) {          // off-page, on a wall, or already flooded
+      const region = regionAt(grid, w, h, s.cx, s.cy, { seen, maxCells });
+      if (region && region.over) {
+        // Too big to be a room: mark its cells so its labels get a clear reason, and keep nothing.
+        for (const c of region.cells) regionOf[c] = -2;
+      } else if (region && region.areaPx >= MIN_REGION_CELLS) {
+        const index = counts.length;
+        counts.push(0);
+        for (const c of region.cells) regionOf[c] = index;
+        region.index = index;
+        region.key = index;                                           // canonical per area, not per label
+        regions.push(region);
+      }
     }
-    if (!region || region.areaPx < MIN_REGION_CELLS) continue;
-    const index = counts.length;
-    counts.push(0);
-    for (const c of region.cells) regionOf[c] = index;
-    region.index = index;
-    region.key = index;                                           // canonical per area, not per label
-    regions.push(region);
+    processed += 1;
+    yield { done: processed, total: seeds.length };                   // one room label processed
   }
   for (const s of seeds) {
     if (s.cell < 0) continue;
@@ -667,6 +696,11 @@ function extractRegions(p) {
     labelsPerRegion.set(index, counts[index]);
   }
   return { w, h, pxPerPt, denom, box, grid, closeGaps: gap, regions, labelsPerRegion, regionByRoom, regionOf, seeds };
+}
+
+/** The synchronous face of extractRegionsGen — unchanged behaviour for every existing caller. */
+function extractRegions(p) {
+  return drainSync(extractRegionsGen(p));
 }
 
 // On a NAME-ONLY plan (the case this feature exists for) no room states an area, so traceRooms' cap —
@@ -696,6 +730,25 @@ export function traceRegions(p) {
   const bw = Math.max(1, Math.ceil((p.box.x1 - p.box.x0) * pxPerPt));
   const bh = Math.max(1, Math.ceil((p.box.y1 - p.box.y0) * pxPerPt));
   const core = extractRegions({ ...p, maxCells: p.maxCells != null ? p.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) });
+  return regionsFromCore(core, p);
+}
+
+/** The async face of traceRegions: identical maths, but `onProgress({done, total})` is awaited once
+ *  per room label so the browser can paint the progress bar between work units. */
+export async function traceRegionsAsync(p, onProgress) {
+  const pxPerPt = p.pxPerPt || 2;
+  const bw = Math.max(1, Math.ceil((p.box.x1 - p.box.x0) * pxPerPt));
+  const bh = Math.max(1, Math.ceil((p.box.y1 - p.box.y0) * pxPerPt));
+  const core = await driveGen(
+    extractRegionsGen({ ...p, maxCells: p.maxCells != null ? p.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) }),
+    onProgress,
+  );
+  return regionsFromCore(core, p);
+}
+
+/** Everything traceRegions does after region extraction — shared, so the sync and async faces can
+ *  never drift. */
+function regionsFromCore(core, p) {
   const { w, box, pxPerPt: px, denom, regions, labelsPerRegion } = core;
   const splitShared = !!p.splitShared;
   // Which rooms' names sit in which region (only needed when splitting).
@@ -779,9 +832,21 @@ export function traceRegions(p) {
  * @returns {{results: Array, stats: object}}
  */
 export function traceRooms(p) {
-  const core = extractRegions(p);
+  return drainSync(traceRoomsGen(p));
+}
+
+/** The async face of traceRooms: identical maths, but it yields to `onProgress({done, total})` once
+ *  per room label for the flood pass AND once per room for the outline pass, so a caller can let the
+ *  browser paint. */
+export async function traceRoomsAsync(p, onProgress) {
+  return driveGen(traceRoomsGen(p), onProgress);
+}
+
+function* traceRoomsGen(p) {
+  const core = yield* extractRegionsGen(p);
   const { w, box, pxPerPt, denom, regions, labelsPerRegion, regionByRoom, regionOf, seeds } = core;
   const results = [];
+  let outlined = 0;
   for (const s of seeds) {
     const region = regionByRoom.get(s.room);
     if (!region) {
@@ -794,16 +859,18 @@ export function traceRooms(p) {
           ? 'the space around its name is far larger than any single room (open plan or a leak)'
           : 'no enclosed area around its name',
       });
-      continue;
+    } else {
+      const labels = labelsPerRegion.get(region.key) || 0;
+      const rings = outlineFromRegion(region, w, box, pxPerPt, { simplifyTolPt: p.simplifyTolPt });
+      const tracedM2 = pt2ToM2(outlineAreaPt2(rings), denom);
+      const verdict = judgeTrace(tracedM2, s.room.area, labels, p.band);
+      results.push({
+        id: s.room.id, ok: verdict.ok, code: verdict.code || null, reason: verdict.reason, ratio: verdict.ratio,
+        tracedM2, statedM2: s.room.area, rings: verdict.ok ? rings : [], cells: region.areaPx,
+      });
     }
-    const labels = labelsPerRegion.get(region.key) || 0;
-    const rings = outlineFromRegion(region, w, box, pxPerPt, { simplifyTolPt: p.simplifyTolPt });
-    const tracedM2 = pt2ToM2(outlineAreaPt2(rings), denom);
-    const verdict = judgeTrace(tracedM2, s.room.area, labels, p.band);
-    results.push({
-      id: s.room.id, ok: verdict.ok, code: verdict.code || null, reason: verdict.reason, ratio: verdict.ratio,
-      tracedM2, statedM2: s.room.area, rings: verdict.ok ? rings : [], cells: region.areaPx,
-    });
+    outlined += 1;
+    yield { done: outlined, total: seeds.length };                  // one room's outline finished
   }
   const accepted = results.filter((r) => r.ok).length;
   const scale = impliedDenom(results, denom);
@@ -848,6 +915,32 @@ export function pickWallLines(segments, opts) {
   const tried = [];
   for (const c of candidates) {
     const out = traceRooms({ ...opts, segments: c.segs });
+    tried.push({ key: c.key, accepted: out.stats.accepted, labels: out.stats.labels });
+    if (!best || out.stats.accepted > best.stats.accepted) best = { key: c.key, ...out };
+  }
+  return { ...best, tried };
+}
+
+/**
+ * The async face of pickWallLines: the SAME candidates, the SAME by-result choice, so the winner and
+ * its results are identical. It awaits `onProgress({ units, total, rooms })` between work units so the
+ * caller can yield to the browser and paint a bar. `units` counts flood-fill and outline steps across
+ * all candidates (two steps per room per candidate), `total` is the same count up front, and `rooms`
+ * is the room-label total of this call — the honest denominator.
+ */
+export async function pickWallLinesAsync(segments, opts, onProgress) {
+  const candidates = styleCounts(segments).slice(0, opts.topN || 3).map(([key]) => ({ key, segs: filterByStyle(segments, key) }));
+  candidates.push({ key: 'all lines', segs: segments });
+  const roomCount = (opts.rooms || []).length;
+  const total = candidates.length * 2 * roomCount;      // a flood step + an outline step per room per class
+  let units = 0;
+  let best = null;
+  const tried = [];
+  for (const c of candidates) {
+    const out = await driveGen(traceRoomsGen({ ...opts, segments: c.segs }), onProgress ? async () => {
+      units += 1;
+      await onProgress({ units, total, rooms: roomCount });
+    } : null);
     tried.push({ key: c.key, accepted: out.stats.accepted, labels: out.stats.labels });
     if (!best || out.stats.accepted > best.stats.accepted) best = { key: c.key, ...out };
   }

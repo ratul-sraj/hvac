@@ -860,6 +860,27 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   border: 1px solid #e8d7a6; background: var(--warn-soft); color: var(--warn); border-radius: 6px;
 }
 .plan-scalefix .plan-scalefix-text { flex: 1 1 260px; }
+/* The plan panel's own progress bar (see app.html). It is FIXED beside the plan buttons and takes NO
+   layout space: an in-flow strip pushed #planView down and moved the very targets the plan gestures
+   aim at, so the plan-shape checks failed (measured). It carries the operation's own count, never a
+   made-up figure, and is inert (pointer-events:none) so it can never swallow a click. */
+.plan-progress {
+  position: fixed; left: 50%; transform: translateX(-50%); top: 64px; z-index: 54;
+  width: min(560px, 92vw); margin: 0; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
+  box-shadow: 0 8px 24px rgba(16, 24, 32, .22); pointer-events: none;
+}
+.plan-progress[data-active="0"] { visibility: hidden; }
+.plan-progress-line { font-size: 13px; margin-bottom: 5px; color: var(--accent-dark); font-weight: 600; }
+.plan-progress-bar { height: 6px; background: var(--line-soft); border-radius: 3px; overflow: hidden; }
+#planProgressFill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+/* INDETERMINATE: the total is genuinely unknown, so there is no width and no aria-valuenow — a sliding
+   stripe says "working" without inventing a number. */
+.plan-progress.indeterminate .plan-progress-bar { position: relative; }
+.plan-progress.indeterminate #planProgressFill { width: 35%; animation: plan-progress-slide 1.1s ease-in-out infinite; }
+.progress-box.indeterminate .progress-bar { position: relative; }
+.progress-box.indeterminate #progressFill { width: 35%; animation: plan-progress-slide 1.1s ease-in-out infinite; }
+@keyframes plan-progress-slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
 /* The chooser shown when a hand-drawn shape closes (js/app.js planShowShapeChooser). It sits in the
    flow, just above the drawing, so it is seen next to what was drawn, and it is one click to dismiss
    (the × keeps the shape as a new room, the tool's normal behaviour). */

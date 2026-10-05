@@ -249,7 +249,8 @@
       <button type="button" id="btnClear" class="btn btn-danger-ghost">Clear all rooms</button>
     </div>
 
-    <div id="progressBox" class="progress-box hidden" aria-live="polite">
+    <div id="progressBox" class="progress-box hidden" aria-live="polite" role="progressbar"
+      aria-valuemin="0" aria-valuemax="100">
       <div class="progress-line"><span id="progressText">Working...</span></div>
       <div class="progress-bar"><div id="progressFill"></div></div>
     </div>
@@ -320,6 +321,18 @@
         <button type="button" class="btn btn-small" id="planFillAreas">Fill areas from the drawing</button>
         <button type="button" class="btn btn-small btn-ghost" id="planFillUndo" disabled>Undo fill</button>
       </div>
+    </div>
+
+    <!-- A long plan operation (a trace, a fill, placing every room) says what it is doing and how far
+         it has got, right beside the buttons that started it. It is FIXED (out of flow) so it can never
+         move #planView under the user's pointer — an in-flow strip did, and the plan-gesture checks
+         failed because their targets had shifted. It is a real ARIA progressbar: while the total is
+         known it carries aria-valuenow/valuemin/valuemax and counts rooms; when the total is genuinely
+         unknown it goes INDETERMINATE — no aria-valuenow, no invented percentage, just "Working...". -->
+    <div id="planProgress" class="plan-progress" data-active="0" aria-hidden="true" role="progressbar"
+      aria-label="Progress of the plan operation" aria-valuemin="0" aria-valuemax="100">
+      <div class="plan-progress-line"><span id="planProgressText">Working...</span></div>
+      <div class="plan-progress-bar"><div id="planProgressFill"></div></div>
     </div>
 
     <!-- Answers to the plan buttons, so a plan result is seen wherever the user is looking: the
