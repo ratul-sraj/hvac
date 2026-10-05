@@ -816,7 +816,10 @@ export function createOverlay(rootEl, {
     let pt = tagPoint(room, ring, box, { w: nameW, h: blockH });
     if (ring && Number.isFinite(pt.clearance)) {
       // Shrink to the room it is written inside — never below MIN_LABEL_PX, and only ever downward.
-      const cap = Math.max(MIN_LABEL_PX, Math.min(fitted, pt.clearance * 1.6));
+      // Two limits: the room's height (clearance*1.6, as before) AND its width, so a long name in a
+      // narrow room stops spilling past the outline it belongs to.
+      const widthCap = (pt.clearance * 2) / Math.max(1, name.length * 0.55);
+      const cap = Math.max(MIN_LABEL_PX, Math.min(fitted, pt.clearance * 1.6, widthCap));
       if (cap !== fitted) {
         fitted = cap;
         pt = tagPoint(room, ring, box, { w: Math.max(24, name.length * fitted * 0.55), h: fitted + CHIP_GAP_PX + CHIP_FONT_PX });

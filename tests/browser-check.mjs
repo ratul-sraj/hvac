@@ -3919,6 +3919,12 @@ if (!sampleMissing) {
           r.poly = ring; r.polyPage = pg; r.polyDrawing = drw; r.polyArea = 1059.6;
           r.areaFromDrawing = true; r.scaleDenom = 100;
           r.at = { x: o.x - 300, y: o.y + 400, page: pg };
+          // a NARROW room with a long name: no label that spills outside the outline
+          let n = S.rooms.find((x) => x.id === "probeNarrow");
+          if (!n) { n = { id: "probeNarrow", name: "CONFERENCE ROOM", level: "P", area: 39.01, include: true, source: "drawn" }; S.rooms.push(n); }
+          n.poly = [{ x: o.x + 700, y: o.y }, { x: o.x + 760, y: o.y }, { x: o.x + 760, y: o.y + 300 }, { x: o.x + 700, y: o.y + 300 }];
+          n.polyPage = pg; n.polyDrawing = drw; n.polyArea = 39.01; n.areaFromDrawing = true; n.scaleDenom = 100;
+          n.at = { x: o.x + 730, y: o.y + 150, page: pg };
           window.webhvac.renderAll();
         });
         await sleepT(700);
@@ -3942,7 +3948,20 @@ if (!sampleMissing) {
           };
           const label = corners(g.querySelector(".plan-room-label"));
           const chip = corners(document.querySelector('.plan-area-chip[data-room-id="probeConcave"]'));
-          return { boxCentreInside, label, chip, name: (g.querySelector(".plan-room-label") || {}).textContent };
+          // the narrow room against ITS own outline
+          const gn = document.querySelector('.plan-room[data-room-id="probeNarrow"]');
+          const geosN = gn ? [...gn.querySelectorAll("path,polygon,rect")].filter((e) => typeof e.isPointInFill === "function") : [];
+          const geoN = geosN[geosN.length - 1];
+          const cornersN = (el) => {
+            if (!el || !geoN) return null;
+            const r = el.getBoundingClientRect();
+            return [[r.x, r.y], [r.x + r.width, r.y], [r.x, r.y + r.height], [r.x + r.width, r.y + r.height],
+              [r.x + r.width / 2, r.y + r.height / 2]].map(([cx, cy]) => geoN.isPointInFill(user(cx, cy)));
+          };
+          const narrowLabel = gn ? cornersN(gn.querySelector(".plan-room-label")) : null;
+          const narrowChip = cornersN(document.querySelector('.plan-area-chip[data-room-id="probeNarrow"]'));
+          return { boxCentreInside, label, chip, narrowLabel, narrowChip,
+            name: (g.querySelector(".plan-room-label") || {}).textContent };
         });
         const allIn = (a) => Array.isArray(a) && a.length === 5 && a.every(Boolean);
         ok("JOB4 (viii) that concave room really does have its box centre outside the shape (the check is meaningful)",
@@ -3951,10 +3970,16 @@ if (!sampleMissing) {
           !!concave && allIn(concave.label), JSON.stringify(concave && concave.label));
         ok("JOB4 (viii) its AREA sits wholly inside the drawn outline",
           !!concave && allIn(concave.chip), JSON.stringify(concave && concave.chip));
+        // A name too wide for a narrow room is simply not drawn (the existing legibility floor): the rule
+        // is no label OR a label wholly inside - never one that spills over the outline.
+        ok("JOB4 (viii) a narrow room's long name is either omitted or wholly inside its own outline",
+          !!concave && (concave.narrowLabel === null || allIn(concave.narrowLabel)), JSON.stringify(concave && concave.narrowLabel));
+        ok("JOB4 (viii) the narrow room still prints its area, inside its own outline",
+          !!concave && allIn(concave.narrowChip), JSON.stringify(concave && concave.narrowChip));
         // leave no probe room behind: later checks count rooms and outlines
         await page.evaluate(() => {
           const S = window.webhvac.state;
-          S.rooms = S.rooms.filter((r) => r.id !== "probeConcave");
+          S.rooms = S.rooms.filter((r) => r.id !== "probeConcave" && r.id !== "probeNarrow");
           window.webhvac.renderAll();
         });
         await sleepT(400);
