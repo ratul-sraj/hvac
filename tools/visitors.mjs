@@ -39,7 +39,7 @@
 // Node only, no dependencies. Uses the AWS CLI exactly like the rest of infra/. If nothing
 // has been delivered yet it says so and exits 0. It never throws on a bad line: malformed
 // lines are skipped and counted.
-import { spawnSync } from "node:child_process";
+import { spawnSync, execFile } from "node:child_process";
 import zlib from "node:zlib";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -143,6 +143,12 @@ function aws(args) {
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
       windowsHide: true,
+      // A HARD timeout: CloudFront writes its hourly log object while we may already have it in a
+      // listing, and `aws s3 cp` on an object that is not readable yet retries for minutes. Without
+      // this the whole report hangs with no output (measured: a 24h run died at exactly 300 s having
+      // printed only "could not download cf/…-23.….gz"). A killed cp is a skipped file, not a crash.
+      timeout: 45000,
+      killSignal: "SIGKILL",
     });
     if (res.error) {
       if (res.error.code === "ENOENT") continue; // try aws.exe, then give up
@@ -558,6 +564,41 @@ function decodeLog(buf) {
   return { text: buf.toString("utf8"), gz: false, note: "not gzipped; read as plain text" };
 }
 
+/**
+ * Download many S3 objects at once (a small pool), each with the same hard timeout.
+ * Sequential downloads made a 48h window crawl: ~50 `aws` processes, one after another,
+ * several of them spending the whole timeout on an object CloudFront had not finished
+ * writing. Eight at a time turns minutes into seconds. Order is preserved; a file that
+ * fails to arrive is simply absent (never a fabricated row).
+ */
+async function downloadObjectsParallel(objects, opts, scratch, limit = 8) {
+  const out = new Array(objects.length).fill(null);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= objects.length) return;
+      const key = objects[i].key;
+      const dest = path.join(scratch, path.basename(key));
+      out[i] = await new Promise((resolve) => {
+        execFile("aws", ["s3", "cp", `s3://${opts.bucket}/${key}`, dest, "--region", opts.region,
+          "--no-cli-pager", "--output", "json"], {
+          encoding: "utf8", maxBuffer: 256 * 1024 * 1024, windowsHide: true,
+          timeout: 45000, killSignal: "SIGKILL",
+        }, (err) => {
+          if (err) {
+            console.log(`! could not download ${key}: ${String(err.message || err).slice(0, 120)}`);
+            return resolve(null);
+          }
+          try { resolve(fs.readFileSync(dest)); } catch { resolve(null); }
+        });
+      });
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, objects.length)) }, worker));
+  return out;
+}
+
 /** Download one S3 object into the scratch dir. Returns a Buffer or null. */
 function downloadObject(key, opts, scratch) {
   const dest = path.join(scratch, path.basename(key));
@@ -567,7 +608,7 @@ function downloadObject(key, opts, scratch) {
   catch (e) { console.log(`! could not read downloaded ${key}: ${e.message}`); return null; }
 }
 
-function main() {
+async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const end = Date.now();
   const start = end - opts.hours * 60 * 60 * 1000;
@@ -598,13 +639,22 @@ function main() {
       if (inWindow.length === 0) {
         console.log(`no log files fall inside the last ${opts.hours}h window yet (delivery can lag up to an hour).`);
       }
+      // CloudFront writes the current hour's object while we are reading the window: a key can be
+      // listed and still be unreadable. Skip the hour that has not finished, and say so, rather
+      // than spending the per-file timeout on it.
+      const settled = inWindow.filter((o) => o.hourStart <= end - 3600 * 1000);
+      const skippedLatest = inWindow.length - settled.length;
+      if (skippedLatest > 0) {
+        console.log(`  (skipped the most recent hour: CloudFront is still writing it)`);
+      }
       const scratch = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), "loadlens-visitors-"));
       try {
-        for (const o of inWindow) {
-          const buf = downloadObject(o.key, opts, scratch);
+        const bufs = await downloadObjectsParallel(settled, opts, scratch);
+        for (let i = 0; i < bufs.length; i++) {
+          const buf = bufs[i];
           if (!buf) continue;
           const dec = decodeLog(buf);
-          if (dec.note) console.log(`  note: ${path.basename(o.key)} ${dec.note}`);
+          if (dec.note) console.log(`  note: ${path.basename(settled[i].key)} ${dec.note}`);
           texts.push(dec.text);
         }
       } finally {
@@ -664,4 +714,4 @@ export {
 };
 
 // Only run the CLI when executed directly; importing it (tests) must not touch AWS.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch((e) => { console.error(`! ${e && e.stack || e}`); process.exit(1); });
