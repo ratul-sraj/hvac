@@ -619,7 +619,7 @@ export function createOverlay(rootEl, {
     shape.setAttribute('vector-effect', 'non-scaling-stroke');
     g.appendChild(shape);
 
-    const label = roomLabel(room, box);
+    const label = roomLabel(room, box, ring);
     if (label) g.appendChild(label);
     // The four corner grips, only on the selected RECTANGLE — the room the resize gesture can act on.
     // They are drawn from the SAME view box as the outline, and are presentational only: the grab
@@ -708,17 +708,127 @@ export function createOverlay(rootEl, {
    *  too small to carry a legible name. ONE source for the label and for the area chip below it: the
    *  owner reported that dragging an outline moved the name (drawn at the box centre) while the area
    *  stayed at the sheet's printed name position, so the two visibly parted company. */
-  function labelAnchor(room, box) {
+  /* ---- Where a room's tag may sit -------------------------------------------------------------
+     A room's name and its area share ONE anchor, and for a rectangle the box centre is right. For a
+     concave outline (an L, a C, a room wrapped round a core) the box centre can fall OUTSIDE the
+     drawn shape, so the label reads as belonging to the next room — reported from real use on a
+     1,059 m2 foyer. The anchor is therefore the point INSIDE the ring that is furthest from its
+     edges (a pole-of-inaccessibility search: coarse grid, then refined twice). Cached on the room
+     against the ring's own rounded coordinates, so a live drag costs one search per frame, not one
+     per label. */
+  function pointInRing(pt, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[i], b = pts[j];
+      if (!a || !b) continue;
+      const dy = b.y - a.y;
+      if ((a.y > pt.y) !== (b.y > pt.y)
+          && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (dy || 1e-9) + a.x) inside = !inside;
+    }
+    return inside;
+  }
+  function distToRing(pt, pts) {
+    let best = Infinity;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[i], b = pts[j];
+      if (!a || !b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      let t = len2 ? ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2 : 0;
+      t = t < 0 ? 0 : (t > 1 ? 1 : t);
+      const d = Math.hypot(pt.x - (a.x + t * dx), pt.y - (a.y + t * dy));
+      if (d < best) best = d;
+    }
+    return best;
+  }
+  function interiorPoint(pts, block) {
+    const box = viewBoxOfPoints(pts);
+    if (!box || box.w <= 0 || box.h <= 0) return null;
+    const bw0 = block && block.w > 0 ? block.w : 0;
+    const bh0 = block && block.h > 0 ? block.h : 0;
+    // Does the whole block sit inside the ring when it is centred on `c`?
+    const fits = (c) => {
+      if (!pointInRing(c, pts)) return false;
+      if (!bw0 || !bh0) return true;
+      const hw = bw0 / 2, hh = bh0 / 2;
+      return pointInRing({ x: c.x - hw, y: c.y - hh }, pts) && pointInRing({ x: c.x + hw, y: c.y - hh }, pts)
+        && pointInRing({ x: c.x - hw, y: c.y + hh }, pts) && pointInRing({ x: c.x + hw, y: c.y + hh }, pts)
+        && pointInRing({ x: c.x, y: c.y - hh }, pts) && pointInRing({ x: c.x, y: c.y + hh }, pts)
+        && pointInRing({ x: c.x - hw, y: c.y }, pts) && pointInRing({ x: c.x + hw, y: c.y }, pts);
+    };
+    // How much room is there around a block centred on `c`? (the tightest of its own corners)
+    const room = (c) => {
+      if (!bw0 || !bh0) return distToRing(c, pts);
+      let m = Infinity;
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const d = distToRing({ x: c.x + (dx * bw0) / 2, y: c.y + (dy * bh0) / 2 }, pts);
+        if (d < m) m = d;
+      }
+      return m;
+    };
+    let sx = 0, sy = 0;
+    for (const q of pts) { sx += q.x; sy += q.y; }
+    const c = { x: sx / pts.length, y: sy / pts.length };
+    if (fits(c)) return c;                   // the centroid already holds the whole tag: no search
+    let best = null, bestD = -1;
+    let bx = box.x, by = box.y, bw = box.w, bh = box.h;
+    for (let pass = 0; pass < 3; pass++) {
+      const N = pass === 0 ? 12 : 10;
+      for (let i = 1; i < N; i++) {
+        for (let j = 1; j < N; j++) {
+          const q = { x: bx + (bw * i) / N, y: by + (bh * j) / N };
+          if (!fits(q)) continue;
+          const d = room(q);
+          if (d > bestD) { bestD = d; best = q; }
+        }
+      }
+      if (!best) {
+        // Nothing on this grid holds the whole tag: fall back to the plain interior point, which the
+        // name alone will still sit inside.
+        return interiorPoint(pts, null);
+      }
+      bx = best.x - bw / 10; by = best.y - bh / 10; bw /= 5; bh /= 5;
+    }
+    return best;
+  }
+  function tagPoint(room, ring, box, block) {
+    if (!ring || ring.length < 3) {
+      return { x: box.x + box.w / 2, y: box.y + box.h / 2, clearance: Math.min(box.w, box.h) / 2 };
+    }
+    const key = ring.length + ':' + ring.map((q) => Math.round(q.x) + ',' + Math.round(q.y)).join(';')
+      + '|' + Math.round(block && block.w ? block.w : 0) + 'x' + Math.round(block && block.h ? block.h : 0);
+    if (room && room.__tag && room.__tag.key === key) return room.__tag.pt;
+    const q = interiorPoint(ring, block) || { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+    const pt = { x: q.x, y: q.y, clearance: distToRing(q, ring) };
+    if (room) { try { room.__tag = { key, pt }; } catch (e) { /* frozen room: recompute next render */ } }
+    return pt;
+  }
+
+  function labelAnchor(room, box, ring) {
     const name = String(room && room.name == null ? '' : (room && room.name)).trim();
     if (!name || !box || box.w < 8 || box.h < 8) return null;
-    const fitted = Math.min(MAX_LABEL_PX, box.h * 0.4, (box.w * 0.92) / Math.max(1, name.length * 0.55));
+    let fitted = Math.min(MAX_LABEL_PX, box.h * 0.4, (box.w * 0.92) / Math.max(1, name.length * 0.55));
     if (fitted < MIN_LABEL_PX) return null;
-    return { x: box.x + box.w / 2, y: box.y + box.h / 2, fitted };
+    // The name and its area travel together, so the pair is what has to fit: a block as tall as the
+    // name, the gap and the chip, and as wide as the longer of the two lines.
+    const nameW = Math.max(24, name.length * fitted * 0.55);
+    const blockH = fitted + CHIP_GAP_PX + CHIP_FONT_PX;
+    let pt = tagPoint(room, ring, box, { w: nameW, h: blockH });
+    if (ring && Number.isFinite(pt.clearance)) {
+      // Shrink to the room it is written inside — never below MIN_LABEL_PX, and only ever downward.
+      const cap = Math.max(MIN_LABEL_PX, Math.min(fitted, pt.clearance * 1.6));
+      if (cap !== fitted) {
+        fitted = cap;
+        pt = tagPoint(room, ring, box, { w: Math.max(24, name.length * fitted * 0.55), h: fitted + CHIP_GAP_PX + CHIP_FONT_PX });
+      }
+    }
+    // pt is the CENTRE of the pair; the name takes its top slot.
+    return { x: pt.x, y: pt.y - blockH / 2 + fitted / 2, fitted };
   }
 
   /** The room name, centred in the box — or null when the box cannot fit it. */
-  function roomLabel(room, box) {
-    const anchor = labelAnchor(room, box);
+  function roomLabel(room, box, ring) {
+    const anchor = labelAnchor(room, box, ring);
     if (!anchor) return null;
     const t = document.createElementNS(SVG_NS, 'text');
     t.setAttribute('class', 'plan-room-label');
@@ -974,13 +1084,21 @@ export function createOverlay(rootEl, {
 
   /** Where a room's chip goes (view px): just below the room's own name point (`at`, the PDF's printed
    *  name position) when it has one, otherwise CHIP_GAP_PX below the shape's box centre. */
-  function chipAnchor(room, vp, box, opts) {
+  function chipAnchor(room, vp, box, opts, ring) {
     // A drawn shape carries its own name, centred in the box, and that name MOVES with the shape. The
     // area belongs directly under it, so the two travel together through a drag or a resize instead of
     // the area sitting still at the sheet's printed name position (reported from real use).
     if (!opts || opts.followLabel !== false) {
-      const lab = labelAnchor(room, box);
-      if (lab) return { x: lab.x, y: lab.y + lab.fitted * 0.75 + CHIP_GAP_PX, followed: 'label' };
+      const lab = labelAnchor(room, box, ring);
+      if (lab) {
+        const below = { x: lab.x, y: lab.y + lab.fitted / 2 + CHIP_GAP_PX + CHIP_FONT_PX / 2 };
+        if (!ring || pointInRing(below, ring)) return { ...below, followed: 'label' };
+        // The room narrows under its own name (a taper, a doorway): mirror the chip above the name
+        // rather than push the area outside the drawn shape.
+        const above = { x: lab.x, y: lab.y - lab.fitted / 2 - CHIP_GAP_PX - CHIP_FONT_PX / 2 };
+        if (pointInRing(above, ring)) return { ...above, followed: 'label-above' };
+        return { ...below, followed: 'label' };
+      }
     }
     const at = room && room.at;
     if (at && Number.isFinite(Number(at.x)) && Number.isFinite(Number(at.y))
@@ -1017,7 +1135,7 @@ export function createOverlay(rootEl, {
         const box = viewBoxOfPoints(viewRing);
         if (!box || box.w <= 0 || box.h <= 0) continue;
         roomsG.appendChild(roomShape(room, box, viewRing, room.id === selectedId, dragging));
-        const chip = areaChip(room, chipAnchor(room, vp, box), safeCall(getAreaText, room));
+        const chip = areaChip(room, chipAnchor(room, vp, box, null, viewRing), safeCall(getAreaText, room));
         if (chip) chipsG.appendChild(chip);
         continue;
       }
@@ -1034,7 +1152,7 @@ export function createOverlay(rootEl, {
         continue;
       }
       roomsG.appendChild(roomShape(room, box, null, room.id === selectedId, dragging));
-      const chip = areaChip(room, chipAnchor(room, vp, box), safeCall(getAreaText, room));
+      const chip = areaChip(room, chipAnchor(room, vp, box, null, null), safeCall(getAreaText, room));
       if (chip) chipsG.appendChild(chip);
     }
     // A SELECTED room the loop above did NOT draw still gets marked: a room read from a PDF label

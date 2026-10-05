@@ -3900,6 +3900,66 @@ if (!sampleMissing) {
           !!a1.chip && !!a1.label && a1.chip.y > a1.label.y, `${JSON.stringify(a1.label)} ${JSON.stringify(a1.chip)}`);
       }
 
+      // (viii) A CONCAVE outline (a foyer wrapped round a core) whose bounding-box centre falls
+      //        OUTSIDE the shape must still put its tag inside the drawn area. Native SVG
+      //        isPointInFill decides, so this cannot pass by agreeing with the app's own maths.
+      {
+        await setMode("select");
+        await centerPlan();
+        await page.evaluate(() => {
+          const S = window.webhvac.state;
+          const pg = window.webhvac.plan.page || 1;
+          const drw = window.webhvac.plan.drawingId;
+          const o = { x: 180, y: 260 };
+          const ring = [{ x: o.x, y: o.y }, { x: o.x + 300, y: o.y }, { x: o.x + 300, y: o.y + 300 },
+            { x: o.x + 200, y: o.y + 300 }, { x: o.x + 200, y: o.y + 100 }, { x: o.x + 100, y: o.y + 100 },
+            { x: o.x + 100, y: o.y + 300 }, { x: o.x, y: o.y + 300 }];
+          let r = S.rooms.find((x) => x.id === "probeConcave");
+          if (!r) { r = { id: "probeConcave", name: "CONCAVE FOYER", level: "P", area: 1059.6, include: true, source: "drawn" }; S.rooms.push(r); }
+          r.poly = ring; r.polyPage = pg; r.polyDrawing = drw; r.polyArea = 1059.6;
+          r.areaFromDrawing = true; r.scaleDenom = 100;
+          r.at = { x: o.x - 300, y: o.y + 400, page: pg };
+          window.webhvac.renderAll();
+        });
+        await sleepT(700);
+        const concave = await page.evaluate(() => {
+          const svg = document.querySelector("#planView svg");
+          if (!svg) return null;
+          const M = svg.getScreenCTM().inverse();
+          const user = (cx, cy) => new DOMPoint(cx, cy).matrixTransform(M);
+          const g = document.querySelector('.plan-room[data-room-id="probeConcave"]');
+          if (!g) return null;
+          const geos = [...g.querySelectorAll("path,polygon,rect")].filter((e) => typeof e.isPointInFill === "function");
+          const geo = geos[geos.length - 1];
+          if (!geo) return null;
+          const bb = geo.getBBox();
+          const boxCentreInside = geo.isPointInFill(new DOMPoint(bb.x + bb.width / 2, bb.y + bb.height / 2));
+          const corners = (el) => {
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return [[r.x, r.y], [r.x + r.width, r.y], [r.x, r.y + r.height], [r.x + r.width, r.y + r.height],
+              [r.x + r.width / 2, r.y + r.height / 2]].map(([cx, cy]) => geo.isPointInFill(user(cx, cy)));
+          };
+          const label = corners(g.querySelector(".plan-room-label"));
+          const chip = corners(document.querySelector('.plan-area-chip[data-room-id="probeConcave"]'));
+          return { boxCentreInside, label, chip, name: (g.querySelector(".plan-room-label") || {}).textContent };
+        });
+        const allIn = (a) => Array.isArray(a) && a.length === 5 && a.every(Boolean);
+        ok("JOB4 (viii) that concave room really does have its box centre outside the shape (the check is meaningful)",
+          !!concave && concave.boxCentreInside === false, JSON.stringify(concave && concave.boxCentreInside));
+        ok("JOB4 (viii) its NAME sits wholly inside the drawn outline",
+          !!concave && allIn(concave.label), JSON.stringify(concave && concave.label));
+        ok("JOB4 (viii) its AREA sits wholly inside the drawn outline",
+          !!concave && allIn(concave.chip), JSON.stringify(concave && concave.chip));
+        // leave no probe room behind: later checks count rooms and outlines
+        await page.evaluate(() => {
+          const S = window.webhvac.state;
+          S.rooms = S.rooms.filter((r) => r.id !== "probeConcave");
+          window.webhvac.renderAll();
+        });
+        await sleepT(400);
+      }
+
       // (iii) inert: the chip is never the hit-target, and a click at its centre still selects the room.
       //        Re-measure AFTER centering the plan (scrolling moves the chip).
       await setMode("select");
