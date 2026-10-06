@@ -174,8 +174,10 @@ try {
   const cta = await page.goto(url(LANDING), { waitUntil: "networkidle2", timeout: 60000 })
     .then(() => page.$eval("#hero-cta", (e) => ({ href: e.getAttribute("href"), text: e.innerText.trim() })))
     .catch(() => null);
-  ok("landing hero CTA points at app.html",
-    !!cta && cta.href === "app.html",
+  // The hero CTA must reach the calculator AND name a sample: the visitor's first sight has to be a
+  // finished calculation, because the measured bounce was 13 arrivals -> 1 reaching the calculator.
+  ok("landing hero CTA points at the calculator, asking to be landed on a worked example",
+    !!cta && /^app\.html(\?|$)/.test(cta.href) && /(^|[?&])go=1(&|$)/.test(cta.href),
     cta ? `href="${cta.href}" text="${cta.text}"` : "no #hero-cta element found");
   ok("landing hero CTA mentions the calculator",
     !!cta && /calculat/i.test(cta.text), cta ? cta.text : "-");

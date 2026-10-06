@@ -3298,6 +3298,9 @@ function planProgressHide() {
   b.classList.remove('indeterminate');
   b.removeAttribute('aria-valuenow');
   if (el.planProgressFill) el.planProgressFill.style.width = '0%';
+  // Reset the wording too. A hidden bar that still reads "Tracing outlines - 149 of 149 rooms" is
+  // invisible to a user but reads as a live (or just-finished) job to anything inspecting the DOM.
+  if (el.planProgressText) el.planProgressText.textContent = 'Working...';
 }
 
 /** Mark the button that started a long job as working — disabled, its label saying so — and return a
@@ -5513,6 +5516,47 @@ function wire() {
 /* start                                                              */
 /* ------------------------------------------------------------------ */
 
+/* A landing-page link can name the sample it wants (?sample=house). The whole point is that the
+ * visitor's first sight is a REAL number, not an empty calculator they must find a button in - the
+ * measured bounce here was 13 arrivals on the landing page and 1 reaching the calculator.
+ * Guarded three ways so it can never eat a returning visitor's own work: only when the URL names a
+ * sample, only when nothing was restored, and only when this browser kept no drawing of its own. */
+/* What the plan panel should show on arrival - ONE decision, made once.
+ *
+ * A landing-page link can ask to be landed on a worked example (`?go=1`), because the measured bounce
+ * here was 13 arrivals on the landing page to 1 reaching the calculator: an empty calculator that
+ * asks the visitor to find a button is where they left.
+ *
+ * This is deliberately a SINGLE async decision rather than two independent ones. Restoring a stored
+ * drawing and loading a sample are both "open a plan" paths; when they ran separately at boot they
+ * raced, and the panel ended up showing a restored drawing while the sample's credit line was on
+ * screen (measured in the suite: 159 rooms of the fixture, 363.86 TR, named as LEVEL 11).
+ *
+ * Precedence, and the reasons:
+ *   1. work saved in this browser WINS - a returning visitor must never have it replaced by a sample;
+ *   2. otherwise an explicit ?go=1 loads that sample (or the default real sheet);
+ *   3. otherwise nothing here - a plain visit stays an empty calculator.
+ * A bare ?sample= never triggers this: those are the suites' hooks and load only when asked. */
+async function bootPlan() {
+  if (!el.planCard) return;
+  let params = null;
+  try { params = new URLSearchParams(location.search); } catch (err) { params = null; }
+  const wantsExample = !!params && params.get('go') === '1';
+
+  let stored = null;
+  try {
+    const mod = await import('./drawstore.js');
+    stored = await mod.getDrawing();
+  } catch (err) { stored = null; }   // no drawstore: treat as nothing saved
+
+  if (stored) { await restoreDrawing(); return; }          // (1) the visitor's own drawing
+  if (wantsExample && !state.rooms.length) {               // (2) the landing page's worked example
+    loadSample(params.get('sample') || undefined);
+    return;
+  }
+  // (3) a plain first visit: leave the empty calculator alone
+}
+
 function start() {
   initErrorTracking();     // catch anything the startup below throws (coarse area only)
   initDropoffTracking();   // the one left_page signal, on the way out
@@ -5525,8 +5569,9 @@ function start() {
   renderAll();
   updateParseWhere(); // the browser text until the one-time check answers
   probeServer();      // asks the server if it is there; never blocks the page
-  restoreDrawing();   // put back the drawing this browser kept for us; never blocks either
+  bootPlan();         // either the drawing this browser kept for us, or the landing page's worked example
   autoDetectClimate(); // one free IP lookup -> the editable table -> pre-fill, if it is a first visit
+
   if (restored && state.rooms.length) {
     setStatus('ok', `Restored your last work from this browser: ${state.rooms.length} room(s).`);
   } else {

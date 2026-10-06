@@ -4786,6 +4786,60 @@ if (!sampleMissing) {
       `started=${guard.started}, other rooms given geometry=${guard.others}, ring untouched=${JSON.stringify(guard.ringAfter).slice(0, 60)}`);
   }
 
+  /* ---------- 22. a landing-page deep link must land on a FINISHED calculation ---------- */
+  // The measured bounce: 13 arrivals on the landing page and 1 reached the calculator, because the hero
+  // CTA opened an EMPTY calculator that asked the visitor to find a button. The CTA now asks to be landed
+  // on a worked example (?go=1), so a visitor's first sight is a real number with no clicks at all.
+  //
+  // Both legs run in their OWN fresh browser context. That IS the bounce case - a first-time visitor with
+  // nothing saved - so no clearing is needed, and it can neither disturb nor be disturbed by the heavy
+  // automatic work the checks above leave running. Three earlier versions of this block died with
+  // "Runtime.callFunctionOn timed out" precisely because they drove that busy main page.
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const freshPage = async () => {
+      const ctx = await browser.createBrowserContext();
+      return { ctx, p: await ctx.newPage() };
+    };
+
+    // (a)+(b) a first-time visitor following the landing button
+    const A = await freshPage();
+    await A.p.goto(BASE + "app.html?go=1&utm_source=site&utm_medium=hero&utm_campaign=landing-sample",
+      { waitUntil: "domcontentloaded", timeout: 90000 });
+    await A.p.waitForFunction(() => window.webhvac && window.webhvac.state.rooms.length > 0,
+      { timeout: 120000, polling: 400 }).catch(() => {});
+    // the sample MEASURES its areas from its own outlines before it has a load to show, so wait for the
+    // NUMBER - the whole point of the deep link - not merely for the rooms to appear
+    await A.p.waitForFunction(() => {
+      const c = document.getElementById("summaryCards");
+      const t = c ? c.innerText.replace(/\s+/g, " ") : "";
+      return /Total cooling load [0-9.]+ TR/.test(t) && !/Total cooling load 0\.00 TR/.test(t);
+    }, { timeout: 180000, polling: 500 }).catch(() => {});
+    const deep = await A.p.evaluate(() => {
+      const S = window.webhvac && window.webhvac.state;
+      const cards = document.getElementById("summaryCards");
+      const m = cards ? cards.innerText.replace(/\s+/g, " ").match(/Total cooling load ([0-9.]+) TR/) : null;
+      const cr = document.getElementById("sampleCredit");
+      return { rooms: S ? S.rooms.length : 0, total: m ? parseFloat(m[1]) : 0,
+        credit: cr ? (cr.textContent || "").trim().slice(0, 50) : "" };
+    }).catch(() => null);
+    ok("22 (a) a deep link lands on the sample's own 56 rooms and a REAL load, with no click at all",
+      !!deep && deep.rooms === 56 && deep.total > 0,
+      deep ? `rooms=${deep.rooms} (expected 56), total=${deep.total} TR` : "could not read the page");
+    ok("22 (b) and it names THAT drawing (LEVEL 11) rather than reading like the visitor's own",
+      !!deep && /LEVEL 11/i.test(deep.credit), deep ? JSON.stringify(deep.credit) : "-");
+    await A.ctx.close().catch(() => {});
+
+    // (c) a plain visit must stay an EMPTY calculator: the deep link loads a sample, not every visit
+    const B = await freshPage();
+    await B.p.goto(BASE + "app.html", { waitUntil: "domcontentloaded", timeout: 90000 });
+    await wait(6000);
+    const plain = await B.p.evaluate(() => (window.webhvac && window.webhvac.state.rooms.length) || 0).catch(() => -1);
+    ok("22 (c) a plain visit to the calculator stays empty (the deep link loads a sample, not every visit)",
+      plain === 0, "rooms=" + plain);
+    await B.ctx.close().catch(() => {});
+  }
+
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });
   let selfOut = "";
   for (let i = 0; i < 60; i++) {
