@@ -2983,7 +2983,8 @@ if (!sampleMissing) {
   const moveTarget = await page.evaluate(() => {
     const sel = document.querySelector("#bdShapeTarget");
     if (!sel) return null;
-    const opt = [...sel.options].find((o) => !/Drawn room/.test(o.textContent));
+    // skip the leading "Choose a room…" row (empty value): a real target has an id
+    const opt = [...sel.options].find((o) => o.value && !/Drawn room/.test(o.textContent));
     sel.value = opt.value;
     return { id: opt.value, label: opt.textContent.trim() };
   });
@@ -4847,6 +4848,84 @@ if (!sampleMissing) {
     if (/ALL SELF TESTS PASSED|CHECK\(S\) FAILED|threw an error/.test(selfOut)) break;
     await new Promise((r) => setTimeout(r, 2000));
   }
+
+  /* ---------- 23. the shape link must see a PLACED BOX, not only a traced outline ---------- */
+  // "Place all rooms on the plan" puts a box (room.rect) on every room it can, and the tracer supplies a
+  // ring (room.poly) only where it succeeds - 21 of 56 rooms on the sample, and 2 of 149 on the owner's
+  // own plan. The link tested room.poly alone, so on a box-shaped room it showed nothing at all ("no row"
+  // for a room that has a row AND a shape), and BOTH of its actions returned early on `!room.poly`, so
+  // neither Move nor Remove could do anything. Reported from real use on the sample, where IN is a box.
+  // Its own fresh context, as block 22: the checks above leave the main page busy.
+  {
+    const ctx = await browser.createBrowserContext();
+    const pg = await ctx.newPage();
+    await pg.goto(BASE + "app.html?go=1", { waitUntil: "domcontentloaded", timeout: 90000 });
+    await pg.waitForFunction(() => {
+      const S = window.webhvac && window.webhvac.state;
+      const bar = document.getElementById("planProgress");
+      return !!S && !S.ui.busy && !(bar && bar.getAttribute("data-active") === "1");
+    }, { timeout: 300000, polling: 1000 }).catch(() => {});
+
+    const box = await pg.evaluate(() => {
+      const r = window.webhvac.state.rooms.find((x) => x.rect && !(Array.isArray(x.poly) && x.poly.length > 2));
+      if (!r) return null;
+      document.querySelector(`#roomsBody tr[data-id="${r.id}"]`).click();
+      const el = document.getElementById("planShapeLink");
+      const det = document.getElementById("planLinkDetach");
+      const sel = document.getElementById("planLinkTarget");
+      const detail = document.getElementById("detail") || document.body;
+      return { name: String(r.name || ""), hidden: el ? el.classList.contains("hidden") : null,
+        detach: det ? !det.disabled : null, options: sel ? sel.options.length : 0,
+        placeholder: sel && sel.options.length ? (sel.options[0].value === "" ? 1 : 0) : 0,
+        saysPlacedBox: /placed on the plan/.test(detail.innerText || "") ? 1 : 0 };
+    });
+    ok("23 (a) a room whose shape is a PLACED BOX shows the shape link, named as its own row",
+      !!box && box.hidden === false && !!box.name && box.detach === true,
+      box ? `${box.name}: hidden=${box.hidden} remove-enabled=${box.detach}` : "no box-only room on the sample");
+    ok("23 (b) that link starts its target list on \u2018Choose a room\u2026\u2019 and calls the box a box",
+      !!box && box.options > 1 && box.placeholder === 1 && box.saysPlacedBox === 1,
+      box ? `${box.options} option(s), placeholder=${box.placeholder}, says-placed-box=${box.saysPlacedBox}` : "-");
+    const rm = await pg.evaluate(() => {
+      const r = window.webhvac.state.rooms.find((x) => x.rect && !(Array.isArray(x.poly) && x.poly.length > 2));
+      const before = r.area;
+      window.webhvac.planDetachShape(r.id);
+      const a = window.webhvac.state.rooms.find((x) => x.id === r.id);
+      return { boxGone: !a.rect, hasShape: !!(a.rect || (a.poly && a.poly.length > 2)), before, after: a.area };
+    });
+    ok("23 (c) removing a placed box takes the box off the sheet and LEAVES the area the sheet printed",
+      rm.boxGone === true && rm.hasShape === false && rm.after === rm.before,
+      `box gone=${rm.boxGone}, area ${rm.before} -> ${rm.after}`);
+    await ctx.close().catch(() => {});
+
+    // (d) MOVING that box is the other case, and the area must not end up on two rows at once: the box
+    // was sized back from the giver's measured area, so giving the shape away releases the area with it.
+    // Its own fresh page: (c) has just taken the box off the only box-shaped room on the sample.
+    const ctx2 = await browser.createBrowserContext();
+    const pg2 = await ctx2.newPage();
+    await pg2.goto(BASE + "app.html?go=1", { waitUntil: "domcontentloaded", timeout: 90000 });
+    await pg2.waitForFunction(() => {
+      const S = window.webhvac && window.webhvac.state;
+      const bar = document.getElementById("planProgress");
+      return !!S && !S.ui.busy && !(bar && bar.getAttribute("data-active") === "1");
+    }, { timeout: 300000, polling: 1000 }).catch(() => {});
+    const moved = await pg2.evaluate(() => {
+      const rooms = window.webhvac.state.rooms;
+      const from = rooms.find((r) => r.rect && !(Array.isArray(r.poly) && r.poly.length > 2) && Number(r.area) > 0);
+      const to = from ? rooms.find((r) => r.id !== from.id && Number(r.area) > 0) : null;
+      if (!from || !to) return null;
+      const beforeArea = from.area;
+      window.webhvac.planMoveShapeTo(from.id, to.id);
+      const F = rooms.find((r) => r.id === from.id), T = rooms.find((r) => r.id === to.id);
+      return { beforeArea, fromArea: F.area, fromUnknown: F.areaUnknown === true,
+        fromShape: !!(F.rect || (F.poly && F.poly.length > 2)),
+        toShape: !!(T.rect || (T.poly && T.poly.length > 2)), toPoints: T.poly ? T.poly.length : 0, toArea: T.area };
+    });
+    ok("23 (d) moving a placed box releases the giver's area and hands the shape to the target",
+      !!moved && moved.fromUnknown === true && moved.fromShape === false && moved.toShape === true && Number(moved.toArea) > 0,
+      moved ? `giver area ${moved.beforeArea} -> ${moved.fromArea} (unknown=${moved.fromUnknown}), target shape=${moved.toShape} area=${moved.toArea} (${moved.toPoints} pt)` : "no box+area pair to move");
+    await ctx2.close().catch(() => {});
+  }
+
 
   ok("in-browser self test (PDF reader + engine)", /ALL SELF TESTS PASSED/.test(selfOut),
       selfOut.split("\n").slice(-3).join(" | "));

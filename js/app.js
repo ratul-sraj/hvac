@@ -1136,7 +1136,12 @@ function shapeBadge(raw) {
 /** One plain line for the detail panel saying where this room's shape comes from — the drawn shape's
  *  own area, or the plan's stated area for a traced outline. Empty when the room has no polygon. */
 function shapeNote(raw) {
-  if (!raw || !Array.isArray(raw.poly) || raw.poly.length <= 2) return '';
+  if (!raw || !roomHasShape(raw)) return '';
+  // A PLACED box is neither a drawn shape nor a traced outline: it is a locator the placement centred on
+  // the point that names the room and sized back from the area the sheet printed, so say exactly that.
+  if (!(Array.isArray(raw.poly) && raw.poly.length > 2)) {
+    return "&middot; room box placed on the plan (sized back from the plan's stated area)";
+  }
   return raw.source === 'drawn'
     ? '&middot; shape drawn on the plan (the area is the drawn shape)'
     : "&middot; outline traced from the drawing (the area is the plan's stated area)";
@@ -1174,8 +1179,12 @@ function pickerRooms(exclude) {
  *  block in the load breakdown so the two lists cannot drift apart, and listed ALPHABETICALLY (see
  *  pickerRooms) so a long table is not a hunt through sheet order. */
 function shapeTargetOptions(raw) {
-  return pickerRooms(raw)
-    .map((x) => `<option value="${esc(x.id)}">${esc(roomOptionLabel(x))}</option>`).join('');
+  // A leading "Choose a room…" row, deliberately with an empty value: the list used to start on the first
+  // room ALPHABETICALLY, which reads as a suggestion ("Move it to ANNEXE · no area") and let a stray
+  // press move a shape onto a room nobody picked. Empty value = neither Move handler will act.
+  return `<option value="">Choose a room&hellip;</option>`
+    + pickerRooms(raw)
+      .map((x) => `<option value="${esc(x.id)}">${esc(roomOptionLabel(x))}</option>`).join('');
 }
 
 /**
@@ -1212,7 +1221,7 @@ function shapeOwnerLabel(raw) {
 function renderPlanShapeLink() {
   if (!el.planShapeLink) return;
   const raw = state.rooms.find((r) => r.id === state.ui.openId) || null;
-  const hasShape = !!(raw && Array.isArray(raw.poly) && raw.poly.length > 2);
+  const hasShape = roomHasShape(raw);   // a traced outline OR a placed box - both are shapes on the sheet
   if (!hasShape) { el.planShapeLink.classList.add('hidden'); return; }
   const others = state.rooms.filter((x) => x.id !== raw.id);
   el.planShapeLinkName.textContent = shapeOwnerLabel(raw);
@@ -1223,7 +1232,7 @@ function renderPlanShapeLink() {
 }
 
 function shapeLinkBlock(raw) {
-  if (!raw || !Array.isArray(raw.poly) || raw.poly.length <= 2) return '';
+  if (!raw || !roomHasShape(raw)) return '';
   const others = state.rooms.filter((x) => x.id !== raw.id);
   const where = `this row ("${esc(shapeOwnerLabel(raw))}")`;
   if (!others.length) {
@@ -1555,7 +1564,11 @@ function renderDetail(calc) {
     moveBtn.dataset.wired = '1';
     moveBtn.addEventListener('click', () => {
       const sel = el.detailBody.querySelector('#bdShapeTarget');
-      if (sel && sel.value) planMoveShapeTo(state.ui.openId, sel.value);
+      if (sel && sel.value) {
+        planMoveShapeTo(state.ui.openId, sel.value);
+      } else {
+        setStatus('warn', 'Choose the room to move this shape to first — the list starts on "Choose a room…".', 'plan');
+      }
     });
   }
   const detachBtn = el.detailBody.querySelector('#bdShapeDetach');
@@ -4207,6 +4220,35 @@ function roomHasShape(room) {
   return !!(room.rect && typeof room.rect.x === 'number');
 }
 
+/** A room's shape as a closed ring, whichever kind it carries: a traced/drawn OUTLINE (room.poly) or a
+ *  PLACED BOX (room.rect - the locator "Place all rooms" centres on the point that names the room and
+ *  sizes back from its own area). The shape link tested room.poly only, so a room carrying a box showed
+ *  no link at all, and both of the link's actions returned early on `!room.poly` - reporting "no row"
+ *  for a room that has a row AND a shape on the sheet. */
+function shapeRing(room) {
+  if (room && Array.isArray(room.poly) && room.poly.length > 2) {
+    const ring = room.poly.filter((q) => q && Number.isFinite(Number(q.x)) && Number.isFinite(Number(q.y)));
+    return ring.length > 2 ? ring.map((q) => ({ x: Number(q.x), y: Number(q.y) })) : null;
+  }
+  const rc = room && room.rect;
+  if (rc && Number.isFinite(Number(rc.x)) && Number.isFinite(Number(rc.y))
+      && Number.isFinite(Number(rc.w)) && Number.isFinite(Number(rc.h))) {
+    const x = Number(rc.x), y = Number(rc.y), w = Number(rc.w), h = Number(rc.h);
+    return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+  }
+  return null;
+}
+
+/** The page a room's shape sits on, for either kind of shape. */
+function shapePage(room) {
+  if (!room) return plan.page || 1;
+  if (Array.isArray(room.poly) && room.poly.length > 2) {
+    return room.polyPage != null ? room.polyPage : (plan.page || 1);
+  }
+  if (room.rect && room.rect.page != null) return room.rect.page;
+  return plan.page || 1;
+}
+
 /** Write a ring onto a room: the ring, its page, and a bounding-box rect — so every existing "this
  *  room has geometry on the plan" path (hints, place-all, the table badge) keeps working. The ring is
  *  what the overlay draws and hit-tests; the rect is only its box. NEVER touches `source`: a traced
@@ -4371,17 +4413,24 @@ function planCommitShape(roomId) {
  */
 function planDetachShape(roomId) {
   const room = roomById(roomId);
-  if (!room || !Array.isArray(room.poly)) return;
-  const wasFromDrawing = !!(room.areaFromDrawing || room.source === 'drawn');
+  if (!room || !roomHasShape(room)) return;        // a placed box is a shape too, not only an outline
+  // Was the AREA measured FROM this shape? A ring is the area's own source, so losing it makes the area
+  // unknown. A PLACED box is the reverse - the placement sized the box BACK from the area the sheet
+  // printed - so removing the box must leave that measured area alone, which is what planClearPlaced()
+  // does too when it drops locator boxes. Only the ring case rewrites the area and its provenance.
+  const hadRing = Array.isArray(room.poly) && room.poly.length > 2;
+  const wasFromDrawing = hadRing && !!(room.areaFromDrawing || room.source === 'drawn');
   const oldArea = Number(room.area);
   delete room.poly;
   delete room.polyPage;
   delete room.polyDrawing;
   delete room.rect;
   delete room.rectDrawing;
-  delete room.areaFromDrawing;
-  delete room.areaSource;
-  room.source = 'manual';
+  if (hadRing) {
+    delete room.areaFromDrawing;
+    delete room.areaSource;
+    room.source = 'manual';
+  }
   if (wasFromDrawing) { room.area = null; room.areaUnknown = true; }
   renderAll();
   saveNow();
@@ -4406,15 +4455,25 @@ function planMoveShapeTo(fromId, toId) {
   const to = toId ? roomById(toId) : null;
   if (!from || !to) return;
   if (from.id === to.id) return;
-  if (!Array.isArray(from.poly) || from.poly.length <= 2) return;
-  const ring = from.poly.map((p) => ({ x: p.x, y: p.y }));
-  const page = from.polyPage;
+  const ring = shapeRing(from);      // a traced outline OR the placed box, as a ring
+  if (!ring) return;
+  const page = shapePage(from);
   const denom = roomDenom(from);
   const wasFromDrawing = !!(from.areaFromDrawing || from.source === 'drawn');
   const toHadShape = !!((to.poly && to.poly.length > 2) || to.rect);
   const toOldArea = Number(normalizeRoom(to, state.project).area);
 
   planDetachShape(fromId);          // the giving row stops claiming the shape (and says nothing yet)
+  // A giving row whose area CAME FROM THE DRAWING must not keep it while the shape's area travels to the
+  // other row: that would count the same measured area on two rows. planDetachShape deliberately keeps
+  // the area for a PLACED BOX (the box was sized back FROM that area, so the room still owns it) - which
+  // is right for "Remove the shape from this row", and wrong here, where the shape is really leaving.
+  if (wasFromDrawing && from.area != null) {
+    from.area = null;
+    from.areaUnknown = true;
+    delete from.areaFromDrawing;
+    delete from.areaSource;
+  }
   to.source = 'drawn';
   to.scaleDenom = denom;
   setRoomRing(to, ring, page);
@@ -5084,7 +5143,12 @@ async function openPlan(bytes, opts) {
       if (plan.overlay.setMode) planSetMode(state.ui.planMode);   // also syncs the mode radios
   if (el.planLinkMove) {
     el.planLinkMove.addEventListener('click', () => {
-      if (el.planLinkTarget && el.planLinkTarget.value) planMoveShapeTo(state.ui.openId, el.planLinkTarget.value);
+      if (el.planLinkTarget && el.planLinkTarget.value) {
+        planMoveShapeTo(state.ui.openId, el.planLinkTarget.value);
+      } else {
+        setStatus('warn', 'Choose the room to move this shape to first — the list starts on "Choose a room…", '
+          + 'so pressing Move without picking one cannot move a shape onto a room you never chose.', 'plan');
+      }
     });
   }
   if (el.planLinkDetach) {
