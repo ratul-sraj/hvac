@@ -4949,10 +4949,24 @@ if (!sampleMissing) {
         traced: S.rooms.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length,
         marks: window.webhvac.planAutoSetupDone ? window.webhvac.planAutoSetupDone.size : -1 };
     });
+    // Wait for the run to FINISH, not for a fixed 9 s: the mark appears at the START of the setup and
+    // the traced count climbs (0 -> 36 -> 69 -> 105) for another ~14 s, so a fixed wait reads a
+    // half-finished drawing and cannot tell a real failure from a slow one.
+    const settle = async (capMs = 180000) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < capMs) {
+        const d = await pg.evaluate(() => (window.__planSetupDebug ? window.__planSetupDebug() : null)).catch(() => null);
+        // The run has to have BEGUN (its mark is set as it starts) and then gone quiet. Just "not
+        // busy" is true for the moment between the rooms arriving and the setup starting.
+        if (d && d.marks > 0 && !d.running && !d.busy) return true;
+        await wait(500);
+      }
+      return false;
+    };
     await (await pg.$("#fileInput")).uploadFile(FILE);
     await pg.waitForFunction(() => window.webhvac.state.rooms.length > 0,
       { timeout: 180000, polling: 500 }).catch(() => {});
-    await wait(9000);
+    await settle();
     const first = await snap();
     await pg.evaluate(() => document.getElementById("btnClear").click());
     await wait(3000);
@@ -4965,11 +4979,93 @@ if (!sampleMissing) {
       { timeout: 180000, polling: 500 }).catch(() => {});
     await pg.waitForFunction(() => window.webhvac.planAutoSetupDone && window.webhvac.planAutoSetupDone.size > 0,
       { timeout: 180000, polling: 500 }).catch(() => {});
-    await wait(9000);
+    await settle();
     const second = await snap();
     ok("24 (b) the SAME file uploaded again IS set up again (the automation is not once per file)",
       second.marks > 0 && second.rooms === first.rooms,
       `rooms ${first.rooms} -> ${second.rooms} (placed ${first.placed} -> ${second.placed}, traced ${first.traced} -> ${second.traced}), remembered drawings=${second.marks}`);
+    await ctx.close().catch(() => {});
+  }
+
+  /* ---------- 25. Ctrl+Z takes back the last edit made ON the drawing ---------- */
+  // Asked for from real use: "sometimes I drag the wrong shape, or catch the wrong vertex". A drag writes
+  // itself live, so the snapshot is taken at the gesture's first write and kept aside until the release;
+  // a gesture that changed nothing pushes nothing. Real mouse events, real key.
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const ctx = await browser.createBrowserContext();
+    const pg = await ctx.newPage();
+    await pg.goto(BASE + "app.html?go=1", { waitUntil: "domcontentloaded", timeout: 90000 });
+    await pg.waitForFunction(() => {
+      const S = window.webhvac && window.webhvac.state;
+      const bar = document.getElementById("planProgress");
+      return !!S && !S.ui.busy && !(bar && bar.getAttribute("data-active") === "1");
+    }, { timeout: 300000, polling: 1000 }).catch(() => {});
+    // The panel opens in "Draw shape" mode, where a drag DRAWS instead of moving: the edit gestures live
+    // in "Select / edit". Click the radio plainly - setting .checked first makes the click a no-op.
+    await pg.evaluate(() => {
+      document.getElementById("planView").scrollIntoView({ block: "center" });
+      document.getElementById("planModeSelect").click();
+    });
+    await wait(800);
+    const mode = await pg.evaluate(() => window.webhvac.state.ui.planMode);
+    const target = await pg.evaluate(() => {
+      const r = window.webhvac.state.rooms.find((q) => q.rect && q.rect.placed === true
+        && !(Array.isArray(q.poly) && q.poly.length > 2));
+      return r ? { id: r.id, x: r.rect.x, y: r.rect.y, w: r.rect.w, h: r.rect.h } : null;
+    });
+    if (target && mode === "select") {
+      const at = await pg.evaluate((x, y) => {
+        const vp = window.webhvac.plan.viewer.getViewport();
+        const pt = vp.convertToViewportPoint(x, y);
+        const cr = document.querySelector("#planView canvas").getBoundingClientRect();
+        return { x: cr.left + pt[0], y: cr.top + pt[1] };
+      }, target.x + target.w / 2, target.y + target.h / 2);
+      await pg.mouse.move(at.x, at.y);
+      await pg.mouse.down();
+      for (let k = 1; k <= 6; k++) await pg.mouse.move(at.x + (60 * k) / 6, at.y + (45 * k) / 6);
+      await pg.mouse.up();
+      await wait(1200);
+      const moved = await pg.evaluate((id) => {
+        const r = window.webhvac.state.rooms.find((q) => q.id === id);
+        return { x: r.rect.x, y: r.rect.y };
+      }, target.id);
+      ok("25 (a) a room box can actually be dragged in Select/edit mode (the premise of this check)",
+        Math.abs(moved.x - target.x) > 1 || Math.abs(moved.y - target.y) > 1,
+        `${target.x.toFixed(1)}/${target.y.toFixed(1)} -> ${moved.x.toFixed(1)}/${moved.y.toFixed(1)}`);
+      await pg.keyboard.down("Control"); await pg.keyboard.press("z"); await pg.keyboard.up("Control");
+      await wait(1200);
+      const back = await pg.evaluate((id) => {
+        const r = window.webhvac.state.rooms.find((q) => q.id === id);
+        return { x: r.rect.x, y: r.rect.y,
+          status: ((document.getElementById("planStatus") || {}).textContent || "").trim().slice(0, 70) };
+      }, target.id);
+      ok("25 (b) Ctrl+Z puts the dragged room back EXACTLY where it was, and says what it undid",
+        Math.abs(back.x - target.x) < 0.01 && Math.abs(back.y - target.y) < 0.01 && /Undone: moving a room/i.test(back.status),
+        `back to ${back.x.toFixed(1)}/${back.y.toFixed(1)} | "${back.status}"`);
+      // ...but never while the reader is typing: there Ctrl+Z belongs to the text box
+      const guard = await pg.evaluate(() => {
+        const inp = document.querySelector('#roomsBody tr input[data-field="name"]');
+        if (!inp) return null;
+        inp.focus();
+        return { focused: document.activeElement === inp,
+          before: JSON.stringify(window.webhvac.state.rooms.map((r) => (r.rect ? [r.rect.x, r.rect.y] : null))) };
+      });
+      if (guard && guard.focused) {
+        await pg.keyboard.down("Control"); await pg.keyboard.press("z"); await pg.keyboard.up("Control");
+        await wait(900);
+        const after = await pg.evaluate(() => JSON.stringify(window.webhvac.state.rooms.map((r) => (r.rect ? [r.rect.x, r.rect.y] : null))));
+        ok("25 (c) Ctrl+Z inside a table cell is left to the text box (the drawing is untouched)",
+          after === guard.before, "geometry unchanged");
+      } else {
+        ok("25 (c) Ctrl+Z inside a table cell is left to the text box (the drawing is untouched)", false, "no name cell to focus");
+      }
+    } else {
+      ok("25 (a) a room box can actually be dragged in Select/edit mode (the premise of this check)", false,
+        target ? `mode=${mode}` : "no placed box on the sample");
+      ok("25 (b) Ctrl+Z puts the dragged room back EXACTLY where it was, and says what it undid", false, "skipped: premise failed");
+      ok("25 (c) Ctrl+Z inside a table cell is left to the text box (the drawing is untouched)", false, "skipped: premise failed");
+    }
     await ctx.close().catch(() => {});
   }
 

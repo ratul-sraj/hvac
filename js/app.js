@@ -2162,6 +2162,7 @@ function finishUpload(added, skipped, failed, notes, serverError, readers, scann
   // refuse to run again — measured after Clear all rooms + re-uploading the same PDF, where nothing
   // was placed or traced a second time. Rooms that keep their geometry are still left alone below.
   planAutoSetupDone.clear();
+  planSetupGen++;                  // an upload replaces the drawing: abandon a run still on the old one
   maybeAutoSetupPlan();
 }
 
@@ -2557,7 +2558,9 @@ function planHintText() {
   if (state.ui.planMode === 'select') {
     return `Click a room box to open its load breakdown. Drag a room to move it, drag a corner to ` +
       `resize, drag a shape's vertex to reshape it (drag an edge middle to add a point; hold Alt and ` +
-      `drop a point on another edge to remove it), Delete to remove, middle-drag or hold Space to pan. ` +
+      `drop a point on another edge to remove it), Delete to remove, Ctrl+Z takes back the last change ` +
+      `you made here, middle-drag or hold Space to pan. ` +
+      `Dragged the wrong shape or the wrong vertex? Ctrl+Z puts the last edit back. ` +
       `${drawn} hand-drawn and ${placed} placed room box(es) on the plan.`;
   }
   return `Drag over a room to add it as a rectangle, or click to add a corner of a room with any ` +
@@ -2796,9 +2799,66 @@ function roomById(id) {
  *  of times a second, and the full project calc over a large table (159 sample rooms) is far too
  *  heavy to repeat per move. The row's area cell, the totals and the summary are refreshed once, in
  *  planRoomMoveEnd(). Keeping the live path this small is what makes the box follow the pointer. */
+/* ---------------- Ctrl+Z: take back the last edit made ON the drawing ---------------- */
+// The single correction the readers have actually asked for: "I dragged the wrong shape, or caught the
+// wrong vertex." A drag writes itself LIVE, so the snapshot has to be taken before the gesture's first
+// write and held aside until the release - what gets pushed is the state as it STOOD, not as it ended.
+// A gesture that changed nothing (a click, a drag that ended where it began, an abandoned reshape)
+// pushes nothing at all, so Ctrl+Z can never appear to do nothing.
+//
+// Scope, deliberately: this is for edits made on the sheet. "Fill areas" and "Undo delete" keep the
+// single-step buttons they already have, and the automatic setup is not an edit the reader made.
+const undoStack = [];
+const UNDO_DEPTH = 25;      // deep enough for a run of corrections, bounded so memory cannot creep
+let pendingUndo = null;     // { label, rooms } of the gesture in flight, or null
+
+const cloneRooms = () => JSON.parse(JSON.stringify(state.rooms));
+
+function undoBegin(label) {
+  if (!pendingUndo) pendingUndo = { label: label, rooms: cloneRooms() };
+}
+
+/** The gesture is over: keep its "before" state only if it really changed something. */
+function undoCommit() {
+  const snap = pendingUndo;
+  pendingUndo = null;
+  if (!snap) return;
+  if (JSON.stringify(snap.rooms) === JSON.stringify(state.rooms)) return;   // nothing moved: not an edit
+  undoStack.push(snap);
+  if (undoStack.length > UNDO_DEPTH) undoStack.shift();
+}
+
+/** An edit with no gesture behind it (a chooser, a button): the state now is the "before" state. */
+function undoPush(label) {
+  undoStack.push({ label: label, rooms: cloneRooms() });
+  if (undoStack.length > UNDO_DEPTH) undoStack.shift();
+}
+
+function undoPlanEdit() {
+  if (planGesture) return false;        // never step on a gesture that is still running
+  const entry = undoStack.pop();
+  if (!entry) {
+    setStatus('warn', 'Nothing to undo on the drawing yet.', 'plan');
+    return false;
+  }
+  pendingUndo = null;
+  state.rooms = entry.rooms;
+  // The table's row order is derived in renderAll(), so it is rebuilt with the restored rooms; the open
+  // row is dropped only if the restored state no longer has it.
+  if (state.ui.openId && !state.rooms.some((r) => r.id === state.ui.openId)) closeDetail();
+  renderAll();
+  saveNow();
+  planRenderGeometry();                 // the sheet itself shows the restored shape
+  setStatus('ok', `Undone: ${entry.label}. The drawing is back as it was.`, 'plan');
+  return true;
+}
+
 function planRoomMoved(id, payload) {
   const room = roomById(id);
   if (!room || !payload) return;
+  // The first write of a gesture takes the snapshot; later moves in the same drag reuse it.
+  undoBegin(payload.kind === 'convert' ? 'turning that room box into a shape'
+    : (Array.isArray(payload.poly) ? 'reshaping a room outline' : 'moving a room'));
   // An abandoned conversion: the app wrote a ring live but the box must stand — drop the ring and stop.
   if (payload.kind === 'convert-cancel') {
     delete room.poly;
@@ -2885,6 +2945,7 @@ function planRoomMoved(id, payload) {
  *  updateLive() is the same no-table-rebuild refresh the in-table edits use, so the table keeps the
  *  room's row and the user's focus instead of being thrown away and rebuilt. */
 function planRoomMoveEnd(id, payload) {
+  undoCommit();          // the gesture is over: keep its "before" state if it changed anything
   const room = roomById(id);
   if (!room || !payload) return;
   // A BOX became a POLYGON (the edge-middle drag converted it). Store the ring, DROP the box, tag it
@@ -3023,6 +3084,8 @@ function planDeleteRoom(id) {
 async function planPlaceAllRooms(opts) {
   // A manual press while the automatic setup is running must be a no-op, not a second run.
   if (state.ui.autoSetupBusy && !(opts && opts.__auto)) return;
+  const gen = opts && opts.__gen != null ? opts.__gen : null;
+  if (gen != null && gen !== planSetupGen) return;   // this drawing was cleared or replaced
   if (!state.rooms.length) {
     setStatus('warn', 'There are no rooms in the table to place yet. Load a drawing or add rooms first.', 'plan');
     return;
@@ -3043,6 +3106,7 @@ async function planPlaceAllRooms(opts) {
   if (!state.rooms.some((r) => r.at)) {
     rehydrated = await rehydratePositions();
     if (rehydrated) saveSoon();
+    if (gen != null && gen !== planSetupGen) return;   // went away while the positions were recovered
   }
   const rehydrateNote = rehydrated
     ? 'Re-read the drawing to find where the rooms are named (this table was saved by an older version). '
@@ -3352,6 +3416,8 @@ async function planTraceOutlines(opts) {
   // A manual press while the automatic setup is running must be a no-op, not a second run.
   if (state.ui.autoSetupBusy && !(opts && opts.__auto)) return;
   if (state.ui.traceBusy) return;
+  const gen = opts && opts.__gen != null ? opts.__gen : null;
+  if (gen != null && gen !== planSetupGen) return;   // this drawing was cleared or replaced
   if (!state.rooms.length) {
     setStatus('warn', 'There are no rooms to trace yet. Load a drawing or add rooms first.', 'plan');
     return;
@@ -3379,6 +3445,9 @@ async function planTraceOutlines(opts) {
     if (n) saveSoon();
     withPos = traceable();
   }
+  // The list above is read from state.rooms: if the drawing was replaced while the tracer loaded, it
+  // now holds the NEXT plan's rooms and tracing them would wreck that plan's fresh state.
+  if (gen != null && gen !== planSetupGen) return;
   if (!withPos.length) {
     setStatus('warn', 'No room carries both a position on the sheet and an area, so there is nothing to trace. ' +
       'Upload the drawing again if the rooms have no position.', 'plan');
@@ -3612,6 +3681,13 @@ async function planTraceOutlines(opts) {
  * (every step hides it in its own finally). */
 
 const planAutoSetupDone = new Set();   // drawingId -> automatic setup ran (or was skipped) for it
+// Bumped whenever the drawing goes away: unloaded, cleared, or replaced by a new upload. A run captures
+// it and stops the moment it changes, because an abandoned run must never touch the drawing that replaced
+// it. Measured live: Clear all rooms while the setup is still tracing, re-upload the SAME file, and the
+// old run's trace step picked up the NEW plan's 159 rooms (69 rings, no boxes) - and because that left
+// geometry behind, the new plan was then refused a setup of its own. That is the whole of the owner's
+// "the automation only runs once".
+let planSetupGen = 0;
 let planAutoSetupRunning = false;
 
 /** Has any room already been given geometry — a traced ring (poly/polyPage) or a placed / hand-drawn
@@ -3642,15 +3718,18 @@ async function planAutoSetup() {
   if (planAutoSetupRunning) return;
   planAutoSetupRunning = true;
   state.ui.autoSetupBusy = true;           // manual presses during the run are no-ops (the guards)
+  const gen = planSetupGen;                // the drawing THIS run belongs to
   planAutoSetupDone.add(plan.drawingId);   // never twice for the same drawing this session
   // The drawing's own message (a sample fill's line, say) is overwritten by each step's status below,
   // so keep it here and put the automatic line AFTER it — the fill's counts stay on screen.
   const prior = (el.planStatus && !el.planStatus.classList.contains('hidden'))
     ? el.planStatus.textContent.replace(/\s+/g, ' ').trim() : '';
   try {
-    await planPlaceAllRooms({ __auto: true });
+    await planPlaceAllRooms({ __auto: true, __gen: gen });
+    if (gen !== planSetupGen) return;      // superseded between the steps: touch nothing more
     const placed = state.rooms.filter(isPlacedRoom).length;
-    await planTraceOutlines({ __auto: true });
+    await planTraceOutlines({ __auto: true, __gen: gen });
+    if (gen !== planSetupGen) return;
     const traced = state.rooms.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length;
     planAutoSetupStatus(placed, traced, prior);
   } catch (err) {
@@ -3660,6 +3739,10 @@ async function planAutoSetup() {
   } finally {
     state.ui.autoSetupBusy = false;
     planAutoSetupRunning = false;
+    // A drawing that arrived WHILE this run was in flight had its own setup refused entry by the guard
+    // above, and nothing else would ever ask again. Ask now that the way is clear: this is the other
+    // half of "the automation only runs once".
+    if (gen !== planSetupGen) setTimeout(() => { try { maybeAutoSetupPlan(); } catch (err) { /* noop */ } }, 0);
   }
 }
 
@@ -4381,6 +4464,7 @@ function planHideShapeChooser() {
  */
 function planCommitShape(roomId) {
   if (!pendingShape) return;
+  undoPush(roomId ? 'drawing that shape onto a row' : 'drawing a new room');
   const shape = pendingShape;
   pendingShape = null;
   planHideShapeChooser();
@@ -4419,6 +4503,7 @@ function planCommitShape(roomId) {
 function planDetachShape(roomId) {
   const room = roomById(roomId);
   if (!room || !roomHasShape(room)) return;        // a placed box is a shape too, not only an outline
+  undoPush('removing a shape from its row');
   // Was the AREA measured FROM this shape? A ring is the area's own source, so losing it makes the area
   // unknown. A PLACED box is the reverse - the placement sized the box BACK from the area the sheet
   // printed - so removing the box must leave that measured area alone, which is what planClearPlaced()
@@ -4460,6 +4545,7 @@ function planMoveShapeTo(fromId, toId) {
   const to = toId ? roomById(toId) : null;
   if (!from || !to) return;
   if (from.id === to.id) return;
+  undoPush('moving a shape to another row');
   const ring = shapeRing(from);      // a traced outline OR the placed box, as a ring
   if (!ring) return;
   const page = shapePage(from);
@@ -4679,6 +4765,7 @@ async function unloadPlan() {
   pendingShape = null;
   lastFill = null;                 // the fill's Undo belonged to the drawing that is going away
   planAutoSetupDone.clear();       // nothing is set up on a drawing that is no longer loaded
+  planSetupGen++;                  // and a run still working on it stops where it stands
   if (el.planPage) el.planPage.textContent = '1';
   if (el.planPages) el.planPages.textContent = '1';
   if (el.planCard) el.planCard.classList.add('hidden');   // the panel's empty/upload state
@@ -5019,6 +5106,9 @@ function planGestureCancel(e) {
   if (planGesture && e && typeof e.pointerId === 'number' && e.pointerId !== planGesture.pointerId) return;
   if (planGesture) planReleaseCapture(planGesture.pointerId);
   planGesture = null;
+  // An abandoned gesture is not an edit: drop the snapshot it had begun, or a later Ctrl+Z could reach
+  // back past it and undo something else the reader changed in the meantime.
+  pendingUndo = null;
   planClearPreview();
 }
 
@@ -5048,6 +5138,15 @@ function planWireGestures() {
       planSpaceHeld = true;
     }
     if (e.key === 'Escape' && planGesture) planGestureCancel();
+  });
+  window.addEventListener('keydown', (e) => {
+    // Ctrl+Z (Cmd+Z on a Mac) takes back the last edit made on the DRAWING: the shape the reader dragged
+    // by mistake, the vertex they caught instead of the one they meant. Never while typing - inside a
+    // text box Ctrl+Z belongs to the text.
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (String(e.key || '').toLowerCase() !== 'z') return;
+    if (planIsTextEntry(document.activeElement) || planIsTextEntry(e.target)) return;
+    if (undoPlanEdit()) e.preventDefault();
   });
   window.addEventListener('keyup', (e) => { if (planGestureSpaceKey(e)) planSpaceHeld = false; });
   window.addEventListener('blur', () => { planSpaceHeld = false; });
@@ -5652,4 +5751,11 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
+// A read-only peek at the automatic setup's own bookkeeping, for the checks and for diagnosing a
+// drawing that did not set itself up. Nothing writes through it.
+window.__planSetupDebug = () => ({ gen: planSetupGen, running: planAutoSetupRunning,
+  busy: state.ui.autoSetupBusy, marks: planAutoSetupDone.size, drawingId: plan.drawingId,
+  rooms: state.rooms.length, withAt: state.rooms.filter((r) => r.at).length,
+  placed: state.rooms.filter((r) => r.rect && r.rect.placed === true).length,
+  traced: state.rooms.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length });
 window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a), planAutoSetup, maybeAutoSetupPlan, roomsHavePlanGeometry, planAutoSetupDone };
