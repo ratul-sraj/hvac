@@ -4927,6 +4927,52 @@ if (!sampleMissing) {
   }
 
 
+  /* ---------- 24. re-uploading the SAME file must be set up again ---------- */
+  // The owner's flow, reported from real use: upload a plan, Clear all rooms, upload the SAME file -
+  // and nothing was placed or traced any more. The "already set up" mark is keyed by the drawing's id
+  // and the same file always hashes to the same id, so the mark survived the clear. It is forgotten now
+  // when a drawing is unloaded and when an upload arrives, and the geometry guard still stops a repeat
+  // while the rooms keep their geometry. Asserted on the MARK rather than on a count: the mark is what
+  // refused to run, and unlike the status line it is not cleared ten seconds after the run.
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));   // block-local: `wait` above is scoped to block 22
+    const ctx = await browser.createBrowserContext();
+    const pg = await ctx.newPage();
+    pg.on("dialog", (d) => { d.accept().catch(() => {}); });
+    await pg.goto(BASE + "app.html", { waitUntil: "domcontentloaded", timeout: 90000 });
+    await wait(2500);
+    const FILE = "D:/webhvac/tests/samples/sample-plan.pdf";
+    const snap = () => pg.evaluate(() => {
+      const S = window.webhvac.state;
+      return { rooms: S.rooms.length,
+        placed: S.rooms.filter((r) => r.rect && r.rect.placed === true).length,
+        traced: S.rooms.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length,
+        marks: window.webhvac.planAutoSetupDone ? window.webhvac.planAutoSetupDone.size : -1 };
+    });
+    await (await pg.$("#fileInput")).uploadFile(FILE);
+    await pg.waitForFunction(() => window.webhvac.state.rooms.length > 0,
+      { timeout: 180000, polling: 500 }).catch(() => {});
+    await wait(9000);
+    const first = await snap();
+    await pg.evaluate(() => document.getElementById("btnClear").click());
+    await wait(3000);
+    const cleared = await snap();
+    ok("24 (a) Clear all rooms forgets that this drawing was set up already",
+      cleared.rooms === 0 && cleared.marks === 0,
+      `rooms=${cleared.rooms}, drawings still remembered as set up=${cleared.marks}`);
+    await (await pg.$("#fileInput")).uploadFile(FILE);   // the SAME file -> the same drawing id
+    await pg.waitForFunction(() => window.webhvac.state.rooms.length > 0,
+      { timeout: 180000, polling: 500 }).catch(() => {});
+    await pg.waitForFunction(() => window.webhvac.planAutoSetupDone && window.webhvac.planAutoSetupDone.size > 0,
+      { timeout: 180000, polling: 500 }).catch(() => {});
+    await wait(9000);
+    const second = await snap();
+    ok("24 (b) the SAME file uploaded again IS set up again (the automation is not once per file)",
+      second.marks > 0 && second.rooms === first.rooms,
+      `rooms ${first.rooms} -> ${second.rooms} (placed ${first.placed} -> ${second.placed}, traced ${first.traced} -> ${second.traced}), remembered drawings=${second.marks}`);
+    await ctx.close().catch(() => {});
+  }
+
   ok("in-browser self test (PDF reader + engine)", /ALL SELF TESTS PASSED/.test(selfOut),
       selfOut.split("\n").slice(-3).join(" | "));
   fs.writeFileSync(`${OUT}/selftest.txt`, selfOut);

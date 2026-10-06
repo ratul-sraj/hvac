@@ -2157,6 +2157,11 @@ function finishUpload(added, skipped, failed, notes, serverError, readers, scann
   }
   // The drawing is up and its rooms now exist: place them, then trace the outlines, by itself. A call
   // that arrives before the viewer has finished loading is harmless — openPlan's own end calls again.
+  // An UPLOAD forgets what earlier drawings were set up for: the user has just handed us a drawing and
+  // expects it set up, and the same file hashes to the same id, so a remembered "done" would silently
+  // refuse to run again — measured after Clear all rooms + re-uploading the same PDF, where nothing
+  // was placed or traced a second time. Rooms that keep their geometry are still left alone below.
+  planAutoSetupDone.clear();
   maybeAutoSetupPlan();
 }
 
@@ -4673,6 +4678,7 @@ async function unloadPlan() {
   plan.revealed = false;
   pendingShape = null;
   lastFill = null;                 // the fill's Undo belonged to the drawing that is going away
+  planAutoSetupDone.clear();       // nothing is set up on a drawing that is no longer loaded
   if (el.planPage) el.planPage.textContent = '1';
   if (el.planPages) el.planPages.textContent = '1';
   if (el.planCard) el.planCard.classList.add('hidden');   // the panel's empty/upload state
