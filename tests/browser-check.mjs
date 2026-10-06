@@ -43,12 +43,14 @@ await page.setViewport({ width: 1400, height: 1000 });
 
 // Long plan operations (a trace, a fill, placing every room) now YIELD to the browser instead of
 // freezing the thread, so their controls are genuinely disabled while they run and a click aimed at
-// one of them is dropped by the browser. Before a check drives such a button it therefore waits for
-// the app to be idle. This changes no assertion — it only stops a check from clicking a disabled
-// control.
+// one of them is dropped by the browser. A freshly opened plan also runs "place then trace" by
+// itself, so a check must wait for THAT too before it drives a button. This changes no assertion —
+// it only stops a check from clicking a disabled control or racing the automatic setup.
 const waitIdle = () => page
-  .waitForFunction(() => !(window.webhvac && window.webhvac.state && window.webhvac.state.ui.traceBusy),
-    { timeout: 120000, polling: 250 })
+  .waitForFunction(() => {
+    const ui = window.webhvac && window.webhvac.state && window.webhvac.state.ui;
+    return !!ui && !ui.traceBusy && !ui.autoSetupBusy;
+  }, { timeout: 120000, polling: 250 })
   .catch(() => {});
 
 // ---- deterministic location auto-detect ------------------------------------------------
@@ -703,9 +705,12 @@ if (!sampleMissing) {
   const rowsAfterPlan = await page.$$eval("#roomsBody tr", (r) => r.length);
   ok("dragging on the drawing adds exactly one room", rowsAfterPlan === rowsBeforePlan + 1,
       `${rowsBeforePlan} -> ${rowsAfterPlan}`);
-  const planShapes = await page.$$eval(".plan-room", (n) => n.length);
-  ok("the overlay draws a box for the new room", planShapes === 1, `${planShapes} box(es)`);
-  const planLabel = await page.$eval(".plan-room-label", (e) => e.textContent).catch(() => "");
+  // The sheet now already carries the rooms the automatic setup placed and traced, so this check must
+  // measure the room the drag just made — found by its row id — not every shape on the page.
+  const drawnRowId = await page.$eval("#roomsBody tr:last-child", (tr) => tr.getAttribute("data-id"));
+  const planShapes = await page.$$eval(`.plan-room[data-room-id="${drawnRowId}"]`, (n) => n.length);
+  ok("the overlay draws a box for the new room", planShapes === 1, `${planShapes} box(es) for ${drawnRowId}`);
+  const planLabel = await page.$eval(`.plan-room[data-room-id="${drawnRowId}"] .plan-room-label`, (e) => e.textContent).catch(() => "");
   ok("the box is labelled", /Drawn room/.test(planLabel), JSON.stringify(planLabel));
 
   // the name and the numbers are <input>s, so read .value — row.textContent never contains them
@@ -815,7 +820,7 @@ if (!sampleMissing) {
     for (const tr of document.querySelectorAll("#roomsBody tr")) {
       const n = tr.querySelector('input[data-field="name"]');
       const a = tr.querySelector('input[data-field="area"]');
-      if (n && /Drawn room/.test(n.value)) out.push({ name: n.value, area: a ? Number(a.value) : null });
+      if (n && /Drawn room/.test(n.value)) out.push({ id: tr.getAttribute("data-id"), name: n.value, area: a ? Number(a.value) : null });
     }
     return out;
   });
@@ -828,18 +833,20 @@ if (!sampleMissing) {
 
   // A drawn box must land UNDER THE CURSOR. Area and size checks pass even when the box is placed
   // somewhere else entirely, which is exactly what a coordinate/scroll bug looks like.
-  const landed = await page.evaluate(([sx, sy]) => {
-    const svg = document.querySelector(".plan-overlay");
-    const sr = svg.getBoundingClientRect();
-    const boxes = [...document.querySelectorAll(".plan-room-box")];
-    const last = boxes[boxes.length - 1];
-    if (!last) return null;
-    return { x: sr.x + (+last.getAttribute("x")), y: sr.y + (+last.getAttribute("y")) };
-  }, [qx, qy]);
+  const landed = await page.evaluate(([rid]) => {
+    const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
+    const last = g ? g.querySelector(".plan-room-box") : null;
+    if (!last || !g.getBoundingClientRect) return null;
+    const sr = document.querySelector(".plan-overlay").getBoundingClientRect();
+    // the box is a <polygon> for a ring or a <rect> for a rect; read x/y either way
+    const x = Number(last.getAttribute("x"));
+    const y = Number(last.getAttribute("y"));
+    return { x: sr.x + x, y: sr.y + y };
+  }, [newest && newest.id]);
   const miss = landed ? { x: Math.round(landed.x - qx), y: Math.round(landed.y - qy) } : null;
   ok("the room lands under the cursor, not somewhere else on the sheet",
       !!miss && Math.abs(miss.x) <= 12 && Math.abs(miss.y) <= 12,
-      miss ? `off by ${miss.x},${miss.y} px from the drag start` : "no box found");
+      miss ? `off by ${miss.x},${miss.y} px from the drag start (room ${newest && newest.id})` : "no box found");
 
   // Drawing on the plan must not throw the user off the drawing: the breakdown appearing below is
   // fine, but the page must not scroll the sheet out of view (it did, after every single room).
@@ -1108,6 +1115,21 @@ if (!sampleMissing) {
       }));
       ok("with no stored mode, a fresh load opens on Draw shape (the default)",
         fresh.mode === "shape" && fresh.shape, JSON.stringify(fresh));
+
+      // SETUP for the drawing checks below: the automatic place-and-trace has left rooms on this
+      // sheet. A shape-mode click that lands INSIDE an existing room selects it and starts no shape (by
+      // design — overlay.js), so the fixed click points below would hit those rooms. Clear every room's
+      // geometry so these checks exercise the drawing tool against genuinely empty paper, exactly as
+      // they did before the automatic setup existed. (Nothing here weakens an assertion: the geometry
+      // is SETUP, and the checks still run against the real code.)
+      await page.evaluate(() => {
+        for (const r of window.webhvac.state.rooms) {
+          delete r.poly; delete r.polyPage; delete r.polyDrawing; delete r.polyArea; delete r.polyRatio;
+          delete r.rect; delete r.rectDrawing;
+        }
+        window.webhvac.renderAll();
+      });
+      await sleep2(300);
 
       // (iii) a DRAG in Draw shape → a rectangle room, area as the table shows it
       await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
@@ -1581,20 +1603,25 @@ if (!sampleMissing) {
   //     label on the drawing, and its description under the table. The drawing was the one that stayed
   //     stale: the in-table edit path deliberately does not rebuild the table (that would take the
   //     caret out of the cell being typed in) and forgot to redraw the plan overlay.
-  const drawnInput = await page.evaluateHandle(() =>
-    [...document.querySelectorAll('#roomsBody tr input[data-field="name"]')].find((i) => /Drawn room/.test(i.value)) || null);
-  const drawnEl = drawnInput.asElement();
+  const drawnRow = await page.evaluate(() => {
+    // Target a drawn room that is actually ON the drawing now — its box carries a "Drawn room" label.
+    // A drawn room whose geometry was cleared, or lies on another page, has no label to update, so
+    // renaming it would prove nothing. Pick by the id the visible label belongs to.
+    const g = [...document.querySelectorAll(".plan-room[data-room-id]")]
+      .find((x) => /Drawn room/.test(((x.querySelector(".plan-room-label") || {}).textContent) || ""));
+    return g ? g.getAttribute("data-room-id") : null;
+  });
+  const drawnEl = drawnRow ? await page.$(`tr[data-id="${drawnRow}"] input[data-field="name"]`) : null;
   const renamedTo = "Conference A";
   const renameResult = { before: null, labelsBefore: 0, after: null };
   if (drawnEl) {
     // open that room's breakdown FIRST: clicking a computed cell, not an input (row clicks on inputs
     // are ignored on purpose, so the caret can be placed while editing)
-    await page.evaluate(() => {
-      const input = [...document.querySelectorAll('#roomsBody tr input[data-field="name"]')]
-        .find((i) => /Drawn room/.test(i.value));
-      const cell = input && input.closest('tr').querySelector('.v-total');
+    await page.evaluate((id) => {
+      const tr = document.querySelector(`#roomsBody tr[data-id="${id}"]`);
+      const cell = tr && tr.querySelector(".v-total");
       if (cell) cell.click();
-    });
+    }, drawnRow);
     await new Promise((r) => setTimeout(r, 600));
     renameResult.detailOpen = await page.evaluate(() =>
       !document.getElementById("detailPanel").classList.contains("hidden"));
@@ -2521,10 +2548,14 @@ if (!sampleMissing) {
       fresh.length >= 2 && Math.abs(rowsFresh.reduce((a, b) => a + b, 0) - totalFresh) <= 2,
       `rows ${rowsFresh.join("+")} vs total ${totalFresh}`);
 
-    // A second press must say there is nothing left rather than pretend to work.
+    // A second press must say there is nothing left rather than pretend to work. The automatic setup
+    // changed the rooms' geometry after the first fill, and the fill's no-op guard keys on those
+    // shapes — so this press genuinely RE-RUNS the fill. Wait for it to finish before reading its line.
     await waitIdle();
     await page.click("#planFillAreas");
-    await new Promise((r) => setTimeout(r, 800));
+    await page.waitForFunction(() => !window.webhvac.state.ui.traceBusy
+      && document.getElementById("planProgress").dataset.active === "0", { timeout: 120000, polling: 200 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 500));
     const secondPress = await page.evaluate(() =>
       ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim());
     ok("pressing Fill areas again reports honestly that nothing is left",
@@ -2739,6 +2770,18 @@ if (!sampleMissing) {
       fingerRoom ? `rect ${fingerRoom.w}x${fingerRoom.h}; wanted ~${expectW.toFixed(2)}x${expectH.toFixed(2)} (garbage would be ~${badW.toFixed(2)})` : "no room drawn");
 
     // ---- (5) a drag that replaces an in-progress polygon must say so ----
+    // SETUP: the automatic place-and-trace left this freshly loaded sheet covered in locators, and a
+    // shape-mode click that lands inside an existing room selects it instead of placing a corner (by
+    // design, overlay.js). Clear that geometry so the fixed clicks below land on empty paper and the
+    // draft ring forms. Assertions still run against the real drawing code.
+    await page.evaluate(() => {
+      for (const r of window.webhvac.state.rooms) {
+        delete r.poly; delete r.polyPage; delete r.polyDrawing; delete r.polyArea; delete r.polyRatio;
+        delete r.rect; delete r.rectDrawing;
+      }
+      window.webhvac.renderAll();
+    });
+    await new Promise((r) => setTimeout(r, 300));
     await page.click("#planModeShape");
     await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
     await new Promise((r) => setTimeout(r, 400));
@@ -2815,6 +2858,22 @@ if (!sampleMissing) {
   await page.click("#btnSample");
   await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
   await new Promise((r) => setTimeout(r, 2500));
+  // SETUP: this page already carried rooms from earlier blocks, and the automatic place-then-trace
+  // leaves the loaded sheet covered in locators and outlines. A shape-mode click that lands INSIDE an
+  // existing room selects it and starts no shape (by design — overlay.js), so the fixed click points
+  // below would hit those rooms and draw nothing. Wait for the automatic run to finish, then clear the
+  // geometry so these checks exercise the polygon tool against empty paper. (Setup only — every
+  // assertion below still runs against the real code.)
+  await page.waitForFunction(() => !window.webhvac.state.ui.busy, { timeout: 180000, polling: 300 }).catch(() => {});
+  await waitIdle();
+  await page.evaluate(() => {
+    for (const r of window.webhvac.state.rooms) {
+      delete r.poly; delete r.polyPage; delete r.polyDrawing; delete r.polyArea; delete r.polyRatio;
+      delete r.rect; delete r.rectDrawing;
+    }
+    window.webhvac.renderAll();
+  });
+  await new Promise((r) => setTimeout(r, 400));
 
   const planBox = await page.evaluate(() => {
     const r = document.querySelector("#planView").getBoundingClientRect();
@@ -3014,6 +3073,20 @@ if (!sampleMissing) {
       const cell = tr && (tr.querySelector(".v-total") || tr.querySelector("td"));
       if (cell) cell.click();
     }, id);
+
+    // SETUP: the automatic place-and-trace now gives EVERY room a locator box, so no label-only room is
+    // left to test. Build one deterministically: keep a room's printed label position (`at`) and strip
+    // the geometry the automatic run added from all rooms — exactly the PDF-label room this section is
+    // about. The assertions below still test the real focus-mark behaviour for that room.
+    await page.evaluate(() => {
+      const rs = window.webhvac.state.rooms;
+      for (const r of rs) {
+        delete r.poly; delete r.polyPage; delete r.polyDrawing; delete r.polyArea; delete r.polyRatio;
+        delete r.rect; delete r.rectDrawing;
+      }
+      window.webhvac.renderAll();
+    });
+    await new Promise((r) => setTimeout(r, 300));
 
     const focus = await pickRow(false);
     ok("a plan-loaded room with a label position but no drawn shape is present in the table",
@@ -3312,10 +3385,15 @@ if (!sampleMissing) {
     await page.click("#btnSampleHouse");
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
     await settle(3000);
+    await page.waitForFunction(() => !window.webhvac.state.ui.busy, { timeout: 120000, polling: 300 }).catch(() => {});
     await waitIdle();
     await page.click("#planTraceOutlines");
-    await page.waitForFunction(() => window.webhvac.state.rooms.some((r) => r.poly && r.poly.length > 2), { timeout: 120000 });
-    await settle(2500);
+    // Wait for THIS trace to FINISH — not for "some room somewhere has a ring". The table already
+    // carries rings from a previous drawing, so that condition is satisfied the moment the click lands
+    // and the check would read the sheet before the trace has painted anything.
+    await page.waitForFunction(() => !window.webhvac.state.ui.traceBusy
+      && document.getElementById("planProgress").dataset.active === "0", { timeout: 120000, polling: 300 }).catch(() => {});
+    await settle(1500);
     await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
     await settle(400);
     const polyTarget = await page.evaluate(() => {
@@ -3447,6 +3525,27 @@ if (!sampleMissing) {
       afterReloadSame.planRooms > 0 && afterReloadSame.polys > 0 && afterReloadSame.drawingId != null,
       JSON.stringify(afterReloadSame));
 
+    // Capture what the page would actually send for this upload: hook the two transports js/usage.js
+    // uses (sendBeacon, then fetch) in the live page, so the CHECK reads the real bytes, not our idea
+    // of them. A blob body cannot be read from the intercepted request, which is why this is hooked
+    // inside the page instead.
+    await page.evaluate(() => {
+      window.__upEvents = [];
+      const keep = (d) => {
+        try {
+          if (d && typeof d.text === "function") d.text().then((t) => window.__upEvents.push(t)).catch(() => {});
+          else window.__upEvents.push(String(d));
+        } catch (e) { /* ignore */ }
+      };
+      const ob = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+      navigator.sendBeacon = (u, d) => { try { if (String(u).includes("/api/event")) keep(d); } catch (e) {} return ob ? ob(u, d) : true; };
+      const of = window.fetch;
+      window.fetch = function (u, o) {
+        try { if (String(u).includes("/api/event") && o && o.body) keep(o.body); } catch (e) {}
+        return of.apply(this, arguments);
+      };
+    });
+
     // (i)+(ii) upload a DIFFERENT drawing through the page's own file input.
     const input = await page.$('input[type="file"]');
     await input.uploadFile("D:/webhvac/tests/samples/sample-plan.pdf");
@@ -3469,6 +3568,24 @@ if (!sampleMissing) {
     ok("(ii) the status line reports the number of stale shapes",
       afterUpload.stale > 0 && afterUpload.statusText.includes(String(afterUpload.stale)),
       `stale ${afterUpload.stale}, status "${afterUpload.statusText}"`);
+
+    // (iii) THE UPLOAD COUNTER: an upload may travel as coarse bands only. The file, its name, its
+    // path and its exact size must never leave the page - the drawing is the one thing the site
+    // promises not to send, and a "size counter" is the easiest way to break that promise by accident.
+    await settle(3000);
+    const uploadEvents = (await page.evaluate(() => (window.__upEvents || []).slice()))
+      .map((t) => { try { return JSON.parse(t); } catch (e) { return { e: "(unparsed)" }; } });
+    const ups = uploadEvents.filter((x) => x.e === "plan_upload");
+    const upP = (ups[0] || {}).p || {};
+    const upFlat = JSON.stringify(uploadEvents);
+    ok("(iii) the upload counts exactly one plan_upload, as a size band (never the file)",
+      ups.length === 1 && ["under-1mb", "1-5mb", "5-20mb", "over-20mb"].includes(upP.sizeBucket)
+        && ["1-2", "3-5", "6-12", "over-12"].includes(upP.pages)
+        && ["under-25", "25-75", "76-150", "over-150"].includes(upP.rooms),
+      `count ${ups.length}, bands ${upP.sizeBucket}/${upP.pages}/${upP.rooms}`);
+    ok("(iii) no file name, no path and no exact byte count anywhere in what the page sent",
+      !/\.pdf/i.test(upFlat) && !/sample-plan/i.test(upFlat) && !/[A-Za-z]:[\\/]/.test(upFlat) && !/\d{5,}/.test(upFlat),
+      upFlat.slice(0, 150));
     ok("(ii) the remove control appears, labelled with that count",
       !!afterUpload.btn && !afterUpload.btn.hidden && afterUpload.btn.disabled === false
         && afterUpload.btn.text.includes(String(afterUpload.stale)) && /old drawing/i.test(afterUpload.btn.text),
@@ -4368,9 +4485,13 @@ if (!sampleMissing) {
     await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
     await page.click("#planFit");
     await settleP(1000);
+    // Let the AUTOMATIC run finish before attaching the recorder. Otherwise the bar is sampled from
+    // the tail of the automatic trace and then RESTARTS for the manual trace, so the combined series
+    // dips (159 -> 1) and reads as non-monotonic. This check is about ONE run of the button.
+    await waitIdle();
+    await settleP(400);
     await installRecorder("planTraceOutlines", "Tracing");
     const tTrace = Date.now();
-    await waitIdle();
     await page.click("#planTraceOutlines");
     // The bar must APPEAR first — an "it has finished" wait would otherwise be satisfied by the idle
     // state before the click takes effect — and only then must it go when the work ends.
@@ -4439,7 +4560,8 @@ if (!sampleMissing) {
       const p = window.__prog || {};
       return { vals: p.vals || [], vCount: (p.vals || []).length,
         monotonic: (p.vals || []).every((v, i, a) => i === 0 || v >= a[i - 1]),
-        texts: (p.texts || []).join(" | "), sawIndet: !!p.sawIndet, sawDisabled: !!p.sawDisabled, sawLabel: !!p.sawLabel,
+        texts: (p.texts || []).join(" | "), textList: p.texts || [],
+        sawIndet: !!p.sawIndet, sawDisabled: !!p.sawDisabled, sawLabel: !!p.sawLabel,
         role: p.role, min: p.min, max: p.max,
         active: el.dataset.active, ariaHidden: el.getAttribute("aria-hidden"), vis: getComputedStyle(el).visibility,
         btnText: document.getElementById("planFillAreas").textContent,
@@ -4448,9 +4570,18 @@ if (!sampleMissing) {
         withArea: window.webhvac.state.rooms.filter((r) => Number(r.area) > 0).length,
         status: (document.getElementById("planStatus") || {}).textContent.replace(/\s+/g, " ").trim() };
     });
+    // The bar now runs THREE times on this load: the sample's own fill, then the automatic place, then
+    // the automatic trace (the automatic setup when the sample has no printed areas). So the claim must
+    // be about the FILL's own count rising — not a single monotonic run across all three.
+    const fillCounts = (fp.textList || [])
+      .filter((t) => /^Filling areas from the drawing - /.test(t))
+      .map((t) => Number((t.match(/- (\d+) of 56 rooms/) || [])[1]))
+      .filter((n) => Number.isFinite(n));
     ok("the fill shows a progress bar naming it and counting rooms (the sample prints no areas)",
-      fp.role === "progressbar" && fp.vCount >= 2 && fp.monotonic && /Filling areas from the drawing - \d+ of 56 rooms/.test(fp.texts),
-      `${fp.vCount} samples "${String(fp.texts).slice(0, 80)}" in ${fillMs} ms`);
+      fp.role === "progressbar" && fillCounts.length >= 2
+        && fillCounts.every((v, i, a) => i === 0 || v >= a[i - 1]) && fillCounts[fillCounts.length - 1] > fillCounts[0]
+        && /Filling areas from the drawing - \d+ of 56 rooms/.test(fp.texts),
+      `fill count rose ${fillCounts.slice(0, 6).join(",")}… (${fillCounts.length} of ${fp.vCount} bar sample(s)) in ${fillMs} ms`);
     ok("the fill button is disabled and says it is working, and the bar goes when it ends",
       fp.sawDisabled && fp.sawLabel && fp.active === "0" && fp.vis === "hidden" && /^Fill areas from the drawing$/.test(fp.btnText),
       `disabled-during=${fp.sawDisabled} working=${fp.sawLabel} active=${fp.active} vis=${fp.vis} after "${fp.btnText}"`);
@@ -4494,6 +4625,165 @@ if (!sampleMissing) {
       pp.sawDisabled && pp.sawLabel && pp.active === "0" && pp.vis === "hidden"
         && /^Place all rooms on the plan$/.test(pp.btnText) && pp.placed > 0,
       `disabled-during=${pp.sawDisabled} working=${pp.sawLabel} active=${pp.active} placed=${pp.placed} after "${pp.btnText}"`);
+  }
+
+  // ------------------------------------------------------------------ //
+  // 21. THE AUTOMATIC SETUP OF A FRESHLY OPENED PLAN.                    //
+  //     Once a drawing is loaded AND its rooms exist, the app places     //
+  //     every room and traces the real outlines by itself — place first, //
+  //     then trace, then stop. It runs once per drawing, never runs the  //
+  //     area fill, and leaves one honest line saying it was automatic.   //
+  // ------------------------------------------------------------------ //
+  {
+    const sleep21 = (ms) => new Promise((r) => setTimeout(r, ms));
+    const geomSig = () => page.evaluate(() => window.webhvac.state.rooms
+      .map((r) => `${r.id}:${Array.isArray(r.poly) ? r.poly.length : 0}:${r.rect ? 1 : 0}`).join("|"));
+    // A recorder that counts how many times #planProgress goes ACTIVE and keeps its labels. It is
+    // installed as an init script so it also sees a run that starts during a page load (a reload).
+    const installBarRecorder = () => page.evaluateOnNewDocument(() => {
+      window.__bar = { runs: 0, labels: [] };
+      const attach = () => {
+        const el = document.getElementById("planProgress");
+        if (!el) { setTimeout(attach, 100); return; }
+        const txt = document.getElementById("planProgressText");
+        const note = (t) => {
+          if (!t) return;
+          const last = window.__bar.labels[window.__bar.labels.length - 1];
+          if (last !== t) window.__bar.labels.push(t);
+        };
+        let last = el.dataset.active;
+        if (last === "1") window.__bar.runs += 1;
+        new MutationObserver(() => {
+          const a = el.dataset.active;
+          if (a === "1" && last !== "1") window.__bar.runs += 1;
+          last = a;
+          if (a === "1" && txt) note(txt.textContent);
+        }).observe(el, { attributes: true, attributeFilter: ["data-active"] });
+        if (txt) new MutationObserver(() => {
+          if (el.dataset.active === "1") note(txt.textContent);
+        }).observe(txt, { childList: true, characterData: true });
+      };
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", attach);
+      else attach();
+    });
+
+    // (a) a fresh sample load ends with outlines traced automatically; (b) the bar was seen active.
+    await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await installBarRecorder();
+    await page.goto(SYNTH, { waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForSelector("#btnSample", { timeout: 30000 });
+    await page.click("#btnSample");
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    await waitIdle();
+    await sleep21(1500);   // let the auto line be written and the bar settle
+
+    const auto = await page.evaluate(() => {
+      const rs = window.webhvac.state.rooms;
+      return {
+        rooms: rs.length,
+        traced: rs.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length,
+        placed: rs.filter((r) => r.rect && r.rect.placed === true).length,
+        bar: window.__bar || { runs: 0, labels: [] },
+        status: ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim(),
+      };
+    });
+    ok("21 (a) a fresh sample load ends with outlines traced automatically",
+      auto.traced > 0, `${auto.traced} of ${auto.rooms} room(s) traced; ${auto.placed} placed`);
+    ok("21 (b) the progress bar was seen active during the automatic run",
+      auto.bar.runs >= 1 && auto.bar.labels.some((t) => /Placing rooms on the plan|Tracing outlines/.test(t)),
+      `${auto.bar.runs} bar run(s); labels ${JSON.stringify(auto.bar.labels.slice(0, 4))}`);
+    ok("21 the automatic run says so and quotes the real counts",
+      /straight from the drawing — automatically/.test(auto.status)
+        && (/Placed \d+ room locator/.test(auto.status) || /traced \d+ outline/.test(auto.status)),
+      auto.status.slice(0, 170));
+
+    // (c) it happens ONCE: reloading the same drawing traces nothing again and duplicates nothing.
+    const sigBefore = await geomSig();
+    await page.reload({ waitUntil: "networkidle2", timeout: 90000 });
+    await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100,
+      { timeout: 120000, polling: 400 });
+    await waitIdle();
+    await sleep21(2500);   // a second automatic run would have started and shown its bar by now
+    const afterReload = await page.evaluate(() => {
+      const rs = window.webhvac.state.rooms;
+      return {
+        rooms: rs.length,
+        traced: rs.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length,
+        sig: rs.map((r) => `${r.id}:${Array.isArray(r.poly) ? r.poly.length : 0}:${r.rect ? 1 : 0}`).join("|"),
+        bar: window.__bar || { runs: 0 },
+        status: ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim(),
+      };
+    });
+    ok("21 (c) reloading the same drawing does not trace again or duplicate geometry",
+      afterReload.rooms === auto.rooms && afterReload.traced === auto.traced && afterReload.sig === sigBefore,
+      `rooms ${auto.rooms} -> ${afterReload.rooms}, traced ${auto.traced} -> ${afterReload.traced}, geometry ${afterReload.sig === sigBefore ? "unchanged" : "CHANGED"}`);
+    ok("21 (c) no second automatic run starts on the reload",
+      afterReload.bar.runs === 0 && !/straight from the drawing — automatically/.test(afterReload.status),
+      `${afterReload.bar.runs} bar run(s) after the reload; status "${afterReload.status.slice(0, 90)}"`);
+
+    // (e) both manual buttons still do their job after the automatic run.
+    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await sleep21(300);
+    const placeBefore = await page.evaluate(() =>
+      window.webhvac.state.rooms.filter((r) => r.rect && r.rect.placed === true).length);
+    await waitIdle();
+    await page.click("#planPlaceAll");
+    await page.waitForFunction(() => !window.webhvac.state.ui.autoSetupBusy && !window.webhvac.state.ui.traceBusy
+      && document.getElementById("planProgress").dataset.active === "0", { timeout: 60000, polling: 200 }).catch(() => {});
+    await sleep21(500);
+    const placeRes = await page.evaluate(() => ({
+      status: ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim(),
+      placed: window.webhvac.state.rooms.filter((r) => r.rect && r.rect.placed === true).length,
+      btnDisabled: document.getElementById("planPlaceAll").disabled,
+    }));
+    ok("21 (e) 'Place all rooms' still works after the automatic run",
+      placeRes.placed >= placeBefore && placeRes.placed > 0 && placeRes.btnDisabled === false
+        && /already on the plan|Placed \d+ room/i.test(placeRes.status),
+      `${placeRes.placed} placed (was ${placeBefore}); "${placeRes.status.slice(0, 100)}"`);
+
+    await page.evaluate(() => { window.webhvac.plan.lastTrace = null; });
+    await waitIdle();
+    await page.click("#planTraceOutlines");
+    await page.waitForFunction(() => !!window.webhvac.plan.lastTrace
+      && !window.webhvac.state.ui.traceBusy && document.getElementById("planProgress").dataset.active === "0",
+      { timeout: 120000, polling: 300 }).catch(() => {});
+    await sleep21(800);
+    const traceRes = await page.evaluate(() => ({
+      status: ((document.getElementById("planStatus") || {}).textContent || "").replace(/\s+/g, " ").trim(),
+      accepted: window.webhvac.plan.lastTrace ? window.webhvac.plan.lastTrace.accepted : null,
+      btnDisabled: document.getElementById("planTraceOutlines").disabled,
+    }));
+    ok("21 (e) 'Trace real outlines' still works after the automatic run",
+      traceRes.accepted != null && traceRes.accepted > 0 && traceRes.btnDisabled === false
+        && /Real outlines for \d+ of/.test(traceRes.status),
+      `accepted ${traceRes.accepted}; "${traceRes.status.slice(0, 100)}"`);
+
+    // (d) a room whose geometry the USER already set is not re-placed or re-traced: with ANY room
+    //     carrying geometry on this drawing, the automatic run is skipped for that drawing.
+    const injected = [{ x: 111, y: 222 }, { x: 211, y: 222 }, { x: 211, y: 322 }, { x: 111, y: 322 }];
+    const guard = await page.evaluate((ring) => {
+      const h = window.webhvac;
+      for (const r of h.state.rooms) {
+        delete r.poly; delete r.polyPage; delete r.polyDrawing; delete r.polyArea; delete r.polyRatio;
+        delete r.rect; delete r.rectDrawing;
+      }
+      const keep = h.state.rooms[0];
+      keep.poly = ring.map((p) => ({ ...p }));
+      keep.polyPage = 1;
+      keep.polyDrawing = h.plan.drawingId;   // the user's own ring, measured on the drawing now loaded
+      h.renderAll();
+      // Forget the once-per-session note, so it is the EXISTING GEOMETRY alone that must skip the run.
+      h.planAutoSetupDone.delete(h.plan.drawingId);
+      const started = h.maybeAutoSetupPlan();
+      const others = h.state.rooms.filter((r) => r !== keep)
+        .filter((r) => r.rect || (Array.isArray(r.poly) && r.poly.length > 2)).length;
+      return { started: !!started, ringAfter: keep.poly, others, keepId: keep.id };
+    }, injected);
+    ok("21 (d) a room whose geometry the user already set is not re-placed or re-traced",
+      guard.started === false && guard.others === 0
+        && JSON.stringify(guard.ringAfter) === JSON.stringify(injected.map((p) => ({ ...p }))),
+      `started=${guard.started}, other rooms given geometry=${guard.others}, ring untouched=${JSON.stringify(guard.ringAfter).slice(0, 60)}`);
   }
 
   await page.goto(BASE + "selftest.html", { waitUntil: "load", timeout: 90000 });

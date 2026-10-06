@@ -18,6 +18,9 @@
 // If there is no data yet — or the CLI cannot reach CloudWatch — it prints zeros
 // and exits 0. It never throws.
 import { spawnSync } from "node:child_process";
+// The ONE allowlist, shared with the browser and the Lambda, so this tool can never report a value
+// the app is not allowed to send.
+import { PROP_VALUES } from "../js/usage.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -133,7 +136,10 @@ const SIGNAL_EVENTS = ["parse_failed", "fill_none", "js_error", "left_page"];
 // old code did FUNNEL.find(...).step and threw a TypeError on exactly that mismatch — which is what
 // share_link_copied and calc_empty did — printing nothing at all.
 const STEP_OF = new Map(FUNNEL.flatMap((f) => f.events.map((e) => [e, f.step])));
-const ALL_EVENTS = [...new Set([...FUNNEL.flatMap((f) => f.events), ...FAILURE_EVENTS, ...SIGNAL_EVENTS])];
+// Events that are neither funnel steps nor failures: reported on their own below. plan_upload carries
+// the COARSE BUCKETS of an uploaded drawing (size / pages / rooms) — never the file or its name.
+const DETAIL_EVENTS = ["plan_upload"];
+const ALL_EVENTS = [...new Set([...FUNNEL.flatMap((f) => f.events), ...FAILURE_EVENTS, ...SIGNAL_EVENTS, ...DETAIL_EVENTS])];
 // The events printed in the existing "Events" section — unchanged from before this tool grew a
 // "Where they fail" section, so that output stays identical above it.
 const LISTED_EVENTS = [...new Set([...FUNNEL.flatMap((f) => f.events), ...FAILURE_EVENTS])];
@@ -150,6 +156,8 @@ function tally(lines) {
   const contents = new Map();
   const signals = new Map(); // campaign -> { parse_failed:{reason:n}, fill_none:n, js_error:{area:n}, left_page:{stage:n} }
   const unknownNames = new Set();
+  // How big the drawings people brought were - buckets only, so nothing here identifies a person.
+  const uploads = { total: 0, size: {}, pages: {}, rooms: {}, readers: {}, large: 0 };
   let malformed = 0, unknown = 0, total = 0;
 
   const signalRecord = (k) => {
@@ -168,6 +176,25 @@ function tally(lines) {
     }
     total++;
     perEvent[ev.e] += 1;
+
+    if (ev.e === "plan_upload") {
+      const p2 = (ev.p && typeof ev.p === "object") ? ev.p : {};
+      uploads.total += 1;
+      // Defence in depth: the writer (lib/event.js) already refuses anything outside the vocabulary,
+      // and this reader refuses it AGAIN rather than trusting a log line. A value nobody allowlisted
+      // can therefore never reach the report, whatever ends up in the log.
+      const bump = (bucket, prop, value) => {
+        const allowed = PROP_VALUES[prop] || [];
+        if (typeof value === "string" && allowed.includes(value)) bucket[value] = (bucket[value] || 0) + 1;
+      };
+      bump(uploads.size, "sizeBucket", p2.sizeBucket);
+      bump(uploads.pages, "pages", p2.pages);
+      bump(uploads.rooms, "rooms", p2.rooms);
+      bump(uploads.readers, "reader", p2.reader);
+      // "Large" is the signal worth watching: a real consultant with a real sheet, not a poke at the
+      // sample. Size, page count or room count, whichever says it.
+      if (p2.sizeBucket === "over-20mb" || p2.pages === "over-12" || p2.rooms === "over-150") uploads.large += 1;
+    }
 
     // The failure / drop-off signals: recorded per campaign, but they are NOT funnel steps and NOT
     // the existing failure bucket, so the sections above stay exactly as they were.
@@ -200,7 +227,7 @@ function tally(lines) {
       map.get(k)[column] += 1;
     }
   }
-  return { perEvent, stepCount, failures, campaigns, contents, signals, unknownNames, malformed, unknown, total };
+  return { perEvent, stepCount, failures, campaigns, contents, signals, uploads, unknownNames, malformed, unknown, total };
 }
 
 /* ------------------------------- report --------------------------------- */
@@ -255,8 +282,28 @@ function printWhereTheyFail(signals) {
   console.log("");
 }
 
+/** What people actually brought: the buckets of every uploaded drawing in the window. The file, its
+ *  name and its exact size are never recorded, so this tells you the SHAPE of the uploads, not who. */
+function printUploads(uploads) {
+  const u = uploads || { total: 0, size: {}, pages: {}, rooms: {}, readers: {}, large: 0 };
+  console.log("Uploads (how big the drawings people brought were - buckets, never the file)");
+  if (!u.total) {
+    console.log("  (no plan_upload events in this window)");
+    console.log("");
+    return;
+  }
+  const order = (obj, list) => list.map((k) => `${k} ${obj[k] || 0}`).join("   ");
+  console.log(`  uploads recorded            ${u.total}`);
+  console.log(`  size     ${order(u.size, ["under-1mb", "1-5mb", "5-20mb", "over-20mb"])}`);
+  console.log(`  pages    ${order(u.pages, ["1-2", "3-5", "6-12", "over-12"])}`);
+  console.log(`  rooms    ${order(u.rooms, ["under-25", "25-75", "76-150", "over-150"])}`);
+  console.log(`  read by  ${order(u.readers, ["browser", "server", "ocr"])}`);
+  console.log(`  LARGE (over 20 MB, over 12 pages or over 150 rooms): ${u.large}${pct(u.large, u.total)}`);
+  console.log("");
+}
+
 function printReport(t, opts, window) {
-  const { perEvent, stepCount, failures, campaigns, contents, signals, unknownNames, malformed, unknown, total } = t;
+  const { perEvent, stepCount, failures, campaigns, contents, signals, uploads, unknownNames, malformed, unknown, total } = t;
 
   console.log(`LoadLens usage funnel — last ${opts.days} day(s)`);
   console.log(`  log group : ${opts.logGroup}   region: ${opts.region}`);
@@ -321,6 +368,7 @@ function printReport(t, opts, window) {
   }
 
   printWhereTheyFail(signals);
+  printUploads(uploads);
 }
 
 /* -------------------------------- main ---------------------------------- */
@@ -383,7 +431,7 @@ function main() {
   process.exit(0); // always success: an empty window is not an error
 }
 
-export { FUNNEL, FAILURE_EVENTS, SIGNAL_EVENTS, ALL_EVENTS, LISTED_EVENTS, STEP_OF, COLUMNS, tally, printReport, printWhereTheyFail, parseArgs, readUsageLines, stripPrefix };
+export { FUNNEL, FAILURE_EVENTS, SIGNAL_EVENTS, DETAIL_EVENTS, ALL_EVENTS, LISTED_EVENTS, STEP_OF, COLUMNS, tally, printReport, printWhereTheyFail, parseArgs, readUsageLines, stripPrefix };
 
 // Only run the CLI when this file is executed directly; importing it (tests) must not touch AWS.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

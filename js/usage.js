@@ -27,6 +27,7 @@ export const EVENTS = [
   'app_open',          // the calculator page was loaded
   'sample_loaded',     // the built-in sample drawing was loaded
   'plan_parsed',       // a PDF floor plan parsed successfully
+  'plan_upload',       // a floor plan was uploaded — coarse size/page/room BUCKETS only, never the file
   'schedule_imported', // an Excel/CSV room schedule was imported
   'trace_run',         // "trace real outlines" finished a pass
   'rooms_placed',      // "place all rooms on the plan" placed at least one box
@@ -52,7 +53,41 @@ export const PROP_VALUES = {
   area: ['parse', 'trace', 'calc', 'ui', 'other'],
   // how far a visit got before the page was left (the furthest stage reached)
   stage: ['nothing', 'loaded', 'has_rooms', 'has_load', 'exported'],
+  // HOW BIG an uploaded drawing was — a coarse bucket, never a byte count, and never the file, its
+  // name or its contents. A precise size plus a timestamp is close to a fingerprint of one person.
+  sizeBucket: ['under-1mb', '1-5mb', '5-20mb', 'over-20mb'],
+  // how many PAGES the drawing had, and how many ROOMS were read out of it — same rule, same reason
+  pages: ['1-2', '3-5', '6-12', 'over-12'],
+  rooms: ['under-25', '25-75', '76-150', 'over-150'],
 };
+
+/* Coarse buckets for an upload. Exported so the browser and the server-side allowlist above can
+   never drift apart: a value not in PROP_VALUES is dropped by lib/event.js before it is logged. */
+export function bucketBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const mb = n / (1024 * 1024);
+  if (mb < 1) return 'under-1mb';
+  if (mb < 5) return '1-5mb';
+  if (mb < 20) return '5-20mb';
+  return 'over-20mb';
+}
+export function bucketPages(pages) {
+  const n = Number(pages);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n <= 2) return '1-2';
+  if (n <= 5) return '3-5';
+  if (n <= 12) return '6-12';
+  return 'over-12';
+}
+export function bucketRooms(rooms) {
+  const n = Number(rooms);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n < 25) return 'under-25';
+  if (n <= 75) return '25-75';
+  if (n <= 150) return '76-150';
+  return 'over-150';
+}
 
 /** The only URL parameters this module reads or forwards. */
 export const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'];

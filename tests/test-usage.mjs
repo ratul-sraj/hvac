@@ -42,16 +42,30 @@ const postEvent = (rawBody, { base64 = false, path = "/api/event", method = "POS
 
 /* ---------- the allowlist is the surface -------------------------------- */
 ok("js/usage.js exposes the surface for tests (TRACKABLE boolean)", TRACKABLE === true);
-ok("js/usage.js exports exactly the fourteen events",
-  Array.isArray(EVENTS) && EVENTS.length === 14 && ALL_EVENTS.every((e) => EVENTS.includes(e)),
+ok("js/usage.js exports exactly the fifteen events (plan_upload joined for the upload-size counter)",
+  Array.isArray(EVENTS) && EVENTS.length === 15 && ALL_EVENTS.every((e) => EVENTS.includes(e)),
   EVENTS.join(","));
-ok("the Lambda accepts exactly the same fourteen events (single source of truth)",
-  EVENT_NAMES instanceof Set && EVENT_NAMES.size === 14 && ALL_EVENTS.every((e) => EVENT_NAMES.has(e)));
+ok("the Lambda accepts exactly the same fifteen events (single source of truth)",
+  EVENT_NAMES instanceof Set && EVENT_NAMES.size === 15 && ALL_EVENTS.every((e) => EVENT_NAMES.has(e)));
 ok("lambda rejects an event that js/usage.js does not list",
   !EVENT_NAMES.has("page_scroll") && !EVENTS.includes("page_scroll"));
 ok("coarse property vocabulary has no free-text key",
-  Object.keys(PROP_VALUES).sort().join(",") === "area,reader,reason,source,stage",
+  Object.keys(PROP_VALUES).sort().join(",") === "area,pages,reader,reason,rooms,sizeBucket,source,stage",
   Object.keys(PROP_VALUES).join(","));
+// The upload-size counter is the newest way a drawing could leak: prove it can only ever travel as a
+// short band, never as a name, a path or an exact byte count.
+ok("every vocabulary value is a short closed token, never free text",
+  Object.values(PROP_VALUES).every((v) => Array.isArray(v) && v.length > 0 &&
+    v.every((x) => typeof x === "string" && x.length <= 12 && !/[ .:/\\]/.test(x))),
+  JSON.stringify(PROP_VALUES.sizeBucket) + " " + JSON.stringify(PROP_VALUES.pages));
+const upProps = (props) => (buildPayload("plan_upload", props) || {}).p || {};
+ok("a file's size may travel only as one of the four bands",
+  upProps({ sizeBucket: "over-20mb" }).sizeBucket === "over-20mb" &&
+  upProps({ sizeBucket: "D:/Clients/ACME Tower L11.pdf" }).sizeBucket === undefined &&
+  upProps({ sizeBucket: "24,576,001 bytes" }).sizeBucket === undefined);
+ok("the same gate holds for page and room counts",
+  upProps({ pages: "6-12", rooms: "over-150" }).pages === "6-12" &&
+  upProps({ pages: "37 pages", rooms: "149 rooms" }).rooms === undefined);
 
 /* ---------- UTM parsing (from a URL string) ----------------------------- */
 const utms = parseUtms("https://loadlens.net/app.html?utm_source=google&utm_medium=cpc&utm_campaign=kerala-hvac&utm_content=ad-3#x");

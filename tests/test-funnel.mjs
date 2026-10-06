@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tally, FUNNEL, FAILURE_EVENTS, SIGNAL_EVENTS, ALL_EVENTS, STEP_OF, stripPrefix } from "../tools/funnel.mjs";
+import { tally, FUNNEL, FAILURE_EVENTS, SIGNAL_EVENTS, DETAIL_EVENTS, ALL_EVENTS, STEP_OF, stripPrefix } from "../tools/funnel.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -61,8 +61,8 @@ function firstJson(s) {
 /* ---------- the crash fix: every known event maps to a step or a failure bucket ------ */
 ok("FUNNEL has four success steps", FUNNEL.length === 4, FUNNEL.map((f) => f.step).join(","));
 for (const e of ALL_EVENTS) {
-  const mapped = STEP_OF.has(e) || FAILURE_EVENTS.includes(e) || SIGNAL_EVENTS.includes(e);
-  ok(`event "${e}" maps to a step, the failure bucket or a signal (never neither)`, mapped);
+  const mapped = STEP_OF.has(e) || FAILURE_EVENTS.includes(e) || SIGNAL_EVENTS.includes(e) || DETAIL_EVENTS.includes(e);
+  ok(`event "${e}" maps to a step, the failure bucket, a signal or a detail section (never neither)`, mapped);
 }
 ok("share_link_copied belongs to the converted step (no more TypeError)",
   STEP_OF.get("share_link_copied") === "converted");

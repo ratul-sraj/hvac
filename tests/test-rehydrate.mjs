@@ -94,8 +94,12 @@ try {
 
   const loadBefore = await readLoad();
   await page.click("#planPlaceAll");
-  await page.waitForFunction((n) => window.webhvac.state.rooms.filter((r) => r.rect).length >= n,
+  // The rooms already carry the locator boxes the automatic setup placed, so a wait for `rect` would
+  // be satisfied before the click's work begins. Wait for the click's REAL effect instead: the
+  // re-read recovering a position for every room (the thing this suite is about).
+  await page.waitForFunction((n) => window.webhvac.state.rooms.filter((r) => r.at).length >= n,
     { timeout: 120000 }, EXPECTED_ROOMS).catch(() => {});
+  await new Promise((r) => setTimeout(r, 600));   // let the status line settle before reading it
   const after = await readState();
   const status = await readStatus();
   const loadAfter = await readLoad();

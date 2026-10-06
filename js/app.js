@@ -40,7 +40,7 @@ import { resolveClimate, countryFromTimezone, countryFromLocale, locationKey } f
 // Anonymous usage counting (js/usage.js): a strict allowlist of real actions plus
 // the utm_* campaign tags already in the URL. No cookies, no ids, no plan data —
 // see the module header. Every call is a no-op if counting is unavailable.
-import { track } from './usage.js';
+import { track, bucketBytes, bucketPages, bucketRooms } from './usage.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -130,6 +130,9 @@ const state = {
     order: [],
     busy: false,
     planMode: 'shape',
+    // True while the automatic "place then trace" of a freshly opened plan runs, so a manual press of
+    // a plan button during it is a no-op rather than a second run (see maybeAutoSetupPlan).
+    autoSetupBusy: false,
   },
   // Filled once on load by probeServer(): is the Express server (server.js) there?
   server: { available: false, version: null, checked: false },
@@ -2093,6 +2096,29 @@ async function parseFilesOnServer(files) {
 // `readers` = who read the files (server / browser / OCR / room schedule),
 // `scanned` = a PDF came back with 0 rooms and no text layer while OCR was off,
 // `ocrEmpty` = OCR ran, the page(s) were read, and 0 rooms came out of them.
+/* ONE line per upload, saying only how big the drawing was and how much came out of it:
+ *   * sizeBucket -- which size band the file fell in. Never the exact byte count: a precise size
+ *     plus a timestamp is close to a fingerprint, and the band answers the only question we have.
+ *   * pages / rooms -- which band the page and room counts fell in.
+ *   * reader -- which reader actually produced the rooms.
+ * The file itself, its name, its contents and anything derived from them are NEVER sent: whatever
+ * may travel is limited to the coarse vocabularies in js/usage.js, and anything else is dropped
+ * before it leaves the browser. Called by BOTH exits of handleFiles() — the server path returns
+ * early, so this cannot live at the end of the function alone. */
+function trackPlanUpload(pdfs, pagesRead, added, readers) {
+  try {
+    track('plan_upload', {
+      source: 'upload',
+      reader: readers.has('server') ? 'server' : (readers.has('ocr') ? 'ocr' : 'browser'),
+      sizeBucket: bucketBytes(pdfs.reduce((s, f) => s + ((f && f.size) || 0), 0)),
+      pages: bucketPages(pagesRead),
+      rooms: bucketRooms(added),
+    });
+  } catch {
+    /* counting must never break an upload */
+  }
+}
+
 function finishUpload(added, skipped, failed, notes, serverError, readers, scanned, ocrEmpty) {
   state.ui.busy = false;
   el.dropzone.classList.remove('busy');
@@ -2116,6 +2142,9 @@ function finishUpload(added, skipped, failed, notes, serverError, readers, scann
     noteParseFailed(uploadFailReason || (ocrEmpty ? 'no_rooms' : scanned ? 'no_text' : 'no_rooms'));
     noteCalcEmpty('upload');   // nothing usable came out of this upload
   }
+  // The drawing is up and its rooms now exist: place them, then trace the outlines, by itself. A call
+  // that arrives before the viewer has finished loading is harmless — openPlan's own end calls again.
+  maybeAutoSetupPlan();
 }
 
 async function handleFiles(fileList) {
@@ -2175,6 +2204,8 @@ async function handleFiles(fileList) {
   }
 
   // --- 2. PDF drawings -----------------------------------------------------
+  // Pages read across the whole upload, used for one coarse plan_upload line at the end.
+  let pagesRead = 0;
   // Server path: text-layer PDFs only, and never when the user asked for OCR.
   if (pdfs.length && !useOcr && state.server.available) {
     setProgress(pdfs.length === 1
@@ -2200,6 +2231,7 @@ async function handleFiles(fileList) {
       if (out.warnings && out.warnings.length) pushWarnings(out.warnings);
       readers.add('server');
       track('plan_parsed', { reader: 'server' });
+      pagesRead += (out.files || []).reduce((s, info) => s + (info.pages || 0), 0);
       if (out.files && out.files.length) {
         for (const info of out.files) {
           const n = (typeof info.roomCount === 'number')
@@ -2212,6 +2244,7 @@ async function handleFiles(fileList) {
         notes.push(`${pdfs.length} file(s) read on the server`);
       }
       if (!res.added) uploadFailReason = uploadFailReason || (scanned ? 'no_text' : 'no_rooms');
+      trackPlanUpload(pdfs, pagesRead, added, readers);
       finishUpload(added, skipped, failed, notes, '', readers, scanned);
       return;
     } catch (err) {
@@ -2239,6 +2272,7 @@ async function handleFiles(fileList) {
       noteDetectedUnits(out);   // one plain line: what system the SHEET uses
       readers.add(useOcr ? 'ocr' : 'browser');
       track('plan_parsed', { reader: useOcr ? 'ocr' : 'browser' });
+      pagesRead += out.pages || 0;
       if (out.warnings && out.warnings.length) {
         pushWarnings(out.warnings.map((w) => `${f.name}: ${w}`));
       }
@@ -2262,6 +2296,8 @@ async function handleFiles(fileList) {
       notes.push(`${f.name}: FAILED — ${shortReason(msg)}`);
     }
   }
+
+  trackPlanUpload(pdfs, pagesRead, added, readers);   // local path: the server path returned above
 
   finishUpload(added, skipped, failed, notes, serverError, readers, scanned, ocrEmpty);
 }
@@ -2353,7 +2389,7 @@ async function loadSample(which) {
     return;
   }
   try {
-    openPlan(buf, { name: used });   // show the sample drawing straight away
+    await openPlan(buf, { name: used });   // show the sample drawing before its rooms are read
     setSampleCredit(which);          // and name whichever drawing this is, under its licence
     setProgress(`Reading ${used} ...`);
     const out = await parseOne(buf, used, 0, 1);
@@ -2394,6 +2430,8 @@ async function loadSample(which) {
         ? `Sample drawing loaded: ${r.added} room(s) added${r.skipped ? `, ${r.skipped} duplicate(s) skipped` : ''}. Please check the areas.`
         : 'The sample drawing was read but no rooms were found. Please add rooms manually.');
     }
+    // The rooms exist and the drawing is up: place them, then trace the outlines, by itself.
+    await maybeAutoSetupPlan();
   } catch (err) {
     setProgress(null);
     setStatus('err', `The sample drawing could not be read (${(err && err.message) || err}).`);
@@ -2416,6 +2454,9 @@ async function loadSample(which) {
 const plan = {
   mods: null, viewer: null, overlay: null, bytes: null, traceBytes: null,
   page: 1, pages: 1, wired: false, unavailable: false,
+  // True once the drawing has finished loading into the viewer — the plan auto-setup (place then
+  // trace) waits for this AND for the rooms to exist (see maybeAutoSetupPlan).
+  loaded: false,
   // Identity of the drawing now loaded (see drawingIdentity). Every shape is tagged with the identity
   // of the drawing it was measured on, and the overlay paints only shapes that match this one.
   drawingId: null,
@@ -2961,7 +3002,9 @@ function planDeleteRoom(id) {
  * Rooms are placed on THEIR OWN page (room.page), not the page being viewed. */
 
 /** Give every table room that the drawing names a clickable locator box on its own page. */
-async function planPlaceAllRooms() {
+async function planPlaceAllRooms(opts) {
+  // A manual press while the automatic setup is running must be a no-op, not a second run.
+  if (state.ui.autoSetupBusy && !(opts && opts.__auto)) return;
   if (!state.rooms.length) {
     setStatus('warn', 'There are no rooms in the table to place yet. Load a drawing or add rooms first.', 'plan');
     return;
@@ -3284,7 +3327,9 @@ function yieldToBrowser() {
 }
 
 /** Read the plan's own linework and give every room it can verify a real outline. */
-async function planTraceOutlines() {
+async function planTraceOutlines(opts) {
+  // A manual press while the automatic setup is running must be a no-op, not a second run.
+  if (state.ui.autoSetupBusy && !(opts && opts.__auto)) return;
   if (state.ui.traceBusy) return;
   if (!state.rooms.length) {
     setStatus('warn', 'There are no rooms to trace yet. Load a drawing or add rooms first.', 'plan');
@@ -3533,6 +3578,87 @@ async function planTraceOutlines() {
     planTraceBusy(false);
     restoreTraceBtn();
   }
+}
+
+/* ---- automatic setup of a freshly opened plan ---------------------------------------------------
+ * A first-time visitor should not have to discover "Place all rooms" and "Trace real outlines": once
+ * a drawing is loaded AND its rooms exist, the app runs those two steps itself — place first, then
+ * trace, then stop. It never runs the area fill (that stays a manual button), never runs before the
+ * rooms exist, and never runs when there is no drawing. A drawing whose rooms already carry geometry
+ * (a re-load, a restored project, or the user's own work) is left exactly as it is, and a drawing is
+ * set up at most once per session. Each step reuses the buttons' own progress bar, busy labels and
+ * yielding; on any failure the run simply stops, the manual buttons stay usable and the bar is hidden
+ * (every step hides it in its own finally). */
+
+const planAutoSetupDone = new Set();   // drawingId -> automatic setup ran (or was skipped) for it
+let planAutoSetupRunning = false;
+
+/** Has any room already been given geometry — a traced ring (poly/polyPage) or a placed / hand-drawn
+ *  box (rect)? If so the plan is already set up (this drawing, a restored project, or the user's own
+ *  work) and the automatic run must not touch it. It also must not run when an OLDER drawing's rooms
+ *  are still on the table: re-placing them on a new sheet would trample the "old drawing's shapes"
+ *  behaviour (they are reported stale and offered for removal, never silently re-measured). */
+function roomsHavePlanGeometry() {
+  return state.rooms.some((r) => r && (
+    (Array.isArray(r.poly) && r.poly.length > 2) || r.polyPage != null
+    || (r.rect && typeof r.rect.x === 'number')));
+}
+
+/** Run the automatic setup once the drawing is loaded and the rooms exist. Called at the end of the
+ *  drawing load AND after the rooms arrive (a load path reaches one before the other), so whichever
+ *  call first finds BOTH ready does the work; every other call does nothing. */
+function maybeAutoSetupPlan() {
+  if (planAutoSetupRunning) return null;
+  if (!plan.loaded || plan.drawingId == null || plan.unavailable || !plan.viewer) return null;
+  if (!state.rooms.length) return null;
+  if (planAutoSetupDone.has(plan.drawingId)) return null;
+  if (roomsHavePlanGeometry()) { planAutoSetupDone.add(plan.drawingId); return null; }
+  return planAutoSetup();
+}
+
+/** Place every room, then trace the real outlines, once — quietly, and never leaving a bad state. */
+async function planAutoSetup() {
+  if (planAutoSetupRunning) return;
+  planAutoSetupRunning = true;
+  state.ui.autoSetupBusy = true;           // manual presses during the run are no-ops (the guards)
+  planAutoSetupDone.add(plan.drawingId);   // never twice for the same drawing this session
+  // The drawing's own message (a sample fill's line, say) is overwritten by each step's status below,
+  // so keep it here and put the automatic line AFTER it — the fill's counts stay on screen.
+  const prior = (el.planStatus && !el.planStatus.classList.contains('hidden'))
+    ? el.planStatus.textContent.replace(/\s+/g, ' ').trim() : '';
+  try {
+    await planPlaceAllRooms({ __auto: true });
+    const placed = state.rooms.filter(isPlacedRoom).length;
+    await planTraceOutlines({ __auto: true });
+    const traced = state.rooms.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length;
+    planAutoSetupStatus(placed, traced, prior);
+  } catch (err) {
+    // Never leave a bad state: each step hid its own bar and restored its own button in a finally, and
+    // the manual buttons stay usable. Say nothing extra — the drawing just did not need the help.
+    console.warn('[plan] automatic setup failed:', (err && err.message) || err);
+  } finally {
+    state.ui.autoSetupBusy = false;
+    planAutoSetupRunning = false;
+  }
+}
+
+/** One honest line when the automatic setup finishes: the REAL counts, and that it was automatic. It
+ *  is appended to whatever the drawing's own message already said (`prior`, still one line), and never
+ *  claims work that did not happen. */
+function planAutoSetupStatus(placed, traced, prior) {
+  const bits = [];
+  if (placed) bits.push(`Placed ${placed} room locator${placed === 1 ? '' : 's'}`);
+  if (traced) bits.push(`traced ${traced} outline${traced === 1 ? '' : 's'}`);
+  let line;
+  if (bits.length === 2) line = `${bits[0]} and ${bits[1]} straight from the drawing — automatically.`;
+  else if (bits.length === 1) line = `${bits[0]} straight from the drawing — automatically.`;
+  else line = 'Opened the drawing automatically, but no room could be placed or traced from it.';
+  line += ' Use "Fill areas from the drawing" to measure the rest.';
+  const existing = String(prior == null ? '' : prior).replace(/\s+/g, ' ').trim();
+  if (existing && existing.indexOf('straight from the drawing — automatically') < 0) {
+    line = `${existing} ${line}`;
+  }
+  setStatus('ok', line, 'plan');
 }
 
 /** The one-click scale fix, shown ON the plan panel (in #planScaleFix, above the drawing) when a
@@ -3881,7 +4007,9 @@ function planFillSignature() {
 
 /** Read the plan's own linework and give the blank named rooms an area — but only where the match is
  *  unambiguous. Never overwrites an area, never touches a stairwell, never invents a number. */
-async function planFillAreas() {
+async function planFillAreas(opts) {
+  // A manual press while the automatic setup is running must be a no-op, not a second run.
+  if (state.ui.autoSetupBusy && !(opts && opts.__auto)) return;
   if (state.ui.traceBusy) return;
   if (!state.rooms.length) {
     setStatus('warn', 'There are no rooms to fill yet. Load a drawing or add rooms first.', 'plan');
@@ -4477,6 +4605,7 @@ async function unloadPlan() {
   plan.bytes = null;
   plan.traceBytes = null;
   plan.stored = false;
+  plan.loaded = false;
   plan.page = 1;
   plan.pages = 1;
   plan.revealed = false;
@@ -4900,6 +5029,7 @@ async function openPlan(bytes, opts) {
   // Give this drawing an identity BEFORE anything can detach or copy the bytes: every shape measured
   // from it is tagged with it, and the overlay paints only shapes that match the drawing now loaded.
   plan.drawingId = drawingIdentity(bytes);
+  plan.loaded = false;               // until the viewer has really shown it (set at the end of the try)
   scaleFixUsedDrawing = undefined;   // a different drawing has its own one-click scale fix
   // pdf.js DETACHES the ArrayBuffer it is handed — it transfers it to its worker — so a buffer shared
   // with the parser is already dead for whoever asks second ("ArrayBuffer at index 0 is already
@@ -4974,6 +5104,7 @@ async function openPlan(bytes, opts) {
     plan.page = (typeof plan.viewer.getCurrentPage === 'function') ? plan.viewer.getCurrentPage() : 1;
     if (plan.overlay) { plan.overlay.resize(); plan.overlay.render(); }
     planSync();
+    plan.loaded = true;   // on screen now — the auto-setup waits for this AND for the rooms to exist
     if (keep) storeDrawing(keep, o.name);
     // A drawing just loaded: if rooms still carry shapes measured on an EARLIER drawing, say so (with
     // the count) and keep the one-click removal control in step. A restore of the SAME drawing finds
@@ -4986,6 +5117,9 @@ async function openPlan(bytes, opts) {
       plan.revealed = true;
       try { el.planCard.scrollIntoView({ block: 'nearest' }); } catch (err) { /* older browsers */ }
     }
+    // The drawing is up: place its rooms and trace their outlines by itself, if the rooms are here and
+    // the drawing does not already carry geometry (a re-load or a restored project is left alone).
+    maybeAutoSetupPlan();
   } catch (err) {
     // Say it out loud as well as on screen: a silent catch here once hid a broken plan view, and
     // the message was then overwritten by the next status update from the parse.
@@ -5403,4 +5537,4 @@ function start() {
 start();
 
 /* keep a couple of internals reachable for quick console debugging */
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a) };
+window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a), planAutoSetup, maybeAutoSetupPlan, roomsHavePlanGeometry, planAutoSetupDone };
