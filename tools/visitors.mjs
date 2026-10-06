@@ -180,10 +180,17 @@ function printHelp() {
   --bucket NAME   S3 bucket holding the logs (default ${DEFAULT_BUCKET})
   --prefix P      key prefix (default ${DEFAULT_PREFIX})
   --region R      AWS region (default ${DEFAULT_REGION})
+  --selftest      check the path classifier and the scanner rules on known examples, then exit
+                  (no AWS access - run it after touching the file list or the rules)
 
 A visitor is a short salted hash of (address + browser), one per UTC day. A raw address is
-never printed and never stored. Own traffic is excluded by a bot deny-list and by the
-own-address file above (which stays outside this repo).
+never printed and never stored. A visitor counts when they open a PAGE (assets are not a visit).
+
+Traffic that is not people is removed three ways, each reported separately: a user-agent
+deny-list, the own-address file above, and the scanner filter - a visitor whose every request is
+for a path this site does not have. That last one is decidable because the site is static with a
+real file list (plus the API paths CloudFront sends to the Lambda), so it is not a guess about who
+someone claims to be. --selftest proves the classifier if you change the list.
 
 The report also groups unique real visitors by the utm_campaign carried in the request URL
 ("(none)" = untagged), and shows the campaign/content pair when a request carried both, so a
