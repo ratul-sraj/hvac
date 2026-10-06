@@ -240,7 +240,7 @@ function newId() {
  *  #statusBox lives in the upload section, ~155 px above the plan panel's buttons — off-screen, so
  *  "Real outlines for 105 of 159 room(s)…" was never seen (UX review, item 1). The text is built once
  *  and passed to both, never duplicated. */
-function setStatus(kind, msg, scope) {
+function setStatus(kind, msg, scope, opts) {
   if (!msg) {
     el.statusBox.classList.add('hidden'); el.statusBox.textContent = '';
     if (scope === 'plan') hidePlanStatus();
@@ -249,14 +249,16 @@ function setStatus(kind, msg, scope) {
   el.statusBox.className = 'status ' + (kind || '');
   el.statusBox.textContent = msg;
   el.statusBox.classList.remove('hidden');
-  if (scope === 'plan') showPlanStatus(kind, msg);
+  if (scope === 'plan') showPlanStatus(kind, msg, opts && opts.hideAfterMs);
 }
 
 /** Mirror a status message into the plan panel's own line (see setStatus).
  *  Good news fades itself away after 10 s (the room count after outlining has
- *  been read by then); problems stay on screen until the next action. */
+ *  been read by then); problems stay on screen until the next action. A caller can
+ *  shorten that with opts.hideAfterMs - a confirmation that only says an edit was
+ *  taken back is a flash, not a paragraph. */
 let planStatusTimer = 0;
-function showPlanStatus(kind, msg) {
+function showPlanStatus(kind, msg, hideAfterMs) {
   if (!el.planStatus) return;
   el.planStatus.className = 'plan-status ' + (kind || '');
   el.planStatus.textContent = msg;
@@ -267,7 +269,8 @@ function showPlanStatus(kind, msg) {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(placePlanStatus);
   clearTimeout(planStatusTimer);
   if (kind !== 'warn' && kind !== 'err') {
-    planStatusTimer = setTimeout(hidePlanStatus, 10000);
+    const hold = Number.isFinite(hideAfterMs) && hideAfterMs > 0 ? hideAfterMs : 10000;
+    planStatusTimer = setTimeout(hidePlanStatus, hold);
   }
 }
 
@@ -2849,7 +2852,9 @@ function undoPlanEdit() {
   renderAll();
   saveNow();
   planRenderGeometry();                 // the sheet itself shows the restored shape
-  setStatus('ok', `Undone: ${entry.label}. The drawing is back as it was.`, 'plan');
+  // One second, not ten: the reader asked for the confirmation to get out of the way
+  // ("the notification stays too long").
+  setStatus('ok', `Undone: ${entry.label}. The drawing is back as it was.`, 'plan', { hideAfterMs: 1000 });
   return true;
 }
 
@@ -3129,6 +3134,7 @@ async function planPlaceAllRooms(opts) {
     const rect = rectFromLabel(room.at, area, denom, { length: room.length, width: room.width });
     if (!rect) { noArea += 1; continue; }
     // each room's box goes on ITS OWN page, not the page the user happens to be looking at
+    if (gen != null && gen !== planSetupGen) return;   // the drawing went away: place nothing more
     room.rect = { ...rect, page: room.page || 1 };
     room.rectDrawing = plan.drawingId;   // the drawing this box was measured on
     placed += 1;
@@ -3502,6 +3508,7 @@ async function planTraceOutlines(opts) {
       const tickProgress = (label) => planProgressCount(progressDone, progressTotal, label);
 
       for (const p of [...byPage.keys()].sort((a, b) => a - b)) {
+        if (gen != null && gen !== planSetupGen) return;   // the drawing went away: stop between pages
         const list = byPage.get(p);
         if (p < 1 || p > doc.numPages) {
           refused += list.length;
@@ -3557,6 +3564,10 @@ async function planTraceOutlines(opts) {
         winKeys.add(out.key);
 
         for (const res of out.results) {
+          // The generation is checked at the WRITE, not only at the step's start: byPage's rooms are
+          // looked up by id, and the same file hashes to the same ids, so an abandoned run would
+          // otherwise write this page's outlines straight onto the drawing that replaced it.
+          if (gen != null && gen !== planSetupGen) return;
           const room = roomById(res.id);
           if (!room) continue;
           allResults.push(res);

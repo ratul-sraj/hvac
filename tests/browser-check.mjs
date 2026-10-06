@@ -5034,12 +5034,18 @@ if (!sampleMissing) {
         Math.abs(moved.x - target.x) > 1 || Math.abs(moved.y - target.y) > 1,
         `${target.x.toFixed(1)}/${target.y.toFixed(1)} -> ${moved.x.toFixed(1)}/${moved.y.toFixed(1)}`);
       await pg.keyboard.down("Control"); await pg.keyboard.press("z"); await pg.keyboard.up("Control");
-      await wait(1200);
-      const back = await pg.evaluate((id) => {
-        const r = window.webhvac.state.rooms.find((q) => q.id === id);
-        return { x: r.rect.x, y: r.rect.y,
-          status: ((document.getElementById("planStatus") || {}).textContent || "").trim().slice(0, 70) };
-      }, target.id);
+      // The undo line is a ONE-SECOND flash now (the owner asked for it to stop lingering), so read it
+      // promptly: poll for it rather than waiting a fixed 1.2 s, which would miss it entirely.
+      let back = null;
+      for (let i = 0; i < 12; i++) {
+        back = await pg.evaluate((id) => {
+          const r = window.webhvac.state.rooms.find((q) => q.id === id);
+          return { x: r.rect.x, y: r.rect.y,
+            status: ((document.getElementById("planStatus") || {}).textContent || "").trim().slice(0, 70) };
+        }, target.id);
+        if (back && back.status) break;
+        await wait(120);
+      }
       ok("25 (b) Ctrl+Z puts the dragged room back EXACTLY where it was, and says what it undid",
         Math.abs(back.x - target.x) < 0.01 && Math.abs(back.y - target.y) < 0.01 && /Undone: moving a room/i.test(back.status),
         `back to ${back.x.toFixed(1)}/${back.y.toFixed(1)} | "${back.status}"`);
