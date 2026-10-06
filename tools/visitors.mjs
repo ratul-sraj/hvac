@@ -26,7 +26,7 @@
 // link can be told apart from a campaign-wide one. An untagged share still counts as a visitor;
 // it simply cannot be attributed, and the report says so rather than guessing.
 //
-// OWN TRAFFIC is removed two ways and both are reported:
+// TRAFFIC THAT IS NOT PEOPLE is removed three ways and each is reported:
 //   (a) a user-agent deny-list covering bots, monitors and automation (see UA_DENY below);
 //   (b) an own-address list read from a file that lives OUTSIDE this public repo, because a
 //       home address is personal data. Default:
@@ -62,6 +62,60 @@ const PAGE_PATHS = new Set([
   "/", "/index.html", "/app.html", "/case-study.html", "/about.html",
   "/method.html", "/help.html", "/design-conditions.html", "/selftest.html",
 ]);
+
+// Every path the DEPLOYED site actually has. It is a static site with a known file list, so "is this
+// even on the site" is decidable rather than guessed. A request for /wp-admin/install.php cannot be
+// anything but a scanner, however browser-like a user-agent it claims — which is exactly what a
+// user-agent deny-list misses. Keep in step with what infra/50-deploy-site.sh uploads.
+// The site's REAL file list, read from the bucket (aws s3 ls --recursive s3://loadlens-site-...).
+// A request that is not in here is not a page, not an asset and not an endpoint, so it is a probe -
+// however plausible it looks. Using the list instead of path PREFIXES is what stops a scanner probing
+// /vendor/.env from being waved through as "an asset under /vendor/".
+// Keep in step with what infra/50-deploy-site.sh uploads. If it drifts, the cost is only that a path
+// shows up in the probe block (visible, and reported) rather than in the traffic table.
+const SITE_FILE_LIST = [
+  "/a538267c22d3d06f0d9dda2d2e87746e.txt", "/about.html", "/app.html",
+  "/case-study.html", "/css/landing.css", "/css/style.css",
+  "/design-conditions.html", "/favicon.ico", "/favicon.svg",
+  "/help.html", "/img/ad-schedule.png", "/img/ad-static.png",
+  "/img/case-level-table.png", "/img/case-plan-areas.png", "/img/case-summary.png",
+  "/index.html", "/js/app.js", "/js/autotrace.js",
+  "/js/calc.js", "/js/climates.js", "/js/drawstore.js",
+  "/js/nav.js", "/js/ocr.js", "/js/overlay.js",
+  "/js/pdfparse.js", "/js/planview.js", "/js/polyshape.js",
+  "/js/report.js", "/js/schedule.js", "/js/splitregion.js",
+  "/js/trace.js", "/js/unitdetect.js", "/js/units.js",
+  "/js/usage.js", "/js/viewer.js", "/method.html",
+  "/robots.txt", "/samples/level-11-floor-plan.pdf", "/samples/room-types.csv",
+  "/samples/sample-plan.pdf", "/samples/schedule-sample.pdf", "/samples/schedule.csv",
+  "/samples/schedule.xlsx", "/samples/waller-estate-floor-plan.pdf", "/selftest.html",
+  "/sitemap.xml", "/vendor/pdf.min.mjs", "/vendor/pdf.worker.min.mjs",
+  "/vendor/tesseract/LICENSE-tesseract.js-core.txt", "/vendor/tesseract/LICENSE-tesseract.js.md", "/vendor/tesseract/README.md",
+  "/vendor/tesseract/eng.traineddata.gz", "/vendor/tesseract/tesseract-core-lstm.wasm.js", "/vendor/tesseract/tesseract-core-relaxedsimd-lstm.wasm.js",
+  "/vendor/tesseract/tesseract-core-simd-lstm.wasm.js", "/vendor/tesseract/tesseract.esm.min.js", "/vendor/tesseract/tesseract.esm.min.js.LICENSE.txt",
+  "/vendor/tesseract/worker.min.js", "/vendor/xlsx/README.md",
+];
+// The API's own paths are NOT in the bucket - CloudFront sends them to the Lambda - so they are listed
+// here. They are real: the page fetches api/health on load and posts its anonymous events to api/event,
+// and the server also answers api/parse, api/calc and api/climates. Miss one and the tool reports the
+// app's OWN traffic as a scanner probing for it.
+const API_PATHS = ["/api/health", "/api/event", "/api/parse", "/api/calc", "/api/climates"];
+const SITE_FILES = new Set([...SITE_FILE_LIST, ...API_PATHS]);
+const SITE_VERIFY_FILE = /^\/[0-9a-f]{16,64}\.txt$/;      // root-level site-verification file
+
+function isSitePath(stem) {
+  if (!stem) return false;
+  if (PAGE_PATHS.has(stem) || SITE_FILES.has(stem)) return true;
+  if (SITE_VERIFY_FILE.test(stem)) return true;      // a root-level verification file added later
+  return false;
+}
+
+// A visitor is a SCANNER when NOT ONE of their requests is a path this site has. A real person's first
+// request is always a page or one of that page's assets, so this cannot catch a person; and because it
+// leans on the site's own file list it needs no guessing about who they claim to be.
+// PROBE_BURST: a scanner that did once request "/" is still a scanner if it also fired this many
+// unknown paths in the same day - nobody browses by hammering /wp-login.php.
+const PROBE_BURST = 20;
 
 // Bots, crawlers, monitors and scripted clients. Exactly the deny-list the brief names.
 const UA_DENY =
@@ -106,6 +160,7 @@ function parseArgs(argv) {
     else if (a === "--file") opts.file = argv[++i];
     else if (a.startsWith("--file=")) opts.file = a.slice(7);
     else if (a === "--json") opts.json = true;
+    else if (a === "--selftest") opts.selftest = true;
     else if (a === "-h" || a === "--help") { printHelp(); process.exit(0); }
   }
   if (!Number.isFinite(opts.hours) || opts.hours <= 0) opts.hours = 24;
@@ -337,7 +392,27 @@ function analyze(parsed, opts = {}) {
   const skipped = Array.isArray(parsed) ? opts.skipped || 0 : parsed.malformed || 0;
   const ownIps = (opts.ownIps || []).map((s) => String(s).trim()).filter(Boolean);
 
-  const excluded = { total: 0, bots: 0, ownIp: 0 };
+  const excluded = { total: 0, bots: 0, ownIp: 0, probes: 0 };
+  // One pass to see who probes: a single hit proves nothing, the decision needs the visitor's whole
+  // day. Keys are the same `${day}|${id}` used everywhere else, so the rejected figure is PEOPLE
+  // (one per UTC day), not hits.
+  const visitorPaths = new Map();          // key -> { site, probe }
+  const probeStemCount = new Map();        // unknown path -> hits, reported but never counted as a visit
+  for (const r of rows) {
+    const stem = r[F_STEM] || "";
+    if (!stem) continue;
+    const day = r[F_DATE] || "unknown";
+    const key = `${day}|${makeVisitorId(r[F_IP] || "", r[F_UA] || "", day)}`;
+    const cur = visitorPaths.get(key) || { site: 0, probe: 0 };
+    if (isSitePath(stem)) cur.site += 1;
+    else { cur.probe += 1; probeStemCount.set(stem, (probeStemCount.get(stem) || 0) + 1); }
+    visitorPaths.set(key, cur);
+  }
+  const probeOnly = new Set();
+  for (const [key, s] of visitorPaths) {
+    if (!s.probe) continue;
+    if (s.site === 0 || (s.probe >= PROBE_BURST && s.site <= 1)) probeOnly.add(key);
+  }
   const cleanIds = new Set();          // `${day}|${id}` for real page visits
   const allIds = new Set();            // no exclusions at all, for the cost comparison
   const cleanByDay = new Map();
@@ -372,9 +447,13 @@ function analyze(parsed, opts = {}) {
     let reason = null;
     if (isBot(ua)) reason = "bots";
     else if (ipMatchesAny(ip, ownIps)) reason = "ownIp";
+    else if (stem && probeOnly.has(`${day}|${makeVisitorId(ip, ua, day)}`)) reason = "probes";
     if (reason) { excluded.total += 1; excluded[reason] += 1; continue; }
 
-    byStem.set(stem, (byStem.get(stem) || 0) + 1);
+    // Only the site's OWN paths belong in the request table. A request for /wp-login.php says nothing
+    // about how the tool is used, and in a visitor's mixed day it used to sit in the top-15 looking
+    // like traffic. Probe requests are reported on their own line instead (see the probe block).
+    if (isSitePath(stem)) byStem.set(stem, (byStem.get(stem) || 0) + 1);
     if (stem === "/api/parse") {
       api.count += 1;
       api.byStatus.set(status || "(none)", (api.byStatus.get(status || "(none)") || 0) + 1);
@@ -445,6 +524,10 @@ function analyze(parsed, opts = {}) {
       byDay: Object.fromEntries([...allByDayUnique.entries()].sort()),
     },
     byStem: topStems,
+    probe: {
+      visitors: probeOnly.size,
+      stems: [...probeStemCount.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    },
     api: { count: api.count, byStatus: Object.fromEntries([...api.byStatus.entries()].sort()) },
     campaigns: {
       rows: campaignRows,
@@ -454,6 +537,44 @@ function analyze(parsed, opts = {}) {
       taggedVisitors: campaignRows.filter((r) => r.campaign !== "(none)").reduce((n, r) => n + r.visitors, 0),
     },
   };
+}
+
+/* ------------------------------- selftest ------------------------------ */
+// The visitor count rests on one decidable question - "is this path even on the site?" - so it is worth
+// a check of its own: --selftest asserts the classification on real examples (paths seen in the logs on
+// one side, the site's own files on the other). Run it after any edit to the file list or the rules.
+function runSelftest() {
+  const site = ["/", "/index.html", "/app.html", "/case-study.html", "/about.html", "/method.html",
+    "/help.html", "/design-conditions.html", "/selftest.html", "/css/style.css", "/css/landing.css",
+    "/js/app.js", "/js/overlay.js", "/img/ad-static.png", "/samples/sample-plan.pdf",
+    "/samples/level-11-floor-plan.pdf", "/vendor/pdf.min.mjs", "/vendor/tesseract/worker.min.js",
+    "/robots.txt", "/sitemap.xml", "/favicon.ico", "/favicon.svg",
+    "/api/health", "/api/event", "/api/parse", "/api/calc", "/api/climates"];
+  // Every one of these was seen in this site's own logs. None belongs to the site.
+  const probe = ["/wp-admin/install.php", "/wp-login.php", "/xmlrpc.php", "/wp-content/plugins/x.php",
+    "/.env", "/.env_copy", "/.env.backup", "/.env.backup1", "/.git/config", "/.aws/credentials",
+    "/.config/gcloud/application_default_credentials.json", "/_environment", "/_phpinfo.php",
+    "/_profiler/phpinfo", "/phpmyadmin/index.php", "/backup.sql", "/vendor/.env", "/api/.env",
+    "/api/v1/.env", "/api/dev/.env", "/api/staging/.env", "/cgi-bin/luci", "/server-status",
+    "/actuator/health", "/robots.txt.php", "/.well-known/security.txt"];
+  const bad = [];
+  for (const p of site) if (!isSitePath(p)) bad.push(`site path called a probe: ${p}`);
+  for (const p of probe) if (isSitePath(p)) bad.push(`probe called a site path: ${p}`);
+  // the rules that turn a visitor into a scanner, on the shapes actually seen
+  const cases = [
+    { name: "probes only, never a page", v: { site: 0, probe: 3 }, scanner: true },
+    { name: "opened a page only (assets cached)", v: { site: 1, probe: 0 }, scanner: false },
+    { name: "opened a page and probed once", v: { site: 1, probe: 1 }, scanner: false },
+    { name: "fetched / then hammered 20 unknown paths", v: { site: 1, probe: 20 }, scanner: true },
+    { name: "normal browse", v: { site: 14, probe: 0 }, scanner: false },
+  ];
+  for (const c of cases) {
+    const got = c.v.probe > 0 && (c.v.site === 0 || (c.v.probe >= PROBE_BURST && c.v.site <= 1));
+    if (got !== c.scanner) bad.push(`scanner rule wrong for "${c.name}" (expected ${c.scanner ? "scanner" : "visitor"})`);
+  }
+  for (const b of bad) console.log(`  FAIL  ${b}`);
+  console.log(`${bad.length ? bad.length + " FAILED" : "visitors.mjs selftest: OK"}  (${site.length} site paths, ${probe.length} probe paths, ${cases.length} scanner rules)`);
+  return bad.length === 0;
 }
 
 /* ------------------------------- report -------------------------------- */
@@ -507,7 +628,7 @@ function printReport(stats, opts, meta) {
   if (stats.skipped) console.log(`Malformed lines skipped: ${stats.skipped}  (not fatal)`);
   console.log(
     `Excluded traffic      : ${stats.excluded.total} hits  (bots ${stats.excluded.bots}, ` +
-      `own traffic ${stats.excluded.ownIp})`
+      `own traffic ${stats.excluded.ownIp}, scanner probes ${stats.excluded.probes})`
   );
   if (meta.ownIps) {
     if (meta.ownIps.exists) {
@@ -530,7 +651,18 @@ function printReport(stats, opts, meta) {
   console.log("");
   printCampaigns(stats);
   console.log(`Same count WITHOUT any exclusion : ${stats.uniqueUnfiltered.window}`);
-  console.log(`  (the difference is what the bot deny-list and own-address list cost you)`);
+  console.log(`  (the difference is what the bot deny-list, the own-address list and the scanner`);
+  console.log(`   filter cost you - none of the three is a guess about who someone claims to be)`);
+  if (stats.probe && stats.probe.visitors) {
+    console.log("");
+    // NOT people removed from the count: a visitor is counted when they open a page, and none of these
+    // ever did - they only ever asked for paths that do not exist here. Reported so the number can be
+    // seen to be clean rather than merely asserted to be.
+    console.log(`Probe-only visitor-days : ${stats.probe.visitors}  (asked ONLY for paths this site does not have;`);
+    console.log(`                          none of them ever opened a page, so none was ever in the count)`);
+    console.log(`  what they were looking for (${stats.probe.stems.length} distinct paths, top 10):`);
+    for (const [stem, n] of stats.probe.stems.slice(0, 10)) console.log(`      ${padL(n, 6)}  ${stem}`);
+  }
   console.log("");
   console.log(`Top request paths (real traffic, top 15):`);
   const top = stats.byStem.slice(0, 15);
@@ -609,6 +741,7 @@ function downloadObject(key, opts, scratch) {
 }
 
 async function main() {
+  if (parseArgs(process.argv.slice(2)).selftest) { process.exit(runSelftest() ? 0 : 1); }
   const opts = parseArgs(process.argv.slice(2));
   const end = Date.now();
   const start = end - opts.hours * 60 * 60 * 1000;
