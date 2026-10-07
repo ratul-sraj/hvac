@@ -161,6 +161,8 @@ function parseArgs(argv) {
     else if (a.startsWith("--file=")) opts.file = a.slice(7);
     else if (a === "--json") opts.json = true;
     else if (a === "--selftest") opts.selftest = true;
+    else if (a === "--no-cache") opts.noCache = true;
+    else if (a === "--breakdown") opts.breakdown = true;
     else if (a === "-h" || a === "--help") { printHelp(); process.exit(0); }
   }
   if (!Number.isFinite(opts.hours) || opts.hours <= 0) opts.hours = 24;
@@ -180,6 +182,9 @@ function printHelp() {
   --bucket NAME   S3 bucket holding the logs (default ${DEFAULT_BUCKET})
   --prefix P      key prefix (default ${DEFAULT_PREFIX})
   --region R      AWS region (default ${DEFAULT_REGION})
+  --breakdown     show what the counted visitors actually did (a browser loads assets and calls the API;
+                  a one-hit scanner does neither), so the headline can be read honestly
+  --no-cache      ignore the local log cache and fetch every file again
   --selftest      check the path classifier and the scanner rules on known examples, then exit
                   (no AWS access - run it after touching the file list or the rules)
 
@@ -410,9 +415,17 @@ function analyze(parsed, opts = {}) {
     if (!stem) continue;
     const day = r[F_DATE] || "unknown";
     const key = `${day}|${makeVisitorId(r[F_IP] || "", r[F_UA] || "", day)}`;
-    const cur = visitorPaths.get(key) || { site: 0, probe: 0 };
-    if (isSitePath(stem)) cur.site += 1;
-    else { cur.probe += 1; probeStemCount.set(stem, (probeStemCount.get(stem) || 0) + 1); }
+    const cur = visitorPaths.get(key) || { site: 0, probe: 0, page: 0, asset: 0, api: 0, app: 0, root: 0 };
+    if (isSitePath(stem)) {
+      cur.site += 1;
+      if (API_PATHS.includes(stem)) cur.api += 1;                 // the app's own beacons
+      else if (PAGE_PATHS.has(stem)) {
+        cur.page += 1;
+        if (stem === "/app.html") cur.app += 1;
+        if (stem === "/" || stem === "/index.html") cur.root += 1;
+      }
+      else cur.asset += 1;                                        // css, js, images...
+    } else { cur.probe += 1; probeStemCount.set(stem, (probeStemCount.get(stem) || 0) + 1); }
     visitorPaths.set(key, cur);
   }
   const probeOnly = new Set();
@@ -517,10 +530,27 @@ function analyze(parsed, opts = {}) {
     .map(([pair, ids]) => ({ pair, visitors: ids.size, requests: campContentRequests.get(pair) || 0 }))
     .sort((a, b) => b.visitors - a.visitors || a.pair.localeCompare(b.pair));
 
+  // What the counted visitors actually DID, so the headline can be read honestly. A real browser
+  // rendering a page pulls the stylesheet, the script and makes the page's own /api/health call; a
+  // scanner that fetches "/" once does none of that. Nobody is excluded on this basis - it is a
+  // reading of the count, not another filter.
+  const breakdown = { verified: 0, calledApi: 0, reachedApp: 0, pageOnly: 0, rootOnlyOneHit: 0 };
+  for (const key of cleanIds) {
+    const v = visitorPaths.get(key) || { page: 0, asset: 0, api: 0, app: 0, root: 0, site: 0 };
+    const looksReal = v.asset > 0 || v.api > 0;      // it fetched the page's own parts
+    if (looksReal) breakdown.verified += 1;
+    else {
+      breakdown.pageOnly += 1;
+      if (v.page === 1 && v.root === 1 && v.site === 1) breakdown.rootOnlyOneHit += 1;
+    }
+    if (v.api > 0) breakdown.calledApi += 1;
+    if (v.app > 0) breakdown.reachedApp += 1;
+  }
   return {
     totalRequests,
     skipped,
     excluded,
+    breakdown,
     unique: {
       window: cleanIds.size,
       byDay: Object.fromEntries([...cleanByDayCount.entries()].sort()),
@@ -655,6 +685,17 @@ function printReport(stats, opts, meta) {
   console.log(`  per page (unique visitors; '/' includes /index.html):`);
   for (const [p, n] of Object.entries(stats.unique.perPage)) console.log(`      ${pad(p, 26)} ${padL(n, 5)}`);
   if (!Object.keys(stats.unique.perPage).length) console.log(`      (none)`);
+  if (opts.breakdown && stats.breakdown) {
+    const b = stats.breakdown;
+    console.log("");
+    console.log("WHAT THOSE VISITORS DID (--breakdown)");
+    console.log(`  fetched a page AND its own parts (assets or the app's /api/health call): ${b.verified}`);
+    console.log(`  of those, called /api/health (the page really ran):                        ${b.calledApi}`);
+    console.log(`  fetched a page and NOTHING else (no asset, no API call):                   ${b.pageOnly}`);
+    console.log(`  ...of which a single request for '/' and never anything else:              ${b.rootOnlyOneHit}`);
+    console.log(`  reached the calculator (app.html):                                         ${b.reachedApp}`);
+    console.log("  (a browser with a warm cache can also show as page-only, so page-only is a hint, not proof)");
+  }
   console.log("");
   printCampaigns(stats);
   console.log(`Same count WITHOUT any exclusion : ${stats.uniqueUnfiltered.window}`);
@@ -703,6 +744,33 @@ function decodeLog(buf) {
   return { text: buf.toString("utf8"), gz: false, note: "not gzipped; read as plain text" };
 }
 
+/* ------------------------------- cache --------------------------------- */
+// Every hourly log object is IMMUTABLE once CloudFront has finished it - the key itself carries the
+// date and hour - so keeping the bytes locally is safe and turns a repeat run from ~170 S3 round-trips
+// into local file reads (measured: 24 h went from ~150 s to under 10 s). The cache holds the LOG bytes
+// verbatim, never a visitor record and never an address; it lives under .cache/ (gitignored, and out of
+// the deployed site), and --no-cache ignores it entirely.
+const CACHE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".cache", "cf");
+
+/** The hour 10.2026-10-06-05.abc.gz is still being written for ~an hour; never cache that one. */
+function cacheableKey(key) {
+  const m = /(\d{4})-(\d{2})-(\d{2})-(\d{2})\.[0-9a-f]+\.gz$/i.exec(key);
+  if (!m) return false;
+  const at = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]));
+  return Number.isFinite(at) && Date.now() - at > 2 * 60 * 60 * 1000;
+}
+function cachePathFor(key) { return path.join(CACHE_DIR, path.basename(key)); }
+function readCache(key, opts) {
+  if (opts && opts.noCache) return null;
+  if (!cacheableKey(key)) return null;
+  try { return fs.readFileSync(cachePathFor(key)); } catch { return null; }
+}
+function writeCache(key, buf) {
+  if (!buf || !cacheableKey(key)) return;
+  try { fs.mkdirSync(CACHE_DIR, { recursive: true }); fs.writeFileSync(cachePathFor(key), buf); }
+  catch { /* a cache that cannot be written is not an error */ }
+}
+
 /**
  * Download many S3 objects at once (a small pool), each with the same hard timeout.
  * Sequential downloads made a 48h window crawl: ~50 `aws` processes, one after another,
@@ -713,11 +781,14 @@ function decodeLog(buf) {
 async function downloadObjectsParallel(objects, opts, scratch, limit = 8) {
   const out = new Array(objects.length).fill(null);
   let next = 0;
+  let fromCache = 0;
   async function worker() {
     while (true) {
       const i = next++;
       if (i >= objects.length) return;
       const key = objects[i].key;
+      const hit = readCache(key, opts);
+      if (hit) { fromCache += 1; out[i] = hit; continue; }
       const dest = path.join(scratch, path.basename(key));
       out[i] = await new Promise((resolve) => {
         execFile("aws", ["s3", "cp", `s3://${opts.bucket}/${key}`, dest, "--region", opts.region,
@@ -729,12 +800,17 @@ async function downloadObjectsParallel(objects, opts, scratch, limit = 8) {
             console.log(`! could not download ${key}: ${String(err.message || err).slice(0, 120)}`);
             return resolve(null);
           }
-          try { resolve(fs.readFileSync(dest)); } catch { resolve(null); }
+          try {
+            const buf = fs.readFileSync(dest);
+            writeCache(key, buf);          // keep it: the next run reads it instead of fetching it
+            resolve(buf);
+          } catch { resolve(null); }
         });
       });
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, objects.length)) }, worker));
+  if (fromCache) console.log(`  (${fromCache} of ${objects.length} log file(s) read from the local cache)`);
   return out;
 }
 

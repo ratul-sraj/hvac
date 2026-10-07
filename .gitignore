@@ -6,6 +6,9 @@ node_modules/
 !/samples/level-11-floor-plan.pdf
 !/samples/waller-estate-floor-plan.pdf
 tests/qa/
+
+# local cache of CloudFront log bytes (never committed: it is taken from the owner's own account)
+.cache/
 _*.mjs
 tests/_*.mjs
 tools/keepalive.log

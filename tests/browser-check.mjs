@@ -3,6 +3,7 @@
 // Default = the local Express server's calculator page. Uses puppeteer-core (no download).
 import fs from "node:fs";
 import puppeteer from "puppeteer-core";
+import { instrumentBeacons } from "./qa/mute-beacons.mjs";
 
 const URL_ = process.argv[2] || "http://127.0.0.1:3000/app.html";
 const BASE = new URL(".", URL_).href;   // directory the pages live in
@@ -27,6 +28,7 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--disable-gpu", "--window-size=1400,1000"],
   protocolTimeout: 120000,
 });
+instrumentBeacons(browser);   // this probe must not report into the live funnel
 const page = await browser.newPage();
 
 // Deny real file downloads. Capturing the CSV needs URL.createObjectURL, but that call cannot stop
