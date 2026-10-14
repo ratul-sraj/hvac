@@ -2594,15 +2594,19 @@ if (!sampleMissing) {
     ok("the auto-trace status line reports the REAL filled count and reasons",
       // 22 since the splitter (js/splitregion.js) gives a shared region's names their own door-bounded
       // parts; the rest of the shared names are now refused as open-plan, in plain words
-      /Filled 22 areas from the drawing/.test(fill.status)
+      // 21, not 22: the filler now classifies ANNOTATION LABELS out (js/labelclass.js) before it
+      // matches, so the three fitting rows on this sample that used to be handed a room's area -
+      // "IN" 11.06 m2 and two "COMMISSIONERS' BENCH" - are no longer filled. That is the intended
+      // behaviour (an area on a fitting is a wrong area in the load), not a regression.
+      /Filled 21 areas from the drawing/.test(fill.status)
         && /because the room is open to the next space/.test(fill.status)
         && !/could not be verified/.test(fill.status)
         && /2 because the traced shape did not look like a room/.test(fill.status),
       fill.status);
     ok("the filled rooms are marked in the table as coming from the drawing",
-      fill.badges === 22, `${fill.badges} badge(s)`);
+      fill.badges === 21, `${fill.badges} badge(s)`);
     ok("filling the areas moves the totals (the point of the feature)",
-      fill.tr > 0 && fill.incl >= 1 && fill.incl <= 22, `${fill.tr} TR, ${fill.incl} room(s) included of 22 filled`);
+      fill.tr > 0 && fill.incl >= 1 && fill.incl <= 21, `${fill.tr} TR, ${fill.incl} room(s) included of 21 filled`);
 
     // the level-wise fresh-air column is ONE unit (L/s) down the column: its rows sum to its Total
     const fresh = fill.levels
@@ -2655,7 +2659,7 @@ if (!sampleMissing) {
     ok("Undo puts every area back and the load returns to 0.00 TR",
       undone.badges === 0 && undone.tr === 0 && undone.blank === 56,
       `${undone.badges} badge(s), ${undone.tr} TR, ${undone.blank} blank areas`);
-    ok("Undo says what it put back", /Undone: 22 areas/.test(undone.status || undoneStatus),
+    ok("Undo says what it put back", /Undone: 21 areas/.test(undone.status || undoneStatus),
       undone.status || undoneStatus);
   }
 
@@ -4665,7 +4669,7 @@ if (!sampleMissing) {
       fp.sawDisabled && fp.sawLabel && fp.active === "0" && fp.vis === "hidden" && /^Fill areas from the drawing$/.test(fp.btnText),
       `disabled-during=${fp.sawDisabled} working=${fp.sawLabel} active=${fp.active} vis=${fp.vis} after "${fp.btnText}"`);
     ok("the sample's own fill result is unchanged — 22 of 56 areas measured from the drawing",
-      fp.withArea === 22 && /Filled 22 areas from the drawing/.test(fp.status),
+      fp.withArea === 21 && /Filled 21 areas from the drawing/.test(fp.status),
       `rooms ${fp.rooms}, with area ${fp.withArea}; status "${fp.status.slice(0, 80)}"`);
 
     // (3) PLACE ALL on the same sample: its own bar, its own room count, the button disabled while it

@@ -124,6 +124,67 @@ async function loadAutotraceModule() {
   return autotraceMod;
 }
 
+let labelMod = null, labelTried = false;
+/** js/labelclass.js — tells a ROOM NAME from an ANNOTATION LABEL inside a room (MONITOR, SEATING,
+ *  IN/OUT, COMMISSIONERS' BENCH, WITNESS ...). Loaded on demand; a missing module returns null and the
+ *  app behaves exactly as it did before. */
+async function loadLabelModule() {
+  if (!labelMod && !labelTried) {
+    labelTried = true;
+    try { labelMod = await import('./labelclass.js'); } catch (e) { labelMod = null; }
+  }
+  return labelMod;
+}
+
+/** Keep ANNOTATION LABELS out of the load.
+ *
+ *  26 of the sample's 56 detected names are labels, not rooms (MONITOR x7, SEATING x3, IN/OUT,
+ *  ESCAPE ONLY, WITNESS, COUNSEL, COMMISSIONERS' BENCH, WHEELCHAIR BAY, PRESS/PUBLIC SEATING). On the
+ *  owner's own run three of them were carrying real areas - "IN" 11.06 m2 and two "COMMISSIONERS'
+ *  BENCH" 28.57 / 29.76 m2 - about 3.4 TR of a 20 TR load attributed to fittings instead of rooms.
+ *
+ *  js/labelclass.js decides with the region geometry the tracer already produced (never the name
+ *  alone, so a real "WITNESS ROOM" of its own stays a room). This:
+ *    - marks the row `subZone` so the table can say what it is;
+ *    - takes back an area that CAME FROM THE DRAWING (a typed area is the user's and is left alone);
+ *    - excludes it from the totals, so the load is over rooms only.
+ *  Returns how many rows it changed, for the status line. Never throws. */
+async function planMarkFittings(regions, pageRooms, where) {
+  const ids = new Set();
+  try {
+    const mod = await loadLabelModule();
+    if (!mod || typeof mod.classifyLabels !== 'function') return ids;
+    const rooms = (pageRooms || []).filter((r) => r && r.at && Number.isFinite(r.at.x) && Number.isFinite(r.at.y));
+    if (!rooms.length || !(regions || []).length) return ids;
+    const cls = mod.classifyLabels(rooms.map((r) => ({ id: r.id, name: r.name, at: r.at })), regions);
+    // Visible to tests/qa: what the classifier saw on this pass (rooms in, regions in, verdict).
+    try {
+      if (window.webhvac && window.webhvac.plan) {
+        const rec = { where: where || '?', rooms: rooms.length,
+          regions: (regions || []).length, sub: cls.subZones, real: cls.realRooms,
+          ids: [...cls.subZoneIds], byRegion: cls.byRegion.map((g) => ({
+            real: g.real.map((x) => x.name), sub: g.sub.map((x) => x.name), r: (g.rings || []).length })) };
+        window.webhvac.plan.lastFit = rec;
+        window.webhvac.plan.fitLog = (window.webhvac.plan.fitLog || []).concat([rec]).slice(-8);
+      }
+    } catch (e) { /* diagnostics only */ }
+    for (const id of cls.subZoneIds) {
+      const room = rooms.find((r) => r.id === id);
+      if (!room) continue;
+      const wasTyped = typeof areaIsTyped === 'function' && areaIsTyped(room);
+      ids.add(id);
+      room.subZone = true;
+      room.include = false;
+      if (!wasTyped && (room.areaFromDrawing || room.source === 'drawn' || room.poly || room.rect)) {
+        delete room.area; delete room.areaFromDrawing; delete room.areaUnknown; delete room.areaSource;
+        delete room.poly; delete room.polyPage; delete room.polyDrawing; delete room.polyArea; delete room.polyRatio;
+        delete room.rect; delete room.rectDrawing;
+      }
+    }
+  } catch (e) { /* an annotation lost is a wrong area; a crash here must not cost the user the rest */ }
+  return ids;
+}
+
 /* js/labelclass.js EXISTS and is measured (tests/qa/zone-accuracy.mjs uses it): it tells a ROOM NAME
  * from an ANNOTATION LABEL inside a room - MONITOR, SEATING, IN/OUT, WHEELCHAIR BAY, COMMISSIONERS'
  * BENCH, COUNSEL, WITNESS, ESCAPE ONLY - and on the real sample 26 of the 56 detected names are such
@@ -1412,6 +1473,7 @@ function updateLive() {
     const orSel = tr.querySelector('select[data-field="orient"]');
     if (orSel && raw.orient === undefined) orSel.value = r.room.orient;
     tr.classList.toggle('excluded', r.room.include === false);
+    tr.classList.toggle('fitting', !!r.room.subZone);   // styled and findable as a fitting, not a room
     if (raw && r.room.include !== false) {
       const cb = tr.querySelector('input[data-field="include"]');
       if (cb) cb.checked = true;
@@ -1567,7 +1629,8 @@ function renderDetail(calc) {
         ${fmt(room.people, 0)} people &middot; ${esc(room.orient)} facing &middot;
         glass ${fmtArea(room.glass, sys)} ${areaUnit(sys)} ${room.roof ? '&middot; roof exposed' : ''}
         ${shapeNote(state.rooms[idx])}
-        ${room.include === false ? '&middot; <strong>excluded from totals</strong>' : ''}
+        ${room.subZone ? '&middot; <strong>a fitting inside a room, not a room</strong> &mdash; no area, not in the load'
+          : room.include === false ? '&middot; <strong>excluded from totals</strong>' : ''}
       </div>
     </div>
     <div class="bd-total">
@@ -3554,6 +3617,7 @@ async function planTraceOutlines(opts) {
       const reasonCount = new Map();
       const ratios = [];
       let accepted = 0, refused = 0, refusedWithRect = 0, emptyPages = 0, badPages = 0;
+      let fittings = 0;   // annotation labels the tracer reached: never sized, never in the load
 
       // Progress, in ROOMS across every page: the honest denominator is the number of rooms being
       // traced. `progressDone` counts rooms a page's trace has fully finished (or skipped outright).
@@ -3618,6 +3682,19 @@ async function planTraceOutlines(opts) {
         progressDone += list.length; tickProgress(`Tracing outlines - ${Math.min(progressDone, progressTotal)} of ${progressTotal} rooms`);
         winKeys.add(out.key);
 
+        // Before a single outline is written: which of this page's names are ANNOTATION LABELS, not
+        // rooms? (js/labelclass.js, decided on this page's own traced regions.) A fitting is never
+        // sized and never enters the load, and a fitting that already held an area from an earlier run
+        // has it taken back. See planMarkFittings.
+        const pageRegions = out.results
+          .filter((r) => r && r.ok && Array.isArray(r.rings) && r.rings.length)
+          .map((r) => ({ id: r.id, rings: r.rings, closed: true }));
+        // EVERY label on this page, not just the rooms being traced: the classifier needs a room's own
+        // name to see that a fitting sits inside it, and those rooms are already traced or skipped.
+        const allPageRooms = state.rooms.filter((r) => (Number(r.page) || 1) === p
+          && r.at && Number.isFinite(r.at.x) && Number.isFinite(r.at.y));
+        const fittingIds = await planMarkFittings(pageRegions, allPageRooms, 'trace');
+
         for (const res of out.results) {
           // The generation is checked at the WRITE, not only at the step's start: byPage's rooms are
           // looked up by id, and the same file hashes to the same ids, so an abandoned run would
@@ -3626,6 +3703,7 @@ async function planTraceOutlines(opts) {
           const room = roomById(res.id);
           if (!room) continue;
           allResults.push(res);
+          if (fittingIds.has(res.id)) { fittings += 1; continue; }   // a label inside a room is not a room
           if (res.ok && Array.isArray(res.rings) && res.rings.length) {
             const ring = ringFor(res.rings, room.at, trace);
             room.poly = ring.map((pt) => ({ x: round2(pt.x), y: round2(pt.y) }));
@@ -3711,6 +3789,13 @@ async function planTraceOutlines(opts) {
           `${parts.length ? ` (${parts.join(', ')})` : ''}. `;
       }
       if (noAt) msg += `${noAt} room(s) the sheet does not name ${noAt === 1 ? 'was' : 'were'} left alone. `;
+      if (fittings) {
+        // Say it out loud: these got NO area because they are fittings inside a room (MONITOR, SEATING,
+        // IN/OUT, COMMISSIONERS' BENCH, WITNESS ...), which is a different thing from a room the tracer
+        // could not measure - and an area on one of them would be a wrong area in the load.
+        msg += `${fittings} name${fittings === 1 ? '' : 's'} that ${fittings === 1 ? 'is a fitting' : 'are fittings'} ` +
+          `inside a room (not a room) ${fittings === 1 ? 'was' : 'were'} left out of the load. `;
+      }
       if (emptyPages) msg += `The drawing has no wall lines on ${emptyPages} page(s). `;
       if (badPages) msg += `${badPages} page(s) were skipped: their lines did not sit inside the sheet. `;
       if (accepted) {
@@ -4402,7 +4487,14 @@ async function planFillAreas(opts) {
               fillTick += 1;
               if (fillTick % 6 === 0) await yieldToBrowser();
             })).regions;
-            const out = auto.matchRoomsToRegions({ rooms: roomInput, regions });
+            // An ANNOTATION LABEL inside a room must not take the room's area: classify this pass's own
+            // regions first (js/labelclass.js). subZoneIds belongs INSIDE `options` - a top-level key is
+            // silently ignored by js/autotrace.js, which reads p.options.subZoneIds. Without this a
+            // region holding a real room plus its fittings (MONITOR, SEATING, ESCAPE ONLY ...) is refused
+            // as `shared` and the whole room is lost - the biggest single reason a real sheet comes back
+            // with almost no areas.
+            const subZoneIds = await planMarkFittings(regions, pageRooms, 'fill');
+            const out = auto.matchRoomsToRegions({ rooms: roomInput, regions, options: { subZoneIds } });
             const n = out.assignments.filter((a) => fillIds.has(a.roomId)).length;
             if (!best || n > best.n) best = { key: c.key, regions, out, n };
           }
