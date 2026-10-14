@@ -230,3 +230,50 @@ outlines point to, so the check's second half fails - a one-line status gap in `
 behavior regression. **No area or scale assertion is among the ten: the node suite is 30/30, the probe
 numbers above are unchanged, and JOB1 (i) and (ii) pass again now that the app tells the user it
 corrected the scale.**
+
+### 6.2 Fittings out of the load — DONE (14 Oct, evening)
+
+`js/labelclass.js` is now wired into the app on BOTH paths (the outline pass and the area fill), and
+its two-pass rule was completed: pass 1 (a fitting sharing a region with a room label) plus pass 2 (a
+fitting alone in its own region whose region sits INSIDE a room's region — the case the tracer's own
+splitting creates, and the one that let "IN" and two "COMMISSIONERS' BENCH" rows carry real areas).
+
+The wiring had to give the classifier the page's WHOLE region set. Handing it only the regions the
+tracer had matched to a room found nothing at all — measured in-app: `rooms 24, regions 23, sub 0` —
+because a fitting sitting in a region of its own is never in that list. The winning line class is now
+re-traced once for its regions, and only when the page actually carries a fitting-like word, so a
+normal plan pays nothing.
+
+Verified in the app (`node tests/qa/app-annot-areas.mjs`, which loads the real sample through the
+app's own automatic setup):
+
+| measure | before | after |
+|---|---|---|
+| rooms with an area on the sample | 24 | **21** |
+| annotation labels given an area | 4 (`IN`, 2 × BENCH, + a probe false positive) | **0** |
+| classifier verdict in-app | 24 rooms / 23 regions / 0 sub-zones | **56 rooms / 21 regions / 26 sub-zones, 30 real** |
+
+So the ~3.4 TR that was sitting on fittings is now out of the load, and the status line says so
+("N names that are fittings inside a room (not a room) were left out of the load"). Node suite 30/30.
+
+### 6.3 The last 9 rooms (the 75% goal) — OPEN, and NOT a tuning problem
+
+On the sample, 21 of 30 real rooms have an area (70%). The 9 missing: 8 are refused `open-plan`
+(PUBLIC FOYER, BLACK SATURDAY GALLERY, SECURITY, LOBBY, PUBLIC LIFT LOBBY, ANNEXE, HEARING ROOM, one
+COURT OPERATOR) and 1 is `bad-area` (the other COURT OPERATOR).
+
+What has been MEASURED on this, and each one reverted:
+
+| attempt | result |
+|---|---|
+| relax the split neck limit (`NECK`) | 21 -> 18 fills, and wrong areas appear |
+| global gap-closing (`CGAP`) | 21 -> 18, small rooms lose area to big neighbours |
+| open-plan rung 4 (`OPM`) opt-in | worse, 3 small rooms leaked into neighbours |
+| watershed "sibling carve" attribution (a delegated worker, 27 min) | 21 -> **8** fills |
+
+Every one of them trades real coverage or accuracy away, which is the spec's own stop rule. The
+existing machinery (`js/splitregion.js` cuts a shared region at a "neck" of at most `NECK_MAX_M` = 2 m)
+is the same knob the first two attempts turned. The remaining 8 rooms are genuinely open — lobbies and
+a gallery that run into each other — and closing their portals means finding the free wall ends and
+joining the right pair, then proving the result does not steal a neighbour's area. That is its own
+piece of work with its own measurement harness, not a parameter.

@@ -4951,6 +4951,23 @@ if (!sampleMissing) {
       return !!S && !S.ui.busy && !(bar && bar.getAttribute("data-active") === "1");
     }, { timeout: 300000, polling: 1000 }).catch(() => {});
 
+    // SETUP: this check needs a room whose shape is a PLACED BOX only. It used to get one by accident -
+    // "IN" had been handed a room's area and place-all sized a locator box from it - but fittings are
+    // now classified out of the load (js/labelclass.js), so no such room is left on the sample. Make one
+    // the way the app itself does: a room with an area and no outline gets a box from "Place all rooms".
+    // SETUP only - the check still exercises the real shape-link code, and every assertion is unchanged.
+    await pg.evaluate(() => {
+      const r = window.webhvac.state.rooms.find((x) => !x.rect
+        && !(Array.isArray(x.poly) && x.poly.length > 2) && x.at && !x.subZone);
+      if (r && !(Number(r.area) > 0)) {
+        r.area = 12; r.areaSource = 'drawing'; r.areaFromDrawing = true;
+        window.webhvac.renderAll();
+      }
+    });
+    await new Promise((rr) => setTimeout(rr, 400));
+    await pg.$eval("#planPlaceAll", (b) => b.click());     // in-page: the panel's toolbar sits under the sticky nav
+    await new Promise((rr) => setTimeout(rr, 3000));
+
     const box = await pg.evaluate(() => {
       const r = window.webhvac.state.rooms.find((x) => x.rect && !(Array.isArray(x.poly) && x.poly.length > 2));
       if (!r) return null;
@@ -4972,14 +4989,15 @@ if (!sampleMissing) {
       box ? `${box.options} option(s), placeholder=${box.placeholder}, says-placed-box=${box.saysPlacedBox}` : "-");
     const rm = await pg.evaluate(() => {
       const r = window.webhvac.state.rooms.find((x) => x.rect && !(Array.isArray(x.poly) && x.poly.length > 2));
+      if (!r) return null;          // never throw: a missing subject must fail the check, not the run
       const before = r.area;
       window.webhvac.planDetachShape(r.id);
       const a = window.webhvac.state.rooms.find((x) => x.id === r.id);
       return { boxGone: !a.rect, hasShape: !!(a.rect || (a.poly && a.poly.length > 2)), before, after: a.area };
     });
     ok("23 (c) removing a placed box takes the box off the sheet and LEAVES the area the sheet printed",
-      rm.boxGone === true && rm.hasShape === false && rm.after === rm.before,
-      `box gone=${rm.boxGone}, area ${rm.before} -> ${rm.after}`);
+      !!rm && rm.boxGone === true && rm.hasShape === false && rm.after === rm.before,
+      rm ? `box gone=${rm.boxGone}, area ${rm.before} -> ${rm.after}` : "no box-only room to remove");
     await ctx.close().catch(() => {});
 
     // (d) MOVING that box is the other case, and the area must not end up on two rows at once: the box
@@ -4993,10 +5011,25 @@ if (!sampleMissing) {
       const bar = document.getElementById("planProgress");
       return !!S && !S.ui.busy && !(bar && bar.getAttribute("data-active") === "1");
     }, { timeout: 300000, polling: 1000 }).catch(() => {});
+    // Same SETUP as 23 (a): this page needs its own box-only room (fittings are no longer boxed).
+    await pg2.evaluate(() => {
+      const r = window.webhvac.state.rooms.find((x) => !x.rect
+        && !(Array.isArray(x.poly) && x.poly.length > 2) && x.at && !x.subZone);
+      if (r && !(Number(r.area) > 0)) {
+        r.area = 12; r.areaSource = 'drawing'; r.areaFromDrawing = true;
+        window.webhvac.renderAll();
+      }
+    });
+    await new Promise((rr) => setTimeout(rr, 400));
+    await pg2.$eval("#planPlaceAll", (b) => b.click());
+    await new Promise((rr) => setTimeout(rr, 3000));
+
     const moved = await pg2.evaluate(() => {
       const rooms = window.webhvac.state.rooms;
       const from = rooms.find((r) => r.rect && !(Array.isArray(r.poly) && r.poly.length > 2) && Number(r.area) > 0);
-      const to = from ? rooms.find((r) => r.id !== from.id && Number(r.area) > 0) : null;
+      if (!from) return null;       // never throw: a missing subject must fail the check, not the run
+      const to = rooms.find((r) => r.id !== from.id && Number(r.area) > 0);
+      if (!to) return null;
       if (!from || !to) return null;
       const beforeArea = from.area;
       window.webhvac.planMoveShapeTo(from.id, to.id);
