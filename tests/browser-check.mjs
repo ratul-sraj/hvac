@@ -2601,7 +2601,10 @@ if (!sampleMissing) {
       /Filled 21 areas from the drawing/.test(fill.status)
         && /because the room is open to the next space/.test(fill.status)
         && !/could not be verified/.test(fill.status)
-        && /2 because the traced shape did not look like a room/.test(fill.status),
+        // 26 fittings have their own words now (js/labelclass.js), so the shape-based refusal count
+        // drops from 2 to 1: one of the two was a fitting, not a room that failed to measure.
+        && /1 because the traced shape did not look like a room/.test(fill.status)
+        && /26 because the name is a fitting inside a room, not a room/.test(fill.status),
       fill.status);
     ok("the filled rooms are marked in the table as coming from the drawing",
       fill.badges === 21, `${fill.badges} badge(s)`);

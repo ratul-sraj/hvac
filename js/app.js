@@ -4244,6 +4244,7 @@ const FILL_REASON_WORDS = {
   unused: 'no room name sits inside the outline',
   'open-plan': 'the room is open to the next space, so its edge is not on the drawing',
   'unnamed-space': 'the room joins a space with no name through a doorway',
+  fitting: 'the name is a fitting inside a room, not a room',
 };
 function fillReasonWords(code) {
   return FILL_REASON_WORDS[code] || 'the outline could not be verified';
@@ -4436,6 +4437,7 @@ async function planFillAreas(opts) {
         const pages = [...new Set(fillable.map((r) => Number(r.page) || 1))].sort((a, b) => a - b);
         const assignments = new Map();     // roomId -> { areaM2, regionId }
         const reasonCount = new Map();
+        let fittingIds = null;             // annotation labels this pass classified (own reason)
         let pagesRead = 0, pagesSkipped = 0, regionsTotal = 0, passKey = null;
 
         // Progress in ROOMS to fill, across pages; a skipped page still advances the count.
@@ -4494,6 +4496,7 @@ async function planFillAreas(opts) {
             // as `shared` and the whole room is lost - the biggest single reason a real sheet comes back
             // with almost no areas.
             const subZoneIds = await planMarkFittings(regions, pageRooms, 'fill');
+            fittingIds = subZoneIds;
             const out = auto.matchRoomsToRegions({ rooms: roomInput, regions, options: { subZoneIds } });
             const n = out.assignments.filter((a) => fillIds.has(a.roomId)).length;
             if (!best || n > best.n) best = { key: c.key, regions, out, n };
@@ -4510,6 +4513,13 @@ async function planFillAreas(opts) {
             if (!fillIds.has(r.id)) continue;
             const a = assignBy.get(r.id);
             if (a) { assignments.set(r.id, { areaM2: a.areaM2, regionId: a.regionId }); continue; }
+            // An ANNOTATION LABEL is not a room that could not be measured - it is a fitting inside a
+            // room (MONITOR, SEATING, IN/OUT, COMMISSIONERS' BENCH ...). Counting those as "could not
+            // be verified" told the user nothing; they get their own words.
+            if (fittingIds && fittingIds.has(r.id)) {
+              reasonCount.set('fitting', (reasonCount.get('fitting') || 0) + 1);
+              continue;
+            }
             const code = skipBy.get(r.id) || 'no-outline';
             reasonCount.set(code, (reasonCount.get(code) || 0) + 1);
           }
