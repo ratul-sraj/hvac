@@ -277,3 +277,11 @@ is the same knob the first two attempts turned. The remaining 8 rooms are genuin
 a gallery that run into each other — and closing their portals means finding the free wall ends and
 joining the right pair, then proving the result does not steal a neighbour's area. That is its own
 piece of work with its own measurement harness, not a parameter.
+
+**The one lead worth keeping from the carve attempt** (its last thought before it was stopped, kept in
+`C:/Users/Aorus/AppData/Local/hermes/cache/delegation/live/deleg_8127f090/task-0.log`): the watershed
+hands the OWNER region each SIBLING's own anchor, so every sibling's part comes back as a boundary
+sliver rather than a room. Its conclusion was that the owner region must geometrically exclude a small
+disk at every sibling anchor before attributing. That is a concrete next step for `attributeOpenPlan`,
+and it is untested - the run was stopped before it could measure it. Its work-in-progress is saved in
+`git stash` (`worker WIP: portal-closing`), not on the branch.
