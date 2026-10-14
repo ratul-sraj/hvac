@@ -76,6 +76,7 @@ export const CODES = {
   already: 'already',
   stairwell: 'stairwell',
   onEdge: 'on-edge',
+  subZone: 'sub-zone',
   // regions
   unused: 'unused',
 };
@@ -93,6 +94,7 @@ export const REASON_LABEL = {
   'already': 'already had an area',
   'stairwell': 'stairwell - never conditioned',
   'on-edge': 'name sits on the outline',
+  'sub-zone': 'an annotation inside a room - never given an area',
   'unused': 'no name inside the outline',
 };
 
@@ -110,6 +112,7 @@ function reasonText(code, detail) {
     case 'already': return 'this room already had an area';
     case 'stairwell': return 'stairwell - never conditioned';
     case 'on-edge': return 'its name sits on the outline - assign by hand';
+    case 'sub-zone': return 'this is an annotation inside a room, not a room: it is never given an area';
     case 'unused': return 'no room name inside this outline';
     default: return 'the outline could not be verified';
   }
@@ -275,6 +278,13 @@ export function matchRoomsToRegions(p = {}) {
   const maxArea = Number.isFinite(o.maxAreaM2) ? o.maxAreaM2 : MAX_AREA_M2;
   const eps = Number.isFinite(o.eps) ? o.eps : ON_EDGE_EPS;
   const m2PerUnit = Number.isFinite(o.m2PerSquareUnit) ? o.m2PerSquareUnit : null;
+  // Label classification hook (js/labelclass.js): a room carrying `subZone` (or listed in
+  // `options.subZoneIds`) is an ANNOTATION inside a room, not a room. It is never a member of a
+  // region and is never assigned an area, so a region that holds a real room AND its fittings counts
+  // as a single name and passes. Default off: existing callers see exactly the old behaviour.
+  const subSet = o.subZoneIds instanceof Set ? o.subZoneIds : null;
+  const isSubZone = (r, i) =>
+    !!(r && (r.subZone === true || r.parentId != null)) || !!(subSet && subSet.has(r && r.id != null ? r.id : i));
 
   // ---- per-room facts -------------------------------------------------------------------
   const roomInfo = rooms.map((r, i) => {
@@ -284,7 +294,7 @@ export function matchRoomsToRegions(p = {}) {
     const hasArea = Number.isFinite(area) && area > 0;
     return {
       i, room: r, id: r && r.id != null ? r.id : i, name: (r && r.name) || '',
-      hasPos, hasArea,
+      hasPos, hasArea, sub: isSubZone(r, i),
       stair: isStairwellName(r && r.name),
     };
   });
@@ -305,7 +315,7 @@ export function matchRoomsToRegions(p = {}) {
   for (const g of regionInfo) {
     if (!g.rings.length) continue;
     for (const info of roomInfo) {
-      if (!info.hasPos) continue;
+      if (!info.hasPos || info.sub) continue;
       const where = pointInRegion(info.room.at.x, info.room.at.y, g.rings, eps);
       if (where !== 'out') g.members.push({ info, where });
     }
@@ -371,6 +381,7 @@ export function matchRoomsToRegions(p = {}) {
   const ROOM_PRIORITY = [CODES.openPlan, CODES.unnamedSpace, CODES.shared, CODES.overlap, CODES.open, CODES.badArea, CODES.onEdge, CODES.stairwell, CODES.already, CODES.unused];
   for (const info of roomInfo) {
     if (assignedRoom.has(info.i)) continue;
+    if (info.sub) { roomReason.set(info.i, { code: CODES.subZone }); continue; }
     if (info.stair) { roomReason.set(info.i, { code: CODES.stairwell }); continue; }
     if (info.hasArea) { roomReason.set(info.i, { code: CODES.already }); continue; }
     if (!info.hasPos) { roomReason.set(info.i, { code: CODES.noPosition }); continue; }
@@ -420,8 +431,9 @@ export function matchRoomsToRegions(p = {}) {
     regions: regionInfo.length,
     assignedRooms: assignedRoom.size,
     assignedRegions: assignments.length,
-    needAttention: roomInfo.length - assignedRoom.size,
+    needAttention: roomInfo.filter((x) => !x.sub).length - assignedRoom.size,
     unusedRegions: regionInfo.length - assignments.length,
+    subZones: roomInfo.filter((x) => x.sub).length,
     roomReasons,
     regionReasons,
     reasonLabels: REASON_LABEL,

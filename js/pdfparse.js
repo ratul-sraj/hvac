@@ -174,6 +174,36 @@ export function detectScaleText(str) {
   return null;
 }
 
+/**
+ * Parse the DENOMINATOR N out of a scale note — the number `detectScaleText` classifies but never
+ * reads. "SCALE 1:100" -> 100; "1 :200" -> 200; `1/4" = 1'-0"` -> 48 (a quarter inch to a foot).
+ * This is the single place the N is read, so js/scalecal.js never re-invents the pattern.
+ * @returns {{denom:number, kind:'metric'|'imperial', raw:string}|null}
+ */
+export function parseScaleDenom(str) {
+  const s = clampStr(str);
+  if (!s) return null;
+  const im = s.match(IMPERIAL_SCALE_RE);
+  if (im) {
+    const inch = s.match(/\b([0-9]{1,3})\s*\/\s*([0-9]{1,3})\s*(?:"|”|\u2033)?\s*=\s*([0-9]{1,3})\s*'/);
+    if (inch) {
+      const frac = parseInt(inch[1], 10) / parseInt(inch[2], 10);
+      const feet = parseInt(inch[3], 10);
+      if (frac > 0 && feet > 0) {
+        const denom = Math.round((feet * 12) / frac);
+        if (denom >= 2 && denom <= 5000) return { denom, kind: "imperial", raw: s };
+      }
+    }
+    return null;
+  }
+  const m = s.match(/\b1\s*:\s*([0-9]{1,5})\b/);
+  if (m) {
+    const denom = parseInt(m[1], 10);
+    if (denom >= 2 && denom <= 5000) return { denom, kind: "metric", raw: s };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- unit evidence
 
 /** An all-zero evidence record — the shape js/unitdetect.js reads. */

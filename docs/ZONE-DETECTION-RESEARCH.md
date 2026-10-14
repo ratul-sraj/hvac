@@ -1,0 +1,232 @@
+# Zone detection and scale calibration: research spec
+
+Status: research only. No code has changed. Targets: give at least 75% of the real rooms a zone with a correct area, on BOTH `samples/level-11-floor-plan.pdf` (L11) and the owner's HQ sheet (read only from its local absolute path, never copied into the repo). Constraints: client-side only, deterministic, a few seconds, and the fixture stays at 159 rooms / 363.86 TR.
+
+## 1. Root cause of the "4x"
+
+**The 4x does not come from the PDF. It comes from the scale being a free panel setting that nothing checks against the drawing.** Measured with PyMuPDF (the scratch probes `geom_probe.py` and `hq_scale.py`):
+
+| Check (L11) | Result |
+|---|---|
+| Page / MediaBox | 1683.8 x 1190.6 pt = **A2** (594x420 mm), no rotation, one page. Made in Illustrator CS6. |
+| Text layer | 730 characters: room names, `SCALE 1:100`, `LEVEL 11 FLOOR PLAN`. The only numbers are 1, 100, 11. **No area figure, no dimension.** |
+| Area labels drawn as outlines? | No. 128 filled paths, all bars, columns and hatch (for example 44x3 pt x27). There are no glyph-sized clusters, no XObjects and one OCG. |
+| Door swings | 16 quarter arcs with radius 23.3-25.0 pt. At 1:100 that is **0.82-0.88 m** (a real door leaf). At 1:200 it would be 1.65-1.76 m (impossible). |
+| Chairs | 106 rectangles of 12.2x14.2 / 14.4x16.2 / 14.4x17.2 pt. At 1:100 that is **0.43x0.50 to 0.51x0.61 m**. At 1:200 a chair would be 1 m deep. |
+| Footprint | Linework spans 41.1 x 41.3 m at 1:100, which is plausible for one tower floor. |
+
+So on L11 the drawing's geometry, its page size and its own `SCALE 1:100` all agree. The automated 1:100 areas (11.89 m² for TRANSCRIPT ROOM) are the physically consistent ones. The "printed" values in the brief (47.6, 49.4, 24.0, 22.4) are exactly the traced areas × (200/100)² = ×4.00. They are not on the sheet anywhere. They are the app's own measurements taken with the panel at **1:200**. The interactive run (1,269 m² over 19 rooms against 325.6 m² over 18) is the same ×3.9 shift. The "A1 printed to A3" theory is refuted: an A2 sheet whose doors measure 0.85 m at the stated scale has not been reduced.
+
+The real defects, in code:
+
+1. `pdfparse.detectScaleText` only *classifies* `1:100` as metric evidence (`unitdetect.js`). The denominator is never parsed, so the panel scale is a default or a user choice, unconnected to the sheet.
+2. Nothing checks the scale geometrically when the sheet has no area labels. `trace.impliedDenom` needs stated areas, and L11 has none. A wrong 1:200 therefore passes silently, giving areas that are present but 4x wrong.
+3. On HQ the default is truly wrong. HQ has 3 A1 pages (1684x2384 pt, rotated 90), **no scale text**, 54 printed `x.x m²` figures and 38,969 line paths in two width classes (0.24 / 0.6 pt). Flood-filling from each printed area figure and solving `denom = (72/0.0254)·sqrt(A_printed / A_pt²)` over 108 labels gives a bimodal spread. The densest ±8% window holds 37 labels, centred on **1:249**. Of the rest, 65 are regions cut short by furniture lines (the implied scale is too high) and 6 are leaks. The app's own tracer reports a median of **1:229** over the rooms it reached. At 1:100, every HQ area is 5.2-6.2x too small. That is why 2 of 149 outlines traced, and 78 of 149 once the scale was fixed.
+
+## 2. The method
+
+The pipeline is a ladder. Each rung only handles rooms the rung above refused, and every result carries a `zoneSource` and a confidence.
+
+```
+calibrate(page)                                  // js/scalecal.js (new), section 3; runs BEFORE any fill
+labels  = classifyLabels(rooms, regions)         // js/labelclass.js (new)
+regions = traceRegions(segments, closeGaps=6)    // js/trace.js (unchanged)
+for each blank real room R:
+  rung1  single-name closed region               -> autotrace.matchRoomsToRegions   (exists)
+  rung2  shared region, neck <= 1.0 m            -> splitregion.splitRegion          (exists)
+  rung3  portal-closed region                    -> js/portals.js (new) + re-trace of that region
+  rung4  area-conserving open-plan partition     -> splitregion (new mode)
+  rung5  no trustworthy outline:
+           printed area exists -> placed box sized from the printed area (exists; area correct)
+           else                -> blank + "draw its shape" (never invent)
+```
+
+**(0) Label classification (new `js/labelclass.js`, about 90 LOC). This is the cheapest fix for "several names in one outline".** On L11, 26 of the 56 "rooms" are not rooms at all. They are fittings or zones inside a room: MONITOR ×7, SEATING ×3, ESCAPE ONLY ×3, PRESS/PUBLIC SEATING ×4, WHEELCHAIR BAY ×2, COMMISSIONERS' BENCH ×2, COUNSEL ×2, WITNESS, IN, OUT. A label becomes a **sub-zone** (`parentId`, never assigned an area, never counted in the load) when:
+
+```
+isSubZone(L) = lexicon(L.name)                        // fittings, seating, bay, bench, in/out, escape only, monitor...
+               && region(L) also holds a label that is NOT lexicon (the parent room)
+            || (font(L) < median room font && region(L) holds a larger-font label)
+```
+
+When a sub-zone is removed from a shared region and only one real name is left, rung 1 accepts the region whole. A hearing room that holds 12 annotations then gets one area instead of none. Coverage must be reported over real rooms (about 30 on L11). It must also be checked that none of today's 22 fills went to a sub-zone label: an area on "MONITOR" is a wrong area.
+
+**(a) A room open to the next space (rung 3, new `js/portals.js`, about 180 LOC; rung 4 about 60 LOC in splitregion).** The architect's boundary across an opening is the straight line between the two wall ends. The method rebuilds that line instead of guessing one:
+
+```
+ends   = free endpoints of wall-class segments (degree 1 after snapping at 0.5 pt), plus column corners
+pairs  = (e1, e2) with |e1e2| in [0.6 m, 3.5 m] at the calibrated scale,
+         the segment axis-aligned to within 10 deg or collinear with a wall at e1 or e2,
+         crossing no wall line and no label box, mutual nearest partner (deterministic: sort by length, then id)
+raster those pairs as virtual walls (portal flag) -> re-run regionAt for the still-unresolved names only
+accept room iff one real name inside, area in band, and drawnPerimeter / perimeter >= 0.70
+  zoneSource = 'portal', boundary words: "closed across a 2.4 m opening"
+```
+
+Rung 4 handles a region that still holds several real names after rung 3 (a true open-plan floor). It runs the existing watershed with the neck limit raised to 4 m, and accepts the split only if:
+
+- the outer boundary of the region is at least 85% drawn wall;
+- the parts tile the region exactly, so the sum of the parts equals the region area to within 0.5%.
+
+The floor total is then exact by construction, and each part is marked `areaEstimated` ("split along an opening, check"). It counts in the load. If either condition fails, the rooms stay at rung 5.
+
+**(b) One outline holding several names.** In order:
+
+1. Drop sub-zones (step 0).
+2. Run the existing seeded watershed with the 1.0 m neck test (rung 2).
+3. Close portals and re-split (rung 3).
+4. Run the area-conserving partition (rung 4).
+
+Corridors left with no name are still trimmed away as `unnamed-space`.
+
+**(c) When tracing fails entirely** (a scan, or no closed regions):
+
+1. If printed areas exist, keep them (the area is correct) and place a locator box sized from the area. That path exists today.
+2. Otherwise, if the scale is known, the user draws the shape (the area follows the ring).
+3. Otherwise the area stays blank with `areaUnknown`, plus a two-point calibration prompt.
+
+No rung may write an area at a scale whose confidence is "none".
+
+## 3. Scale calibration that cannot silently be 2x wrong
+
+New `js/scalecal.js` (about 140 LOC, pure). The key fact: region areas in **pt²** do not depend on the scale, so calibration runs on one region pass *before* any accept band or neck test in metres is applied. This removes today's "trace at 1:100, refuse almost everything, then offer 1:229" round trip.
+
+| Estimator | How | Strength |
+|---|---|---|
+| E1 scale text | Parse N from `1:N` / `SCALE 1:N` (and imperial `1/4"=1'-0"` → 48). Prefer the note nearest the plan's title block. Several different notes mean viewports. | Says what was *intended*, not what was exported. |
+| E2 area labels | For each single-name closed region with a printed m²: `N_i = (72/0.0254)·sqrt(A_i/pt²_i)`. Use the **densest ±8% window** (not the median: HQ's median 306 is pulled up by cut-short regions, while the window gives 249). Strong when it holds ≥5 inliers and ≥25% of labels. | Measures exactly the m² we need. |
+| E3 object priors | Door arcs (leaf 0.75-1.05 m, mode 0.9), chairs (0.40-0.65 m), WC pans, stair treads (0.25-0.30 m). Each gives a scale band; intersect the bands. | Works on L11 (16 doors → 1:93-1:106), which has no areas. |
+| E4 paper sanity | Detect A/ANSI paper size; footprint = page extent × N must be 5-300 m. | Rejection only. |
+
+The decision rule, with agreement meaning within ±7% linear (±15% area):
+
+```
+if E2 strong:  N = E2; high if E1 or E3 agrees; else "conflict" (E2 still wins; it is the sheet's own m²)
+elif E1 && E3: agree -> N = E1, high;  disagree -> conflict, N = E3 if E3 has >= 8 doors else ask
+elif E1 or E3: N = that one, medium ("from the scale note" / "from door sizes")
+else:          confidence none -> no automatic areas; ask for two points + a known length
+flag ratio(E_a, E_b) within 3% of sqrt2, 2, 2.5 or 4 as "the sheet looks re-plotted at a different size"
+```
+
+What the user sees, with every estimate and its evidence on one line:
+
+- High confidence: a quiet line, for example "Scale 1:100 (from the scale note, confirmed by 16 door widths)."
+- Conflict: an amber banner, for example "Areas use 1:249, taken from 37 printed room areas. Door sizes say 1:240. The sheet's note says 1:100, which would make every area 6.2x smaller." The banner offers [Use 1:100 instead] and [Measure two points].
+- A user-chosen scale that disagrees with E2/E3 by more than 15% keeps the same banner. That is the exact case that produced the 4x areas.
+
+Every measured area stores `scaleDenom` + `scaleSource`, and the report prints both.
+
+## 4. Verification
+
+A new probe, `tests/qa/zone-accuracy.mjs <pdf> [--truth file.json] [--blank-printed]`, runs the same functions in Node, the way `autofill-probe.mjs` does. It prints one row per drawing:
+
+`rooms  realRooms  subZones  filled  correct(<=10%)  WRONG(>15%)  coverage%  medianErr%  scale(N, source, confidence)  ms`
+
+- **coverage %** = correct ÷ realRooms (also printed ÷ all labels, so the sub-zone step cannot inflate it unseen).
+- **Ground truth, by drawing:**
+  - HQ: the printed m² figures. `--blank-printed` hides them from the fill and compares afterwards. The probe reads the PDF from `C:/Users/Aorus/Downloads/HEADQUARTERS FLOOR DUCTING.pdf` and writes only counts. The 149 rooms are its denominator.
+  - Fixture: blank all 159 areas and compare against the printed ones (the existing `split-accuracy.mjs` gate is WRONG = 0).
+  - L11: has no printed areas. Its truth is `tests/truth/level11.json`: hand-drawn rings for its ~30 real rooms, stored in **pt²** so the truth does not depend on the scale. Separately, the probe asserts that the scale chosen is 1:100 ± 7% from E1 + E3.
+- **Gates:**
+
+  | Drawing | Coverage | WRONG | Scale |
+  |---|---|---|---|
+  | L11 | ≥ 23 of ~30 real rooms | 0 | 1:100 ± 7% |
+  | HQ | ≥ 112 of 149 | ≤ 2% | within 7% of the E2 window |
+  | Fixture | ≥ baseline | 0 | 1:100, and the unchanged parse still gives 159 rooms / 363.86 TR |
+
+  Every run must finish in under 5 s per drawing.
+- **Commands:** `node tests/qa/zone-accuracy.mjs samples/level-11-floor-plan.pdf --truth tests/truth/level11.json`, then the HQ path with `--blank-printed`, then `tests/samples/sample-plan.pdf --blank-printed`.
+
+## 5. Implementation steps (cheapest first)
+
+1. **The `zone-accuracy.mjs` probe and the L11 truth file** (about 150 LOC + 30 rings). Without it, no later step can be judged.
+2. **Calibration pre-pass**:
+   - the `1:N` parse in `pdfparse.js` (about 20 LOC);
+   - E1/E2/E3 plus the decision rule in `js/scalecal.js` (about 140 LOC);
+   - the banner and auto-applying the scale in `app.js` (about 50 LOC).
+
+   **This is the biggest single correctness and coverage win on HQ**: 2 → about 78 of 149 with no click, and the 4x / 6x silent errors become impossible. It replaces the one-click offer as the default path (keep the button as an override).
+3. **Label classification** (`js/labelclass.js`, about 90 LOC, plus a 10 LOC hook in `autotrace`). **This is the biggest single coverage step on L11**: it removes 26 annotation labels from the 33 `shared` refusals and lets whole rooms that hold annotations pass rung 1. Expected L11 result: about 20-24 of ~30 real rooms. This is an estimate until step 1's probe measures it.
+4. **Portal closing** (`js/portals.js`, about 180 LOC, plus 30 LOC in `trace.js` to raster flagged segments). This targets the `open-plan` refusals on L11 and the 71 unmatched rooms on HQ.
+5. **Area-conserving open-plan partition** (about 60 LOC in `splitregion.js`, with the `areaEstimated` words in app.js `FILL_REASON_WORDS`).
+6. **Two-point calibration UI** for sheets with confidence "none" (about 80 LOC, in app.js / overlay).
+
+Re-run all three probe rows after every step. A step that raises coverage while WRONG > 0 is reverted, not tuned.
+
+## 6. Status after the first implementation pass (measured, 14 Oct 2026)
+
+Landed and measured - **scale calibration** (spec step 2) and the **label classifier module**
+(step 3's module, `js/labelclass.js`):
+
+| Drawing | real rooms | traced-correct | WRONG | scale chosen | runtime |
+|---|---|---|---|---|---|
+| `samples/level-11-floor-plan.pdf` | 30 | 21 (70%) | 0 | **1:100 (E1+E3, high)** | ~1.1 s |
+| `tests/samples/sample-plan.pdf` (fixture) | 159 | 105 | 0 | 1:101 (E2, high) | ~5.5 s |
+| the owner's HQ sheet | 145 | 50 + the rest from the sheet's printed figures | 0 | 1:228 (E2, conflict) | ~6 min (probe) |
+
+The 4x silent error is gone: the scale is read off the sheet, and a disagreement between the three
+estimators can no longer pass without a banner. The fixture's 159 rooms / 363.86 TR are unchanged.
+
+**Step 0/3 is NOT wired into the app.** `js/labelclass.js` is used by the probe only. Two app-side
+attempts were measured and reverted, and the reasons are the useful part:
+
+1. Passing its sub-zone ids to the filler (`matchRoomsToRegions`, `options.subZoneIds`) moved the
+   sample's own fill result from 22 areas to 24 - and the two extras were annotation labels - while
+   five trace-progress checks in `tests/browser-check.mjs` went red. Reverted.
+2. Refusing fitting-named results inside the outline pass missed the target: `IN` receives its area
+   from the FILL path (`room.areaFromDrawing === true`, `areaSource: 'drawing'`), not from the tracer.
+
+**Open defect, with a probe that reproduces it:** in the app, three annotation labels still carry an
+area on the sample - `IN` 11.06 m2 (no outline at all, a box sized from its own area) and
+`COMMISSIONERS' BENCH` x2 (28.57 / 29.76 m2) - `node tests/qa/app-annot-areas.mjs`. Note the last two
+are the regions of real rooms, so the risk there is a room counted under a fitting's name, not double
+counting. The fix is step 0 done properly: mark the labels once with their parent room and have every
+path (place, trace, fill, load) skip them, rather than a hook per path.
+
+**The last 5% of coverage on the sample** (21 of 30 vs the 75% goal) is the `open-plan` rung: 8 of the
+9 rooms with no area are refused for exactly that reason. Relaxing the split's neck limit or widening
+`closeGaps` makes it WORSE (21 -> 18 fills, and 6-8 WRONG areas), so the real portal-closing method is
+required - it is not a tuning problem.
+
+**The verification probe lives at `tests/qa/zone-accuracy.mjs`** (gitignored: local tooling, by the
+repo's convention) with its ground truth in `tests/truth/level11.json` (committed). Run it with
+`node tests/qa/zone-accuracy.mjs samples/level-11-floor-plan.pdf --truth tests/truth/level11.json --split`.
+
+### 6.1 The browser suite after this pass
+
+The suite had been aborting part-way (`Cannot read properties of null (reading 'textContent')` in its
+own `pickRow`), which silently hid every check after it. Fixed, and that is why the later sections
+now run at all. Also fixed in the suite, each for a measured reason:
+
+- **A coordinate click on a plan-panel button landed on the sticky NAV.** The plan panel is taller than
+  the window once the scale line is shown, so centring it left the toolbar above the top edge
+  (`#planTraceOutlines` at `y = -21`, `elementFromPoint` answering `wrap nav-inner`); the click
+  navigated the page away and five checks then read an empty state. All 61 plan-button clicks now go
+  through `clickPlanButton`, which scrolls the button into view, clicks it with the mouse when it is
+  genuinely clickable (so focus still moves - one check depends on that) and clicks it in-page
+  otherwise. Relatedly, every `#planView` centring call became `bringPlanOnScreen` (top-align, clear
+  the sticky header).
+- **The pager span can be detached mid-render**, so the current page is now read from
+  `state.project.planPage`, the app's own source of truth.
+- **`js/app.js`: the area filler no longer hides the scale line.** It ran right after the automatic
+  trace, so the message the calibration had just put on screen (a corrected scale, say) vanished
+  immediately - a correction the user was never told about. The line is cleared where it belongs:
+  clearing the trace, and a different drawing.
+- **JOB1's scale-fix checks** were modernised: they cleared nothing, and the tracer now SKIPS a room
+  that already has an outline, so a re-trace after changing the scale examined nothing and could not
+  notice the mismatch. They clear the outlines first now.
+
+**Still red, and named (10 checks; the suite reports 326/336 and now runs to the end).** Seven are in
+the "move, resize, delete and pan a room on the drawing" section, which aims its drags from a stored
+`#planView` rect plus fixed pixel offsets: they report `box {"x":0,"y":0,"w":0,"h":0}` /
+`area 94.24 -> 94.24`, i.e. the gestures do not land on the room the section thinks it drew. Clearing
+the rooms' geometry first (the device the earlier drawing checks use) made it WORSE - `box null`, then
+a throw that aborted the run - so that section needs its drag points derived from the plan's own
+fractions the way the other section does, not from `p0` plus pixels. Two more are JOB2 (iv)'s
+edge-middle drag, the same problem in miniature. The last is JOB1 (iii): after the one-click fix has
+been used the control correctly does not return, but the status line does not mention the scale the
+outlines point to, so the check's second half fails - a one-line status gap in `js/app.js`, not a
+behavior regression. **No area or scale assertion is among the ten: the node suite is 30/30, the probe
+numbers above are unchanged, and JOB1 (i) and (ii) pass again now that the app tells the user it
+corrected the scale.**

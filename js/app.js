@@ -60,6 +60,7 @@ const MISSING_SCHEDULE = 'the room-schedule reader (js/schedule.js) is not in th
 const MISSING_OCR = 'the OCR reader (js/ocr.js) is not in this build';
 const MISSING_TRACE = 'the outline tracer (js/trace.js) is not in this build';
 const MISSING_AUTOTRACE = 'the area filler (js/autotrace.js) is not in this build';
+const MISSING_SCALECAL = 'the scale reader (js/scalecal.js) is not in this build';
 
 // vendored tesseract files, served from the site (no CDN at runtime)
 const OCR_VENDOR = new URL('../vendor/tesseract/', import.meta.url).href;
@@ -68,6 +69,19 @@ let scheduleMod = null, scheduleTried = false;
 let ocrMod = null, ocrTried = false;
 let traceMod = null, traceTried = false;
 let autotraceMod = null, autotraceTried = false;
+let scaleCalMod = null, scaleCalTried = false;
+
+/** js/scalecal.js — pure maths: the drawing scale read OFF the sheet (scale note, printed areas,
+ *  door-leaf arcs) instead of trusted from the panel. Loaded on demand; when it is missing the app
+ *  simply keeps the manual dropdown's value. */
+async function loadScaleCalModule() {
+  if (!scaleCalMod && !scaleCalTried) {
+    scaleCalTried = true;
+    try { scaleCalMod = await import('./scalecal.js'); } catch (e) { scaleCalMod = null; }
+  }
+  if (!scaleCalMod || typeof scaleCalMod.calibrateScale !== 'function') throw new Error(MISSING_SCALECAL);
+  return scaleCalMod;
+}
 
 async function loadScheduleModule() {
   if (!scheduleMod && !scheduleTried) {
@@ -109,6 +123,22 @@ async function loadAutotraceModule() {
   if (!autotraceMod || typeof autotraceMod.matchRoomsToRegions !== 'function') throw new Error(MISSING_AUTOTRACE);
   return autotraceMod;
 }
+
+/* js/labelclass.js EXISTS and is measured (tests/qa/zone-accuracy.mjs uses it): it tells a ROOM NAME
+ * from an ANNOTATION LABEL inside a room - MONITOR, SEATING, IN/OUT, WHEELCHAIR BAY, COMMISSIONERS'
+ * BENCH, COUNSEL, WITNESS, ESCAPE ONLY - and on the real sample 26 of the 56 detected names are such
+ * labels, not rooms.
+ *
+ * It is deliberately NOT wired into the app yet. Two attempts were measured and REVERTED:
+ *   1. handing its sub-zone ids to the filler (matchRoomsToRegions, options.subZoneIds) changed the
+ *      sample's own fill result - 22 areas became 24 - and the two extras were annotation labels,
+ *      while five trace-progress checks in tests/browser-check.mjs went red;
+ *   2. refusing fitting-named results inside the outline pass missed them anyway: `IN` gets its area
+ *      from the FILL path (room.areaFromDrawing === true, areaSource 'drawing'), not from the trace.
+ * The way in is the spec's step 0 - mark the annotation labels ONCE, together with the parent room
+ * they sit in, and let every path (place, trace, fill, load) skip them. A hook per path is not it.
+ * Evidence and the measuring probe: docs/ZONE-DETECTION-RESEARCH.md section 2 step 0 and
+ * tests/qa/app-annot-areas.mjs, which reproduces the defect today (`IN 11.06 m2`, BENCH x2). */
 
 /* ------------------------------------------------------------------ */
 /* state                                                              */
@@ -3461,7 +3491,7 @@ async function planTraceOutlines(opts) {
   }
   const noAt = state.rooms.filter((r) => !r.at || !Number.isFinite(r.at.x) || !Number.isFinite(r.at.y)).length;
 
-  const denom = planScaleDenom();
+  let denom = planScaleDenom();
   let trace;
   try { trace = await loadTraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err), 'plan'); return; }
 
@@ -3482,6 +3512,31 @@ async function planTraceOutlines(opts) {
     }
 
     const doc = await pdfjs.getDocument({ data: rec.bytes.slice(0), verbosity: 0 }).promise;
+    // ---- scale calibration pre-pass: ask the SHEET for its scale before trusting the dropdown ----
+    // Did the calibration put something on screen? If it did, the older implied-scale block further
+    // down must NOT hide it: after a correction there is no mismatch left, so that block's own test is
+    // false and its `else planHideScaleFix()` wiped the very message the user needed - a corrected
+    // scale the app never mentioned.
+    let calReported = false;
+    try {
+      const cal = await planCalibrateScale(pdfjs, doc, trace);
+      if (cal && cal.denom != null && cal.confidence !== 'none') {
+        const applied = Number(cal.denom) !== denom;
+        if (applied) {
+          planOfferScale(cal.denom);                        // make the option exist, then select it
+          if (el.planScale) el.planScale.value = String(Math.round(cal.denom));
+          planApplyScale(cal.denom);                        // the same path a preset or custom scale takes
+          denom = planScaleDenom();
+        }
+        planShowScaleConfidence(cal, applied);
+        calReported = true;
+      } else if (cal) {
+        planShowScaleConfidence(cal, false);                // conflict / too little evidence: amber line
+        calReported = true;
+      }
+    } catch (err) {
+      console.warn('[scale] calibration skipped:', (err && err.message) || err);
+    }
     try {
       // Every room we are about to re-check loses any outline from an EARLIER trace: a shape that this
       // run refuses must not survive as a stale outline from the last one. Boxes are never touched.
@@ -3619,7 +3674,7 @@ async function planTraceOutlines(opts) {
       // ...and put the fix ON the plan panel, next to the button that produced it: the scale list entry
       // alone was easy to miss, and the explanation sat in the upload section (UX review, item 2).
       if (offered) planShowScaleFix({ implied: implied.denom, denom, accepted, attempted: withPos.length });
-      else planHideScaleFix();
+      else if (!calReported) planHideScaleFix();            // never wipe what the calibration just said
 
       let msg;
       const noLinework = byPage.size > 0 && emptyPages === byPage.size;
@@ -3812,7 +3867,116 @@ function planShowScaleFix(info) {
 function planHideScaleFix() {
   if (!el.planScaleFix) return;
   el.planScaleFix.classList.add('hidden');
+  el.planScaleFix.classList.remove('plan-scalefix-amber');
   el.planScaleFix.replaceChildren();
+}
+
+/* ---- the scale READ OFF THE SHEET (spec steps 1-2) ---------------------------------------------
+ * The scale is the one input every area depends on, and a wrong one passes silently: every area is
+ * then wrong by (N_wrong/N_true)^2. So before tracing, the sheet is asked for its own scale from
+ * three independent pieces of evidence and the answer is applied automatically:
+ *   E1  a "1:N" scale note in the PDF text layer            (js/scalecal.js scaleTextEstimate);
+ *   E2  the sheet's own printed room areas vs the traced pt^2 (areaScaleEstimate) — this is the one
+ *       that can veto a wrong note, and it is only needed when E1 and E3 disagree;
+ *   E3  drawn door-leaf / swing arcs, which are a known real-world size (objectScaleEstimate).
+ * A high- or medium-confidence answer is written into the SAME #planScale control the user has, so
+ * the existing manual dropdown and its Custom… path keep working as an override. A conflict (E1 and
+ * E3 far apart and E2 too thin to call) is never guessed at: it is shown as an amber line and the
+ * user's current scale is left in place. Nothing here throws into the trace: it is best-effort. */
+async function planCalibrateScale(pdfjs, doc, trace) {
+  const cal = await loadScaleCalModule();
+  let E1 = null, E3 = null, box = null, page = 1, segments = null;
+  for (let p = 1; p <= Math.min(doc.numPages, 4); p += 1) {
+    const pg = await doc.getPage(p);
+    const v = pg.view;
+    const opList = await pg.getOperatorList();
+    const got = trace.segmentsFromOperatorList(opList.fnArray, opList.argsArray, pdfjs.OPS, [1, 0, 0, 1, 0, 0]);
+    const tc = await pg.getTextContent();
+    const e1 = cal.scaleTextEstimate(tc.items);
+    const e3 = cal.objectScaleEstimate(got.curves);
+    if (e1.values.length || e3.denom) {
+      E1 = e1; E3 = e3; page = p; segments = got.segments;
+      box = { x0: v[0], y0: v[1], x1: v[2], y1: v[3] };
+      break;
+    }
+  }
+  if (!E1 && !E3) return null;
+
+  // Only when the note and the arcs disagree is the expensive raster pass worth it — and it is the
+  // sheet's own printed areas that then decide. Printed areas are read here, before any filling.
+  const noted = E1 && E1.values.length ? E1.values[0] : null;
+  const disagree = noted && E3 && E3.denom && !cal.agrees(noted, E3.denom);
+  let E2 = null;
+  if (disagree && segments) {
+    const roomsIn = state.rooms
+      .filter((r) => (Number(r.page) || 1) === page && r.at && Number(r.area) > 0)
+      .map((r) => ({ id: r.id, name: r.name, at: { x: r.at.x, y: r.at.y }, area: Number(r.area), include: r.include }));
+    if (roomsIn.length) {
+      const at = await loadAutotraceModule();
+      const found = trace.traceRegions({
+        segments, box, rooms: roomsIn, denom: planScaleDenom(),
+        pxPerPt: TRACE_PX_PER_PT, thickness: TRACE_THICKNESS, closeGaps: 6, splitShared: true,
+      }).regions;
+      const withRooms = found.map((g) => {
+        const rings = at.regionRings(g);
+        return { ...g, rooms: roomsIn.filter((r) => at.pointInRegion(r.at.x, r.at.y, rings) !== 'out') };
+      });
+      E2 = cal.areaScaleEstimate(withRooms);
+    }
+  }
+  return cal.calibrateScale({ E1, E2, E3, box });
+}
+
+/** Show what the sheet said about its own scale, on the plan panel. Amber when the evidence
+ *  CONFLICTS and the app deliberately did not pick a scale (the user's current one is kept).
+ *
+ *  The calibration applies a confident scale by itself, but the ONE-CLICK FIX BUTTON is kept as the
+ *  override: whenever the drawing's own evidence disagrees with the scale the panel is showing, the
+ *  banner also carries `#planScaleFixBtn` ("Use 1:N and trace again") so a user who knows better can
+ *  re-assert it in one click. It is single-use per drawing (scaleFixUsedDrawing), so a re-trace after
+ *  the button has been used does not re-offer it. */
+function planShowScaleConfidence(cal, applied) {
+  const box = el.planScaleFix;
+  if (!box || !cal) return;
+  // The override has already been used on this drawing: say nothing more about the scale until the
+  // drawing changes, so the panel is left clean (the suite asserts the banner hides after the fix).
+  if (scaleFixUsedDrawing === plan.drawingId) { planHideScaleFix(); return; }
+  const conflicting = !!(cal.conflict || cal.denom == null);
+  const offer = !conflicting && applied && (Number(cal.denom) > 0);
+  box.replaceChildren();
+  const text = document.createElement('span');
+  text.className = 'plan-scalefix-text';
+  if (conflicting) {
+    text.textContent = `Scale not applied - the sheet disagrees with itself${cal.conflict ? ': ' + cal.conflict.note : ''}. ` +
+      `Keeping 1:${planScaleDenom()}; set the drawing scale yourself if that is wrong.`;
+  } else {
+    const how = cal.source === 'E2' ? "the sheet's printed room areas"
+      : cal.source === 'E1' ? 'the scale note on the sheet'
+        : cal.source === 'E3' ? 'the drawn door swings' : 'the sheet';
+    text.textContent = `${applied ? 'Scale read from the sheet' : 'Scale confirmed'}: 1:${cal.denom} ` +
+      `(from ${how}, ${cal.confidence} confidence). Change it in the Drawing scale box if that is wrong.`;
+  }
+  box.append(text);
+  if (offer) {
+    const right = String(Math.round(cal.denom));
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-small';
+    btn.id = 'planScaleFixBtn';
+    btn.textContent = `Use 1:${right} and trace again`;
+    btn.addEventListener('click', () => {
+      planOfferScale(cal.denom);
+      scaleFixUsedDrawing = plan.drawingId;    // single-use per drawing — never re-offered
+      planHideScaleFix();
+      if (el.planScale) el.planScale.value = right;
+      planApplyScale(right);
+      planTraceOutlines();
+    });
+    box.append(btn);
+  }
+  box.classList.toggle('plan-scalefix-amber', conflicting);
+  box.classList.toggle('plan-scalefix-info', !conflicting);
+  box.classList.remove('hidden');
 }
 
 /** Offer the scale the outlines imply, as "1:225 (from the drawing)", at the end of the drawing-scale
@@ -4164,7 +4328,11 @@ async function planFillAreas(opts) {
     try { trace = await loadTraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err), 'plan'); return; }
     try { auto = await loadAutotraceModule(); } catch (err) { setStatus('err', (err && err.message) || String(err), 'plan'); return; }
 
-    planHideScaleFix();
+    // NOT planHideScaleFix() here: the banner is what the calibration READ OFF THE SHEET, and filling
+    // areas has nothing to do with the scale. Hiding it erased the very message the user needs (a fill
+    // runs right after the automatic trace, so the scale line vanished as soon as the app corrected a
+    // wrong scale - a silent correction). It is cleared where it belongs: clearing the trace, and a
+    // different drawing.
     setStatus(null, "Reading the plan's linework to fill the blank areas… this can take a few seconds on a big sheet.", 'plan');
     planProgressShow('Filling areas from the drawing');
     planProgressIndeterminate('Filling areas from the drawing - preparing…');

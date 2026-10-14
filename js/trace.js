@@ -91,6 +91,11 @@ export function segmentsFromOperatorList(fnArray, argsArray, OPS, ctm) {
   let m = ctm || [1, 0, 0, 1, 0, 0];
   const mx = { width: 1, color: null };
   const segments = [];
+  // Raw cubic curves (start + two controls + end), in page space, kept un-flattened. js/scalecal.js
+  // reads these for its object-prior estimator: a door swing is one curveTo, and its control points
+  // give the swing radius far more directly than the flattened polyline does. Additive: `segments`
+  // and `styled` keep their exact meaning.
+  const curves = [];
   const stack = [];
   let width = 1, color = null;
   for (let i = 0; i < fnArray.length; i += 1) {
@@ -121,16 +126,19 @@ export function segmentsFromOperatorList(fnArray, argsArray, OPS, ctm) {
       if (op === OPS.lineTo) { const t = p(); segments.push({ x1: curX, y1: curY, x2: t.x, y2: t.y, ...style }); curX = t.x; curY = t.y; continue; }
       if (op === OPS.curveTo) {
         const c1 = p(), c2 = p(), to = p();
+        curves.push({ x0: curX, y0: curY, x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x3: to.x, y3: to.y });
         flattenCurve(curX, curY, c1.x, c1.y, c2.x, c2.y, to.x, to.y, segments, style);
         curX = to.x; curY = to.y; continue;
       }
       if (op === OPS.curveTo2) {
         const c2 = p(), to = p();
+        curves.push({ x0: curX, y0: curY, x1: curX, y1: curY, x2: c2.x, y2: c2.y, x3: to.x, y3: to.y });
         flattenCurve(curX, curY, curX, curY, c2.x, c2.y, to.x, to.y, segments, style);
         curX = to.x; curY = to.y; continue;
       }
       if (op === OPS.curveTo3) {
         const c1 = p(), to = p();
+        curves.push({ x0: curX, y0: curY, x1: c1.x, y1: c1.y, x2: to.x, y2: to.y, x3: to.x, y3: to.y });
         flattenCurve(curX, curY, c1.x, c1.y, to.x, to.y, to.x, to.y, segments, style);
         curX = to.x; curY = to.y; continue;
       }
@@ -166,7 +174,7 @@ export function segmentsFromOperatorList(fnArray, argsArray, OPS, ctm) {
       // Any other path op (quadratic curves, etc.) is ignored: walls do not use them.
     }
   }
-  return { segments, styled: segments.filter((s) => s.color).length };
+  return { segments, styled: segments.filter((s) => s.color).length, curves };
 }
 
 /** The most common (width, colour) class in a segment list — how the plan's own linework is picked
@@ -563,9 +571,40 @@ export function polygonAreaPt2(ring) {
   return Math.abs(a) / 2;
 }
 
-/** Total area of a multi-ring outline (outer rings only; holes are not used by this module). */
+/** Signed shoelace area of a closed ring (positive or negative per winding). */
+export function signedRingArea(ring) {
+  let a = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const p = ring[i], q = ring[(i + 1) % ring.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a / 2;
+}
+
+/**
+ * Total area of a multi-ring outline — OUTER rings only. A region traced around a piece of drawn
+ * furniture (a meeting-room table, a WC pan, a duct) comes back as an OUTER ring plus one HOLE ring
+ * per enclosed shape, with the two windings opposite (outlineFromRegion always puts the interior on
+ * the left). Summing the ABSOLUTE area of every ring adds each hole as if it were more room, which
+ * inflated a real LEVEL 11 meeting room by ~19% (14.59 m² of room reported as 17.42 m²). So the
+ * outer rings — the ones wound the same way as the largest ring — are summed and the holes are
+ * ignored. (Matches this module's own contract: "outer rings only; holes are not used".)
+ */
 export function outlineAreaPt2(rings) {
-  return (rings || []).reduce((sum, r) => sum + polygonAreaPt2(r), 0);
+  const list = rings || [];
+  let biggest = 0;
+  for (const r of list) {
+    const a = signedRingArea(r);
+    if (Math.abs(a) > Math.abs(biggest)) biggest = a;
+  }
+  if (biggest === 0) return 0;
+  const sign = biggest > 0 ? 1 : -1;
+  let total = 0;
+  for (const r of list) {
+    const a = signedRingArea(r);
+    if (a !== 0 && (a > 0 ? 1 : -1) === sign) total += Math.abs(a);
+  }
+  return total;
 }
 
 /**

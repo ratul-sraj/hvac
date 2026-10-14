@@ -860,6 +860,9 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
   border: 1px solid #e8d7a6; background: var(--warn-soft); color: var(--warn); border-radius: 6px;
 }
 .plan-scalefix .plan-scalefix-text { flex: 1 1 260px; }
+/* The confidence line when the sheet AGREED with itself and the scale was read off the sheet: an
+   informational note, not a warning. The amber (warn) look above stays for a real conflict. */
+.plan-scalefix.plan-scalefix-info { border-color: #cfe0ef; background: #eef4fb; color: var(--ink); }
 /* The plan panel's own progress bar (see app.html). It is FIXED beside the plan buttons and takes NO
    layout space: an in-flow strip pushed #planView down and moved the very targets the plan gestures
    aim at, so the plan-shape checks failed (measured). It carries the operation's own count, never a

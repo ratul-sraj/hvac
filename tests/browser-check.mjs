@@ -55,6 +55,54 @@ const waitIdle = () => page
   }, { timeout: 120000, polling: 250 })
   .catch(() => {});
 
+/** Put the plan panel's TOP on screen (below the sticky header).
+ *  The panel is taller than the window once the scale line and the pager are shown, so centring it
+ *  (`block:'center'`, which every gesture helper here used to do) pushes the canvas's upper area - and
+ *  the toolbar - ABOVE the top edge. Gesture coordinates derived from its rect then land off-screen or
+ *  on the sticky nav and the gesture silently does nothing (measured: draw box {0,0,0,0}, body drag
+ *  (0,0)->(0,0), corner resize 0x0->0x0, middle-drag pan scroll 0,0->0,0). Top-align instead, and
+ *  shift it down by the header's height so the panel's first pixels are not under the nav. */
+const bringPlanOnScreen = async () => {
+  await page.evaluate(() => {
+    const v = document.getElementById("planView");
+    if (!v) return;
+    v.scrollIntoView({ block: "start" });
+    const nav = document.querySelector(".nav-inner") || document.querySelector("nav") || document.querySelector("header");
+    const pad = (nav ? nav.getBoundingClientRect().height : 0) + 6;
+    if (pad > 0) window.scrollBy(0, -pad);
+  });
+  await new Promise((r) => setTimeout(r, 300));
+};
+
+/** Click a PLAN-PANEL button reliably.
+ *  The plan panel is taller than the window once the scale line is on screen, so centring it in the
+ *  viewport can leave the toolbar ABOVE the top edge (measured: the trace button at y=-21, with
+ *  elementFromPoint answering the sticky nav). A coordinate click then lands on the NAV, which
+ *  navigates the page away and leaves five later checks reading an empty state (rows 0, empty
+ *  status). Scroll the BUTTON into view, then click it inside the page so coordinates cannot matter. */
+const clickPlanButton = async (sel) => {
+  // Scroll the BUTTON into view first, then click it the way a person would - but only when the
+  // button really is the topmost thing at its own centre. An in-page el.click() is the fallback,
+  // because it does NOT move focus the way a real click does, and one check ("Delete reaches the
+  // drawing while the mode radio holds the focus") depends on that focus.
+  const usable = await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    if (!el) return false;
+    el.scrollIntoView({ block: "center" });
+    const box = el.getBoundingClientRect();
+    if (box.width < 2 || box.height < 2) return false;
+    if (box.top < 0 || box.bottom > innerHeight) return false;
+    const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return !!(top && (top === el || el.contains(top) || top.contains(el)));
+  }, sel).catch(() => false);
+  if (usable) {
+    await page.click(sel).catch(() => {});
+    return;
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  await page.$eval(sel, (el) => el.click());
+};
+
 // ---- deterministic location auto-detect ------------------------------------------------
 // The app asks a free IP-geolocation service on a first visit (js/climates.js + autoDetectClimate
 // in js/app.js). The checks below must not depend on where this machine happens to sit, and the
@@ -76,7 +124,10 @@ page.on("request", (req) => {
     });
     return;
   }
-  req.continue();
+  // Another handler may already have resolved this request (tests/qa/mute-beacons.mjs installs one
+  // through setRequestInterception). Calling continue() twice throws "Request is already handled!"
+  // and aborts the whole suite before a single check runs.
+  if (!req.isInterceptResolutionHandled()) req.continue();
 });
 
 const consoleErrors = [];
@@ -638,7 +689,7 @@ if (!sampleMissing) {
   // the panel sits BELOW the upload box, so it must be scrolled into view: mouse coordinates are
   // viewport-relative and a drag at an off-screen y delivers no pointer event at all (that mistake
   // looks exactly like a broken feature).
-  await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+  await bringPlanOnScreen();
   await new Promise((r) => setTimeout(r, 400));
 
   const planPainted = await page.waitForFunction(() => {
@@ -670,7 +721,7 @@ if (!sampleMissing) {
       /id="planModeShape"[^>]*\bchecked\b/.test(appHtml)
         && /id="planModeSelect"/.test(appHtml) && !/id="planModeSelect"[^>]*\bchecked\b/.test(appHtml),
       "shape checked by default");
-    await page.click("#planModeShape");
+    await clickPlanButton("#planModeShape");
     await new Promise((r) => setTimeout(r, 200));
     const liveModes = await page.evaluate(() => ({
       radios: document.querySelectorAll('input[name="planMode"]').length,
@@ -691,6 +742,7 @@ if (!sampleMissing) {
   });
   const trBeforeDraw = await readTotalTr();
   const rowsBeforePlan = await page.$$eval("#roomsBody tr", (r) => r.length);
+  await bringPlanOnScreen();
   const planBox = await page.$eval("#planView", (e) => {
     const r = e.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height };
@@ -744,14 +796,14 @@ if (!sampleMissing) {
   await new Promise((r) => setTimeout(r, 500));
 
   // select mode: click the box, expect the load breakdown for that room
-  await page.click("#planModeSelect");
+  await clickPlanButton("#planModeSelect");
   await page.mouse.click(px1 + 60, py1 + 40);
   await new Promise((r) => setTimeout(r, 700));
   const selectedBoxes = await page.$$eval(".plan-room.is-selected", (n) => n.length);
   const detailShown = await page.evaluate(() => !document.getElementById("detailPanel").classList.contains("hidden"));
   ok("clicking a box in select mode opens that room's breakdown", selectedBoxes === 1 && detailShown,
       `${selectedBoxes} selected, breakdown open: ${detailShown}`);
-  await page.click("#planModeShape");
+  await clickPlanButton("#planModeShape");
 
   // the drawn room is part of the load, not just the table
   const trWithPlan = await readTotalTr();
@@ -768,7 +820,7 @@ if (!sampleMissing) {
     return { canvas: c.clientWidth, panel: v.clientWidth };
   });
   for (let i = 0; i < 3; i += 1) {
-    await page.click("#planZoomIn");
+    await clickPlanButton("#planZoomIn");
     await new Promise((r) => setTimeout(r, 700));
   }
   const zoomed = await page.evaluate(() => {
@@ -880,7 +932,7 @@ if (!sampleMissing) {
       Math.abs(agree.sum - agree.shown) <= 0.2, `${agree.sum} m² vs ${agree.shown} m²`);
 
   // put the view back so the screenshot shows the whole sheet
-  await page.click("#planFit");
+  await clickPlanButton("#planFit");
   await new Promise((r) => setTimeout(r, 800));
   await page.screenshot({ path: `${OUT}/live-plan-zoomed.png` });
 
@@ -892,7 +944,7 @@ if (!sampleMissing) {
     drawn: [...document.querySelectorAll('#roomsBody tr input[data-field="name"]')]
       .filter((i) => /Drawn room/.test(i.value)).length,
   }));
-  await page.click("#planNext");                       // give the reload a page to remember
+  await clickPlanButton("#planNext");                       // give the reload a page to remember
   await new Promise((r) => setTimeout(r, 1000));
   const pageBefore = await page.$eval("#planPage", (e) => e.textContent);
   await page.reload({ waitUntil: "load", timeout: 90000 });
@@ -914,7 +966,7 @@ if (!sampleMissing) {
       `${preReload.rows}/${preReload.drawn} before -> ${postReload.rows}/${postReload.drawn} after`);
   ok("the sheet comes back on the page the user was on", postReload.page === pageBefore,
       `page ${pageBefore} before -> ${postReload.page} after`);
-  await page.click("#planPrev");
+  await clickPlanButton("#planPrev");
   await new Promise((r) => setTimeout(r, 900));
   const boxesBack = await page.$$eval(".plan-room", (n) => n.length);
   ok("the drawn rooms are still drawn on their page after a refresh", boxesBack >= 1, `${boxesBack} box(es)`);
@@ -1005,8 +1057,8 @@ if (!sampleMissing) {
     await page.evaluate(() => {
       const v = document.getElementById("planView");
       v.scrollLeft = 0; v.scrollTop = 0;
-      v.scrollIntoView({ block: "center" });
     });
+    await bringPlanOnScreen();
     await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
       { timeout: 60000, polling: 400 });
     await sleep2(500);
@@ -1036,8 +1088,8 @@ if (!sampleMissing) {
     await page.evaluate(() => {
       const v = document.getElementById("planView");
       v.scrollLeft = 0; v.scrollTop = 0;
-      v.scrollIntoView({ block: "center" });
     });
+    await bringPlanOnScreen();
     await sleep2(600);
     const viewBox2 = await page.$eval("#planView", (e) => {
       const r = e.getBoundingClientRect();
@@ -1056,7 +1108,7 @@ if (!sampleMissing) {
       });
       let b = await read();
       if (!b.onScreen) {   // a status line or a save can scroll the page out from under the clicks
-        await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+        await bringPlanOnScreen();
         await sleep2(450);
         b = await read();
       }
@@ -1134,7 +1186,7 @@ if (!sampleMissing) {
       await sleep2(300);
 
       // (iii) a DRAG in Draw shape → a rectangle room, area as the table shows it
-      await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+      await bringPlanOnScreen();
       await sleep2(500);
       const rowsBeforeRect = await rowCount();
       const scaleRect = await scaleNow();
@@ -1175,7 +1227,7 @@ if (!sampleMissing) {
 
       // (iv) that rectangle is editable afterwards, by its corner handles in Select / edit
       if (rectRoom) {
-        await page.click("#planModeSelect");
+        await clickPlanButton("#planModeSelect");
         await sleep2(250);
         const rbox = await page.evaluate((rid) => {
           const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
@@ -1204,7 +1256,7 @@ if (!sampleMissing) {
       }
 
       // (v) a plain CLICK still adds a polygon corner (and finishes nothing)
-      await page.click("#planModeShape");
+      await clickPlanButton("#planModeShape");
       await sleep2(250);
       const rowsBeforeClicks = await rowCount();
       for (const [x, y] of [[0.34, 0.16], [0.46, 0.16], [0.46, 0.28]]) await clickAt(x, y);
@@ -1239,7 +1291,7 @@ if (!sampleMissing) {
 
     // ---- (b) draw a 6-corner CONCAVE shape, close it on the first corner, keep it as a new room
     const rowsBeforeShape = await rowCount();
-    await page.click("#planModeShape");
+    await clickPlanButton("#planModeShape");
     await sleep2(250);
     const L = [[0.08, 0.16], [0.22, 0.16], [0.22, 0.28], [0.15, 0.28], [0.15, 0.40], [0.08, 0.40]];
     for (const [x, y] of L) await clickAt(x, y);
@@ -1295,7 +1347,7 @@ if (!sampleMissing) {
     ok("the chooser lists the room rows alphabetically by name, not in sheet order",
       chooserOrder.asc && chooserOrder.count > 10,
       `${chooserOrder.count} option(s), "${chooserOrder.first}" .. "${chooserOrder.last}", ascending ${chooserOrder.asc}`);
-    await page.click("#planShapeAssignGo");                // "(new room)" is selected: make a new room
+    await clickPlanButton("#planShapeAssignGo");                // "(new room)" is selected: make a new room
     await sleep2(700);
     const shape1 = await newestShape();
     const scale1 = await scaleNow();
@@ -1329,7 +1381,7 @@ if (!sampleMissing) {
       JSON.stringify(afterCommit));
 
     // ---- (c) EDIT a vertex: the row area follows the shoelace, the load only moves on release
-    await page.click("#planModeSelect");
+    await clickPlanButton("#planModeSelect");
     await sleep2(250);
     const sel1 = await newestShape();
     const insideL = await atF(0.12, 0.22);
@@ -1414,7 +1466,7 @@ if (!sampleMissing) {
 
     // ---- (f) Escape mid-draw cancels the shape and creates nothing
     // (the vertex edits above ran in Select/edit, so go back to the shape tool first)
-    await page.click("#planModeShape");
+    await clickPlanButton("#planModeShape");
     await sleep2(250);
     const rowsBeforeEsc = await rowCount();
     for (const [x, y] of [[0.06, 0.50], [0.20, 0.50], [0.20, 0.60]]) await clickAt(x, y);
@@ -1455,7 +1507,7 @@ if (!sampleMissing) {
       const sel = document.getElementById("planShapeAssignRoom");
       sel.value = id;
     }, manualId);
-    await page.click("#planShapeAssignGo");
+    await clickPlanButton("#planShapeAssignGo");
     await sleep2(800);
     const assigned = await page.evaluate((id) => {
       const r = window.webhvac.state.rooms.find((x) => x.id === id);
@@ -1542,7 +1594,7 @@ if (!sampleMissing) {
 
     // ---- (i) dismissing the chooser keeps a NEW room (the tool's normal behaviour)
     // (committing a shape hands over to Select/edit, so go back to the shape tool)
-    await page.click("#planModeShape");
+    await clickPlanButton("#planModeShape");
     await sleep2(250);
     const rowsBeforeDismiss = await rowCount();
     for (const [x, y] of [[0.62, 0.50], [0.78, 0.50], [0.76, 0.64], [0.66, 0.68], [0.60, 0.58]]) await clickAt(x, y);
@@ -1550,14 +1602,14 @@ if (!sampleMissing) {
     await sleep2(400);
     const chooserBeforeDismiss = await page.evaluate(() =>
       !document.getElementById("planShapeAssign").classList.contains("hidden"));
-    await page.click("#planShapeAssignClose");
+    await clickPlanButton("#planShapeAssignClose");
     await sleep2(600);
     ok("dismissing the chooser keeps the shape as a new room",
       chooserBeforeDismiss && (await rowCount()) === rowsBeforeDismiss + 1,
       `${rowsBeforeDismiss} -> ${await rowCount()} rows`);
 
     // also: Enter closes a shape (the keyboard path)
-    await page.click("#planModeShape");
+    await clickPlanButton("#planModeShape");
     await sleep2(250);
     const rowsBeforeEnter = await rowCount();
     for (const [x, y] of [[0.42, 0.62], [0.56, 0.62], [0.56, 0.76], [0.42, 0.76]]) await clickAt(x, y);
@@ -1565,7 +1617,7 @@ if (!sampleMissing) {
     await sleep2(400);
     const enterChooser = await page.evaluate(() =>
       !document.getElementById("planShapeAssign").classList.contains("hidden"));
-    await page.click("#planShapeAssignGo");
+    await clickPlanButton("#planShapeAssignGo");
     await sleep2(600);
     ok("Enter closes a shape too",
       enterChooser && (await rowCount()) === rowsBeforeEnter + 1, `chooser ${enterChooser}`);
@@ -1597,7 +1649,7 @@ if (!sampleMissing) {
 
     // leave the sheet on page 1, exactly where the sections after this one expect to find it (the
     // reload above put the app back on the page the user was on, which is 2)
-    await page.click("#planPrev");
+    await clickPlanButton("#planPrev");
     await sleep2(900);
   }
 
@@ -1722,7 +1774,7 @@ if (!sampleMissing) {
   const cdp = await page.createCDPSession();
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 24 });
   try {
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await bringPlanOnScreen();
     await new Promise((r) => setTimeout(r, 500));
     const shape = () => page.evaluate(() => {
       const svg = document.querySelector(".plan-overlay");
@@ -1775,6 +1827,10 @@ if (!sampleMissing) {
   // Every check targets the room it drew BY ID: the overlay draws rooms biggest-first, so the order of
   // boxes in the DOM is not the order they were drawn in, and "the last box" is the smallest room.
   {
+    // Position the panel FIRST: p0 is where the gestures start from, so reading its rect before the
+    // scroll (which is what this did) aims the drags at where the panel used to be - above the top
+    // edge, over the sticky nav - and the room the drag is supposed to make is never made.
+    await bringPlanOnScreen();
     const p0 = await page.$eval("#planView", (e) => { const r = e.getBoundingClientRect();
       return { x: r.x, y: r.y }; });
     const rows2 = () => page.$$eval("#roomsBody tr", (t) => t.length);
@@ -1798,12 +1854,17 @@ if (!sampleMissing) {
                scroll: [view.scrollLeft, view.scrollTop] };
     });
 
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
     await new Promise((r) => setTimeout(r, 400));
     const rowsStart = await rows2();
+    const idsBefore = await page.$$eval("#roomsBody tr", (rs) => rs.map((r) => r.getAttribute("data-id")));
 
+    // NOTE: clearing the rooms' geometry here (as the earlier drawing checks do) makes THIS section
+    // worse, not better: the drag below is aimed from p0 with fixed pixel offsets rather than from the
+    // plan's fractions, so with the sheet blank it lands on no room, the drawn room never appears in
+    // the overlay (`box null`), and the next line throws and aborted the run. Left as it is; the group
+    // is red and named in docs/ZONE-DETECTION-RESEARCH.md section 6.
     // draw one room to work on (Draw shape: a bare drag is a rectangle)
-    await page.click("#planModeShape");
+    await clickPlanButton("#planModeShape");
     await new Promise((r) => setTimeout(r, 200));
     await page.mouse.move(p0.x + 140, p0.y + 120);
     await page.mouse.down();
@@ -1811,14 +1872,17 @@ if (!sampleMissing) {
     await page.mouse.move(p0.x + 420, p0.y + 360, { steps: 6 });
     await page.mouse.up();
     await new Promise((r) => setTimeout(r, 800));
-    const id2 = await roomIdOfLastRow();
+    // Identify the room the drag just made by what is NEW, never by "the last row": the automatic setup
+    // fills the table too, so the last row is not necessarily the room that was just drawn.
+    const idsAfter = await page.$$eval("#roomsBody tr", (rs) => rs.map((r) => r.getAttribute("data-id")));
+    const id2 = idsAfter.find((i) => !idsBefore.includes(i)) || await roomIdOfLastRow();
     const areaDrawn2 = await areaOfRoom(id2);
     const r0 = await boxOfRoom(id2);
     ok("the room just drawn can be found on the drawing by its id",
       !!r0 && (await rows2()) === rowsStart + 1, `id ${id2}, box ${JSON.stringify(r0)}`);
 
     // select it, then drag the body
-    await page.click("#planModeSelect");
+    await clickPlanButton("#planModeSelect");
     await new Promise((r) => setTimeout(r, 250));
     let layer = await layerState();
     const cx2 = p0.x + (r0.x + r0.w / 2 - layer.scroll[0]);
@@ -1864,7 +1928,7 @@ if (!sampleMissing) {
       Number(areaResized2) > Number(areaDrawn2), `${areaDrawn2} m2 -> ${areaResized2} m2`);
 
     // panning moves the sheet without moving the room
-    await page.click("#planZoomIn");
+    await clickPlanButton("#planZoomIn");
     await new Promise((r) => setTimeout(r, 900));
     const panBefore2 = await layerState();
     // the zoom above moved and grew the box in view space, so the reference for "panning did not move
@@ -1885,7 +1949,7 @@ if (!sampleMissing) {
       Math.abs(panRoom.w - panRefBox.w) < 2 && Math.abs(panRoom.x - panRefBox.x) < 2 &&
       Math.abs(panRoom.y - panRefBox.y) < 2 && panAfter2.aligned,
       `box ${panRefBox.x.toFixed(0)},${panRefBox.y.toFixed(0)} ${panRefBox.w.toFixed(0)}x${panRefBox.h.toFixed(0)} -> ${panRoom.x.toFixed(0)},${panRoom.y.toFixed(0)} ${panRoom.w.toFixed(0)}x${panRoom.h.toFixed(0)}, layer on drawing: ${panAfter2.aligned}`);
-    await page.click("#planFit");
+    await clickPlanButton("#planFit");
     await new Promise((r) => setTimeout(r, 900));
 
     // a keystroke inside a table cell must not delete a room
@@ -1921,7 +1985,7 @@ if (!sampleMissing) {
     // ...but Delete must reach the drawing while a non-text control holds the focus. Clicking a room
     // does not blur the mode radio (the drag cancels the default that would move focus), so treating
     // every <input> as a text field made Delete silently do nothing right after switching mode.
-    await page.click("#planModeSelect");
+    await clickPlanButton("#planModeSelect");
     await new Promise((r) => setTimeout(r, 300));
     // click the box where it actually IS on screen: scroll it into view first, then use its client
     // rectangle, so no scroll arithmetic can send the click somewhere else (it hit the page-nav
@@ -1976,8 +2040,8 @@ if (!sampleMissing) {
       };
     });
 
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
-    await page.click("#planModeShape");
+    await bringPlanOnScreen();
+    await clickPlanButton("#planModeShape");
     await new Promise((r) => setTimeout(r, 250));
     const before = await roomsNow();
     const totalBefore = await totalOf();
@@ -1986,7 +2050,7 @@ if (!sampleMissing) {
     ok("no region is on the drawing before placing", before.placed === 0, `${before.placed} placed, ${before.drawn} drawn`);
 
     await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
     await new Promise((r) => setTimeout(r, 1500));
     const after = await roomsNow();
     const totalAfter = await totalOf();
@@ -2037,7 +2101,7 @@ if (!sampleMissing) {
         .sort((a, b) => a.area - b.area);
       return rooms[0] ? { id: rooms[0].id, name: rooms[0].name } : null;
     });
-    await page.click("#planModeSelect");
+    await clickPlanButton("#planModeSelect");
     await new Promise((r) => setTimeout(r, 300));
     const boxClient = await page.evaluate((rid) => {
       const g = document.querySelector(`.plan-room[data-room-id="${rid}"]`);
@@ -2055,7 +2119,7 @@ if (!sampleMissing) {
 
     // clearing takes away only what was placed
     const totalBeforeClear = await totalOf();
-    await page.click("#planPlaceClear");
+    await clickPlanButton("#planPlaceClear");
     await new Promise((r) => setTimeout(r, 1200));
     const cleared = await roomsNow();
     ok("removing placed rooms removes exactly those",
@@ -2066,7 +2130,7 @@ if (!sampleMissing) {
 
     // and they come back after a refresh: the regions are part of the saved project
     await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
     await new Promise((r) => setTimeout(r, 1200));
     await page.reload({ waitUntil: "load" });
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 50,
@@ -2075,7 +2139,7 @@ if (!sampleMissing) {
     const persisted = await roomsNow();
     ok("the placed regions are still there after a refresh",
       persisted.placed === before.withAt, `${persisted.placed} of ${before.withAt} after the reload`);
-    await page.click("#planPlaceClear");
+    await clickPlanButton("#planPlaceClear");
     await new Promise((r) => setTimeout(r, 1200));
     ok("and the drawing is left as it was found",
       (await roomsNow()).placed === 0, "placed regions cleared again");
@@ -2095,12 +2159,12 @@ if (!sampleMissing) {
     });
     const rows4 = () => page.$$eval("#roomsBody tr", (t) => t.length);
 
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
-    await page.click("#planFit");
+    await bringPlanOnScreen();
+    await clickPlanButton("#planFit");
     await new Promise((r) => setTimeout(r, 1200));
     const rowsBeforeTrace = await rows4();
     await waitIdle();
-    await page.click("#planTraceOutlines");
+    await clickPlanButton("#planTraceOutlines");
     await page.waitForFunction(() => {
       const s = document.getElementById("planStatus");
       return s && !s.classList.contains("hidden") && !/Tracing the plan/.test(s.textContent)
@@ -2131,7 +2195,7 @@ if (!sampleMissing) {
     await page.select("#planScale", "500");
     await new Promise((r) => setTimeout(r, 400));
     await waitIdle();
-    await page.click("#planTraceOutlines");
+    await clickPlanButton("#planTraceOutlines");
     const fixAppeared = await page.waitForFunction(() => {
       const b = document.getElementById("planScaleFix");
       return b && !b.classList.contains("hidden") && !!document.getElementById("planScaleFixBtn");
@@ -2151,7 +2215,7 @@ if (!sampleMissing) {
       `"${fixInfo.btn}" — on screen ${fixInfo.onScreen}`);
     const wanted = (fixInfo.btn.match(/1:(\d+)/) || [])[1];
     if (wanted) {
-      await page.click("#planScaleFixBtn");
+      await clickPlanButton("#planScaleFixBtn");
       await page.waitForFunction(() => {
         const s = document.getElementById("planStatus");
         return s && /real outline/i.test(s.textContent);
@@ -2171,7 +2235,7 @@ if (!sampleMissing) {
     }
 
     // leave the plan as it was found
-    await page.click("#planTraceClear");
+    await clickPlanButton("#planTraceClear");
     await page.select("#planScale", "100");
     await new Promise((r) => setTimeout(r, 900));
   }
@@ -2554,7 +2618,7 @@ if (!sampleMissing) {
     // changed the rooms' geometry after the first fill, and the fill's no-op guard keys on those
     // shapes — so this press genuinely RE-RUNS the fill. Wait for it to finish before reading its line.
     await waitIdle();
-    await page.click("#planFillAreas");
+    await clickPlanButton("#planFillAreas");
     await page.waitForFunction(() => !window.webhvac.state.ui.traceBusy
       && document.getElementById("planProgress").dataset.active === "0", { timeout: 120000, polling: 200 }).catch(() => {});
     await new Promise((r) => setTimeout(r, 500));
@@ -2566,7 +2630,7 @@ if (!sampleMissing) {
 
     // The plan status clears itself after a few seconds, so poll and REMEMBER every message seen
     // instead of reading once at the end — otherwise a correct undo reports an empty status.
-    await page.click("#planFillUndo");
+    await clickPlanButton("#planFillUndo");
     let undoneStatus = "";
     for (let i = 0; i < 75; i += 1) {
       await new Promise((r) => setTimeout(r, 400));
@@ -2625,7 +2689,7 @@ if (!sampleMissing) {
       nothingBtn.aria === "true" && /nothing to fill/i.test(nothingBtn.title), JSON.stringify(nothingBtn));
 
     await waitIdle();
-    await page.click("#planFillAreas");
+    await clickPlanButton("#planFillAreas");
     await new Promise((r) => setTimeout(r, 600));
     const afterFill = await page.evaluate(() => {
       const cards = document.getElementById("summaryCards").innerText.replace(/\s+/g, " ");
@@ -2691,7 +2755,7 @@ if (!sampleMissing) {
       `drawn ${at100.drawn} at 1:100 -> ${at50.drawn} at 1:50 (expected ~${(at100.drawn / 4).toFixed(3)})`);
 
     // a clean plan view for the gesture checks
-    await page.click("#planModeShape");
+    await clickPlanButton("#planModeShape");
     await page.evaluate(() => {
       const v = document.getElementById("planView");
       v.scrollLeft = 0; v.scrollTop = 0; v.scrollIntoView({ block: "center" });
@@ -2784,8 +2848,8 @@ if (!sampleMissing) {
       window.webhvac.renderAll();
     });
     await new Promise((r) => setTimeout(r, 300));
-    await page.click("#planModeShape");
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await clickPlanButton("#planModeShape");
+    await bringPlanOnScreen();
     await new Promise((r) => setTimeout(r, 400));
     pv = await pvRect();
     const base = { x: pv.x + 240, y: pv.y + 240 };
@@ -2808,8 +2872,8 @@ if (!sampleMissing) {
     // ---- (9) a draw dropped as a duplicate must say something ----
     // Draw once, rename it to the name the NEXT draw will be auto-named, then draw the SAME
     // rectangle again: addRooms de-duplicates on name + level + area, so it must say so.
-    await page.click("#planModeShape");
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await clickPlanButton("#planModeShape");
+    await bringPlanOnScreen();
     await new Promise((r) => setTimeout(r, 400));
     pv = await pvRect();
     const rowsBeforeDup = await rowsNow();
@@ -3020,7 +3084,7 @@ if (!sampleMissing) {
   ok("a shape can be removed from a row, and the room stops claiming its area",
       detached.ringGone && detached.said, detached.status);
 
-  await page.click("#planModeShape");
+  await clickPlanButton("#planModeShape");
   await new Promise((r) => setTimeout(r, 400));
 
   // The rectangle gesture must survive all of this: one tool, two gestures.
@@ -3055,7 +3119,13 @@ if (!sampleMissing) {
     await new Promise((r) => setTimeout(r, 1000));
 
     const pickRow = (wantGeometry) => page.evaluate((want) => {
-      const pageNow = +(document.getElementById("planPage").textContent.trim()) || 1;
+      // Ask the STATE for the current page, not just the pager span: the span can be momentarily
+      // detached while the plan panel re-renders, and one run aborted the whole suite on exactly that
+      // (`Cannot read properties of null (reading 'textContent')` at this line). state.project.planPage
+      // is the app's own source of truth (js/app.js sets it on every page change).
+      const el = document.getElementById("planPage");
+      const st = (window.webhvac.state && window.webhvac.state.project) || {};
+      const pageNow = +(el && el.textContent ? el.textContent.trim() : st.planPage) || 1;
       const rooms = window.webhvac.state.rooms;
       for (const tr of document.querySelectorAll("#roomsBody tr")) {
         const r = rooms[+tr.dataset.idx];
@@ -3139,7 +3209,7 @@ if (!sampleMissing) {
     // (d) a room that ALREADY has a drawn/placed shape uses the existing selected outline, not a
     //     second focus mark (no double outline)
     await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
     await new Promise((r) => setTimeout(r, 2500));
     const placedPick = await pickRow(true);
     await clickRowCell(placedPick.id);
@@ -3153,7 +3223,7 @@ if (!sampleMissing) {
       `${doubled.focus} focus mark(s), ${doubled.selected} selected outline(s)`);
 
     // leave the project as it was found
-    await page.click("#planPlaceClear");
+    await clickPlanButton("#planPlaceClear");
     await new Promise((r) => setTimeout(r, 1200));
   }
 
@@ -3220,14 +3290,14 @@ if (!sampleMissing) {
       await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100, { timeout: 120000 });
       await settle(3000);
       await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
       await settle(3500);
     };
 
     // ---- (i) Select/edit: a click on a room's box marks its ROW selected AND scrolls it into view ----
     await loadSyntheticWithRects();
-    await page.click("#planModeSelect");
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await clickPlanButton("#planModeSelect");
+    await bringPlanOnScreen();
     await settle(500);
     // Put the room list at its BOTTOM so a clicked room's row (near the top of a 159-row table) is
     // far outside the table's visible window: this is the scroll the fix must perform (before it, a
@@ -3267,7 +3337,7 @@ if (!sampleMissing) {
     // ---- (ii) the DEFAULT Draw-shape mode: the same plain click selects the room ----
     await loadSyntheticWithRects();
     const shapeModeOn = await page.evaluate(() => document.getElementById("planModeShape").checked);
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await bringPlanOnScreen();
     await settle(500);
     box = await planRoomBox();
     await page.mouse.click(box.x, box.y);
@@ -3321,7 +3391,7 @@ if (!sampleMissing) {
     ok("the Undo-delete button disables once the undo has been used", undone.undoDisabled === true, `disabled=${undone.undoDisabled}`);
 
     // ---- (iv) the WORKING direction: clicking a table row still marks the room on the plan ----
-    await page.click("#planModeSelect");
+    await clickPlanButton("#planModeSelect");
     await settle(300);
     const rowId = await page.evaluate(() => {
       const tr = [...document.querySelectorAll("#roomsBody tr")].find((t) =>
@@ -3343,7 +3413,7 @@ if (!sampleMissing) {
 
     // ---- (v) a shape-mode click that is NOT inside a room still starts a many-corner shape ----
     await loadSyntheticWithRects();
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await bringPlanOnScreen();
     await settle(500);
     const emptyPt = await page.evaluate(() => {
       const vp = window.webhvac.plan.viewer.getViewport();
@@ -3390,14 +3460,14 @@ if (!sampleMissing) {
     await settle(3000);
     await page.waitForFunction(() => !window.webhvac.state.ui.busy, { timeout: 120000, polling: 300 }).catch(() => {});
     await waitIdle();
-    await page.click("#planTraceOutlines");
+    await clickPlanButton("#planTraceOutlines");
     // Wait for THIS trace to FINISH — not for "some room somewhere has a ring". The table already
     // carries rings from a previous drawing, so that condition is satisfied the moment the click lands
     // and the check would read the sheet before the trace has painted anything.
     await page.waitForFunction(() => !window.webhvac.state.ui.traceBusy
       && document.getElementById("planProgress").dataset.active === "0", { timeout: 120000, polling: 300 }).catch(() => {});
     await settle(1500);
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await bringPlanOnScreen();
     await settle(400);
     const polyTarget = await page.evaluate(() => {
       for (const g of document.querySelectorAll('#planView .plan-room[data-shape="poly"]')) {
@@ -3436,7 +3506,7 @@ if (!sampleMissing) {
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
     await settle(2500);
     await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
     await page.waitForFunction(() => document.querySelectorAll("#planView .plan-room").length > 0, { timeout: 60000 }).catch(() => {});
     await settle(1500);
     const beforeClear = await page.evaluate(() => ({
@@ -3491,10 +3561,10 @@ if (!sampleMissing) {
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 5, { timeout: 90000 });
     await settle(3000);
     await waitIdle();
-    await page.click("#planTraceOutlines");
+    await clickPlanButton("#planTraceOutlines");
     await page.waitForFunction(() => window.webhvac.state.rooms.some((r) => r.poly && r.poly.length > 2), { timeout: 120000 });
     await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
     await settle(3500);
     const fresh = await page.evaluate(() => {
       const b = document.getElementById("planRemoveStaleShapes");
@@ -3660,7 +3730,7 @@ if (!sampleMissing) {
     });
     const traceAndWait = async () => {
       await waitIdle();
-    await page.click("#planTraceOutlines");
+    await clickPlanButton("#planTraceOutlines");
       await page.waitForFunction(() => {
         const s = document.getElementById("planStatus");
         return s && !/Tracing the plan/.test(s.textContent) && /point to|outline|traced/i.test(s.textContent);
@@ -3711,8 +3781,8 @@ if (!sampleMissing) {
       }
     };
     const centerPlan = async () => {
-      await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
-      await sleepT(300);
+      await bringPlanOnScreen();
+      await sleepT(120);
     };
     const drawRect = async (fx = 0.08, fy = 0.45, wf = 0.20, hf = 0.20) => {
       await setMode("shape");
@@ -3747,12 +3817,18 @@ if (!sampleMissing) {
     await page.waitForFunction(() => { const c = document.getElementById("planCanvas"); return c && c.width > 400; },
       { timeout: 60000, polling: 400 }).catch(() => {});
     await sleepT(900);
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
-    await page.click("#planFit");
+    await bringPlanOnScreen();
+    await clickPlanButton("#planFit");
     await sleepT(1200);
 
     // (JOB 1-i) a WRONG scale finds almost nothing → the one-click fix appears, labelled with the
     //           implied numbers, and pressing it sets that scale and traces MORE rooms.
+    //  Clear the outlines first. The tracer now SKIPS a room that already has one (the automatic setup
+    //  traced this floor on load), so a re-trace after changing the scale examines nothing at all,
+    //  cannot see the mismatch, and offers nothing - which is what made these checks red. The promise
+    //  is about a floor measured at the wrong scale, so measure it: clear, then trace at 1:500.
+    await clickPlanButton("#planTraceClear");
+    await sleepT(700);
     await page.select("#planScale", "500");
     await sleepT(400);
     const polysBefore = (await readFix()).polys;
@@ -3808,8 +3884,8 @@ if (!sampleMissing) {
     // Back to the drawing's own scale and a clean sheet so the geometry checks below are unambiguous.
     await page.select("#planScale", "100");
     await sleepT(400);
-    await page.click("#planTraceClear").catch(() => {});
-    await page.click("#planPlaceClear").catch(() => {});
+    await clickPlanButton("#planTraceClear").catch(() => {});
+    await clickPlanButton("#planPlaceClear").catch(() => {});
     await sleepT(600);
 
     // (JOB 2-vi) a plain box still resizes by its four corner grips (the edge gesture did not replace it).
@@ -3903,7 +3979,7 @@ if (!sampleMissing) {
           const c = document.getElementById("planShapeAssign");
           return !!(c && !c.classList.contains("hidden"));
         });
-        if (shown) { await page.click("#planShapeAssignGo"); await sleepT(800); }
+        if (shown) { await clickPlanButton("#planShapeAssignGo"); await sleepT(800); }
         return page.$eval("#roomsBody tr:last-child", (tr) => tr.getAttribute("data-id"));
       };
 
@@ -4288,7 +4364,7 @@ if (!sampleMissing) {
     const toSelectMode = async () => {
       await page.evaluate(() => document.getElementById("planModeSelect").scrollIntoView({ block: "center" }));
       await sleepT(250);
-      await page.click("#planModeSelect").catch(() => {});
+      await clickPlanButton("#planModeSelect").catch(() => {});
       await sleepT(250);
       if (!(await page.evaluate(() => document.getElementById("planModeSelect").checked))) {
         await page.evaluate(() => document.getElementById("planModeSelect").click());
@@ -4347,7 +4423,7 @@ if (!sampleMissing) {
     await sleepT(5000);
     await page.evaluate(() => document.getElementById("planTraceOutlines").scrollIntoView({ block: "center" }));
     await sleepT(400);
-    await page.click("#planTraceOutlines").catch(() => {});
+    await clickPlanButton("#planTraceOutlines").catch(() => {});
     await page.waitForFunction(() => (window.webhvac.state.rooms || [])
       .some((r) => Array.isArray(r.poly) && r.poly.length > 2), { timeout: 90000, polling: 500 }).catch(() => {});
     await sleepT(2500);
@@ -4485,8 +4561,8 @@ if (!sampleMissing) {
     if ((await page.$$eval("#roomsBody tr", (t) => t.length)) === 0) await page.click("#btnSample");
     await page.waitForFunction(() => document.querySelectorAll("#roomsBody tr").length > 100, { timeout: 120000, polling: 400 });
     await settleP(1500);
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
-    await page.click("#planFit");
+    await bringPlanOnScreen();
+    await clickPlanButton("#planFit");
     await settleP(1000);
     // Let the AUTOMATIC run finish before attaching the recorder. Otherwise the bar is sampled from
     // the tail of the automatic trace and then RESTARTS for the manual trace, so the combined series
@@ -4495,7 +4571,7 @@ if (!sampleMissing) {
     await settleP(400);
     await installRecorder("planTraceOutlines", "Tracing");
     const tTrace = Date.now();
-    await page.click("#planTraceOutlines");
+    await clickPlanButton("#planTraceOutlines");
     // The bar must APPEAR first — an "it has finished" wait would otherwise be satisfied by the idle
     // state before the click takes effect — and only then must it go when the work ends.
     await page.waitForFunction(() => document.getElementById("planProgress").dataset.active === "1",
@@ -4604,7 +4680,7 @@ if (!sampleMissing) {
     await settleP(1000);
     await installRecorder("planPlaceAll", "Placing");
     await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
     await page.waitForFunction(() => document.getElementById("planProgress").dataset.active === "1",
       { timeout: 60000, polling: 100 }).catch(() => {});
     await page.waitForFunction(() => {
@@ -4726,12 +4802,12 @@ if (!sampleMissing) {
       `${afterReload.bar.runs} bar run(s) after the reload; status "${afterReload.status.slice(0, 90)}"`);
 
     // (e) both manual buttons still do their job after the automatic run.
-    await page.evaluate(() => document.getElementById("planView").scrollIntoView({ block: "center" }));
+    await bringPlanOnScreen();
     await sleep21(300);
     const placeBefore = await page.evaluate(() =>
       window.webhvac.state.rooms.filter((r) => r.rect && r.rect.placed === true).length);
     await waitIdle();
-    await page.click("#planPlaceAll");
+    await clickPlanButton("#planPlaceAll");
     await page.waitForFunction(() => !window.webhvac.state.ui.autoSetupBusy && !window.webhvac.state.ui.traceBusy
       && document.getElementById("planProgress").dataset.active === "0", { timeout: 60000, polling: 200 }).catch(() => {});
     await sleep21(500);
@@ -4747,7 +4823,7 @@ if (!sampleMissing) {
 
     await page.evaluate(() => { window.webhvac.plan.lastTrace = null; });
     await waitIdle();
-    await page.click("#planTraceOutlines");
+    await clickPlanButton("#planTraceOutlines");
     await page.waitForFunction(() => !!window.webhvac.plan.lastTrace
       && !window.webhvac.state.ui.traceBusy && document.getElementById("planProgress").dataset.active === "0",
       { timeout: 120000, polling: 300 }).catch(() => {});
@@ -5081,6 +5157,9 @@ if (!sampleMissing) {
       selfOut.split("\n").slice(-3).join(" | "));
   fs.writeFileSync(`${OUT}/selftest.txt`, selfOut);
 } catch (err) {
+  // Print WHERE it threw: the check only carries the message, and a bare message once cost a
+  // whole debugging cycle (a null read looks identical from every caller).
+  console.error("[browser-check] run aborted at:\n" + String((err && err.stack) || err));
   ok("browser run completed without throwing", false, String(err && err.message));
 } finally {
   await browser.close();
