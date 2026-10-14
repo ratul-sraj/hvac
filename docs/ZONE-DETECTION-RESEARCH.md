@@ -270,6 +270,8 @@ What has been MEASURED on this, and each one reverted:
 | global gap-closing (`CGAP`) | 21 -> 18, small rooms lose area to big neighbours |
 | open-plan rung 4 (`OPM`) opt-in | worse, 3 small rooms leaked into neighbours |
 | watershed "sibling carve" attribution (a delegated worker, 27 min) | 21 -> **8** fills |
+| portal-closing gate: a part whose outline is mostly the drawing's OWN WALL may accept a cut face wider than a door (`wallFrac >= 0.5`) | 21 -> **18**, 0 wrong |
+| ...plus a membership fix (a room belongs only to its own part) | 21 -> **10**, 0 wrong |
 
 Every one of them trades real coverage or accuracy away, which is the spec's own stop rule. The
 existing machinery (`js/splitregion.js` cuts a shared region at a "neck" of at most `NECK_MAX_M` = 2 m)
@@ -285,3 +287,15 @@ sliver rather than a room. Its conclusion was that the owner region must geometr
 disk at every sibling anchor before attributing. That is a concrete next step for `attributeOpenPlan`,
 and it is untested - the run was stopped before it could measure it. Its work-in-progress is saved in
 `git stash` (`worker WIP: portal-closing`), not on the branch.
+
+**Why the portal gate cost rooms, which is the real finding.** `js/autotrace.js` decides per REGION by
+counting how many room NAMES fall inside that region's outline; more than one and it is refused as
+`shared`. Closing a portal changes that arithmetic: the closed part's outline can enclose a SIBLING's
+name, so the region reads as two names and BOTH rooms are refused — measured as exactly three correct
+rooms (EMERGENCY EXIT, SECURE STORE, SOUND LOBBY) losing their areas while nothing gained. The gate
+itself is sound (it measures how much of a part's boundary is drawing vs cut face, which is the honest
+test for "this opening was closed"), but it cannot be switched on before the membership rule is made
+robust on its own, measured on its own, with no gate involved. That is the right order for the next
+attempt: (1) make `shared` counting immune to a room that already owns a part, verify 21 -> 21 with
+zero change, then (2) switch the portal gate on and verify 21 -> 23+ with zero wrong. Both steps are
+reverted; the baseline is 21 of 30 (70%) with 0 wrong.
