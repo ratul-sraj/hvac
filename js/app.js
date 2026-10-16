@@ -6583,4 +6583,9 @@ window.__planSetupDebug = () => ({ gen: planSetupGen, running: planAutoSetupRunn
   placed: state.rooms.filter((r) => r.rect && r.rect.placed === true).length,
   traced: state.rooms.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length });
 window.webhvac = {
-  confirmBasisAll, state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a), planAutoSetup, maybeAutoSetupPlan, roomsHavePlanGeometry, planAutoSetupDone };
+  confirmBasisAll, state, currentCalc, renderAll, addRooms,
+  // The report, as the app itself builds it: with the resolved climate and the saved confirmations, so a
+  // caller (a test, a console, another page) gets exactly what the Print button gives — refusal included.
+  buildReportHtml: (project, calc, opts) => buildReportHtml(project || state.project, calc || currentCalc(),
+    Object.assign({ climate: basisClimate(), basis: currentBasis() }, opts || {})),
+  toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a), planAutoSetup, maybeAutoSetupPlan, roomsHavePlanGeometry, planAutoSetupDone };

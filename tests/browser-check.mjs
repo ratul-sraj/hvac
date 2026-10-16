@@ -5293,7 +5293,13 @@ if (!sampleMissing) {
     ok("26 (g) the refusal names the subjects too, not the constants",
       /how much fresh air|what the walls|how many people/i.test(before.refusalNames) ||
       before.refusalNames.length === 0, before.refusalNames.slice(0, 120));
-    // ...and accepting ONE sentence settles exactly the figures behind it.
+    // ...and accepting ONE sentence settles exactly the figures behind it. A visitor meets the panel
+    // collapsed, so open it the way they do before clicking anything inside it.
+    await pg.evaluate(() => {
+      const d = document.getElementById("basisBlock");
+      if (d && !d.open) (d.querySelector("summary") || d).click();
+    });
+    await wait(500);
     const acceptOne = await pg.$("#basisGroups .basis-statement:not(.is-ok) button[data-basis-accept]");
     let oneTaken = null;
     if (acceptOne) { await acceptOne.click(); await wait(1400); oneTaken = await basisSnap(); }
