@@ -955,3 +955,12 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 .dc-country > summary:hover { background: var(--accent-soft); }
 .dc-country[open] > summary { border-bottom: 1px solid var(--line); }
 .dc-country .table-scroll { border: 0; border-radius: 0; }
+
+/* A control with nothing left to do must not look like the next step. "Fill areas from the drawing" keeps
+   its bright primary style after the fill has run, so a first-time user reads it as "press me next"
+   (reported in a UX pass). Give it the quiet look once every room has an area — still clickable, so its
+   tooltip can explain that there is nothing left to fill. */
+.btn[data-nothing-to-fill="1"] {
+  background: #fff; color: var(--ink); border-color: var(--line); font-weight: 500;
+}
+.btn[data-nothing-to-fill="1"]:hover { background: #f6f8fb; }

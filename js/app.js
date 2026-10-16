@@ -1467,7 +1467,17 @@ function renderTable() {
     return;
   }
   el.roomsEmpty.classList.add('hidden');
-  el.roomsBody.innerHTML = state.ui.order.map((i) => rowHtml(i, calc)).join('');
+  if (!state.ui.order.length) {
+    // Rooms exist but the search box or the level filter hides every one of them: an empty table with no
+    // words reads as a broken app (the only clue was the small "0 shown of 3 room(s)" line). Say what
+    // happened and how to get back. Reported from real use.
+    const n = state.rooms.length;
+    el.roomsBody.innerHTML = '<tr class="rooms-none"><td class="l" colspan="99">' +
+      `No rooms match the search or the level you set. Clear the search box, or set Level back to ` +
+      `“All levels”, to see all ${n} room${n === 1 ? '' : 's'}.</td></tr>`;
+  } else {
+    el.roomsBody.innerHTML = state.ui.order.map((i) => rowHtml(i, calc)).join('');
+  }
 
   const inc = state.rooms.filter((r) => normalizeRoom(r, state.project).include !== false).length;
   const shown = state.ui.order.length;
@@ -1598,6 +1608,7 @@ function renderSummary(calc) {
           if (el.tbAir) el.tbAir.textContent = `${t.supplyOk === false ? '-' : fmtAir(t.ls, sys)} ${airUnit(sys)}`;
           if (el.tbRooms) el.tbRooms.textContent = `${t.rooms} rooms included`;
         }
+        reserveTotalsBar();          // its height depends on how it wrapped, so measure it here
       }
       // Nothing to print or export while no room is included in the load.
       setExportEnabled(t.rooms > 0);
@@ -5645,9 +5656,15 @@ function planWireGestures() {
   // handlers have already run by the time these fire.
   el.planView.addEventListener('click', () => { if (plan.overlay && plan.overlay.hasDraft && plan.overlay.hasDraft()) planSync(); });
   window.addEventListener('keyup', (e) => {
-    if ((e.key === 'Backspace' || e.key === 'Escape')
-        && plan.overlay && plan.overlay.hasDraft && plan.overlay.hasDraft()) planSync();
+    // Refresh on the KEYSTROKE itself, not only while a draft still exists. Escape THROWS THE DRAFT
+    // AWAY, so by the time this fires hasDraft() is false, the refresh was skipped, and the line under
+    // the drawing went on telling the user to "press Enter to finish the shape" for a shape that no
+    // longer existed. Reported from real use.
+    if (e.key === 'Backspace' || e.key === 'Escape') planSync();
   });
+  // The totals bar is FIXED to the bottom and body reserves its height (reserveTotalsBar below).
+  // Wrapping on a narrow screen changes that height, so measure it again when the window changes shape.
+  window.addEventListener('resize', reserveTotalsBar);
   window.addEventListener('keydown', (e) => {
     // Space is the pan modifier — but never while the user is typing (the room-name box, a table
     // cell). Without this guard, holding Space to type a space set the pan flag, so the app skipped
@@ -5668,6 +5685,16 @@ function planWireGestures() {
   });
   window.addEventListener('keyup', (e) => { if (planGestureSpaceKey(e)) planSpaceHeld = false; });
   window.addEventListener('blur', () => { planSpaceHeld = false; });
+}
+
+/** Body reserves exactly the totals bar's own height, MEASURED — the fixed 50 px in the stylesheet was
+ *  not enough once the bar wraps. On a phone (390 px) the bar is two lines tall, so the last controls on
+ *  the page — the plan toolbar buttons "Remove placed rooms", "Trace real outlines", "Remove outlines" —
+ *  ended up behind it and could not be tapped. Reported from real use. */
+function reserveTotalsBar() {
+  if (!el.totalsBar) return;
+  const h = el.totalsBar.hidden ? 0 : Math.ceil(el.totalsBar.getBoundingClientRect().height);
+  document.body.style.paddingBottom = `${Math.max(h, 8)}px`;
 }
 
 function planWire() {
