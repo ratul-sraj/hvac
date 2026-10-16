@@ -1348,6 +1348,39 @@ function shapeLinkBlock(raw) {
     </div>`;
 }
 
+/**
+ * An OPEN AREA: the drawing does not draw this row's edge, so its whole measured area was given to ONE
+ * name and the load counts it once (js/trace.js source 'open-area'). The names inside it are the rows it
+ * could sensibly belong to, and moving it reuses the shape machinery (outline and area travel together,
+ * so the total cannot change - only which row owns it).
+ */
+function openAreaBlock(raw) {
+  if (!raw || !raw.openArea) return '';
+  const inside = (raw.openArea.inside || []).filter((x) => x.id && x.id !== raw.id);
+  const area = Number(raw.area) > 0 ? raw.area : Number(raw.openArea.areaM2) || 0;
+  const head = `<div class="bd-link">
+      <h3>Open area</h3>
+      <p>This row holds a whole <strong>open area of ${fmt(area, 2)} m&sup2;</strong>. The plan does not
+        draw its edge, so it could not be cut into rooms and the whole area went to this one name. It is
+        counted <strong>once</strong> in the load.</p>`;
+  if (!inside.length) {
+    return head + `<p class="muted small">No other room name sits inside it, so there is nowhere to
+      move it to.</p></div>`;
+  }
+  return head + `
+      <div class="bd-link-controls">
+        <label class="muted small" for="bdOpenAreaTarget">Give this area to</label>
+        <select id="bdOpenAreaTarget">
+          ${inside.map((x) => `<option value="${esc(x.id)}">${esc(x.name || 'room')} &mdash; inside this area${Number(x.areaM2) > 0 ? ` (${fmt(x.areaM2, 1)} m&sup2; of it)` : ''}</option>`).join('')}
+          ${shapeTargetOptions(raw)}
+        </select>
+        <button type="button" class="btn btn-small" id="bdOpenAreaMove">Move the area</button>
+      </div>
+      <p class="muted small">The outline and the area move together, so the total load is unchanged &mdash;
+        only which row owns it. Ctrl+Z puts it back.</p>
+    </div>`;
+}
+
 function defaultText(key, rn) {
   switch (key) {
     case 'area': return rn.area ? fmt(rn.area, 2) : '';
@@ -1642,6 +1675,7 @@ function renderDetail(calc) {
       <div><div class="k">Area / tonne</div><div class="v">${fmtValue(areaPerTr(m2PerTr(room.area, r.tr), sys), 0)} ${areaPerTrUnit(sys)}</div></div>
     </div>
     ${shapeLinkBlock(state.rooms[idx])}
+    ${openAreaBlock(state.rooms[idx])}
     ${body}
     <div class="bd-row bd-total-row">
       <div class="lbl">Total cooling load</div>
@@ -1669,6 +1703,14 @@ function renderDetail(calc) {
   }
   const detachBtn = el.detailBody.querySelector('#bdShapeDetach');
   if (detachBtn) detachBtn.addEventListener('click', () => planDetachShape(state.ui.openId));
+  const oaBtn = el.detailBody.querySelector('#bdOpenAreaMove');
+  if (oaBtn) {
+    oaBtn.addEventListener('click', () => {
+      const sel = el.detailBody.querySelector('#bdOpenAreaTarget');
+      if (sel && sel.value) planMoveShapeTo(state.ui.openId, sel.value);
+      else setStatus('warn', 'Choose the row that should own this open area first.', 'plan');
+    });
+  }
 
   // The bar under the drawing mirrors this room's link, so it is updated in the same place the breakdown
   // is - there is no second source of truth for which room is "open".
@@ -4332,6 +4374,9 @@ function planApplyFill(assignments, reasonCount, info) {
     // parser uses for a room that HAS an area (so a toilet/stairwell stays out) — otherwise filling
     // areas would change no total at all, which is the whole point of the feature.
     room.include = !NON_AC_WORDS.test(room.name || '');
+    // An OPEN AREA: the whole region went to this one name because the drawing does not draw its edge.
+    // Recorded on the room so the table can mark it and offer to move the area to another name inside.
+    if (a.openArea) room.openArea = a.openArea; else delete room.openArea;
   }
   // Only a run that CHANGED something becomes the Undo step. A run that filled nothing must leave the
   // previous Undo intact — otherwise pressing Fill areas a second time (which changes nothing, and says
@@ -4354,9 +4399,13 @@ function planApplyFill(assignments, reasonCount, info) {
   const tail = left > 0 ? ` ${left} left alone — ${fillReasonSummary(reasonCount)}` : '';
   const pages = info.pagesSkipped
     ? ` ${info.pagesSkipped} page(s) had no readable linework.` : '';
+  const openNote = info.openAreas
+    ? ` ${info.openAreas} of them had no edge drawn on the plan, so the whole area was given to ONE ` +
+      `room - open that room's row to move the area to another name inside it.`
+    : '';
   setStatus('ok', `Filled ${filled.length} area${filled.length === 1 ? '' : 's'} from the drawing ` +
     `(using ${info.passKey === 'mixed' ? 'the plan’s own wall lines' : passLabel([info.passKey])}).${tail}${pages} ` +
-    `They now count in the load, unless the name means a space that is not cooled. Undo puts them back.`, 'plan');
+    `They now count in the load, unless the name means a space that is not cooled.${openNote} Undo puts them back.`, 'plan');
 }
 
 /** Everything a fill result depends on: the drawing, the scale, and the rooms (name, whether they
@@ -4495,9 +4544,17 @@ async function planFillAreas(opts) {
             // region holding a real room plus its fittings (MONITOR, SEATING, ESCAPE ONLY ...) is refused
             // as `shared` and the whole room is lost - the biggest single reason a real sheet comes back
             // with almost no areas.
-            const subZoneIds = await planMarkFittings(regions, pageRooms, 'fill');
+            // An OPEN AREA (js/trace.js, source 'open-area') is a region whose edge the drawing does not
+            // draw: ONE name holds the whole area, and the user can move it to another of the names
+            // inside. It must NOT go through the matcher - the matcher decides by "exactly one name
+            // inside", and such a region holds several by construction, so it would refuse the area AND
+            // veto neighbours that really did trace (measured: 21 -> 18 areas, every loss refused as
+            // `overlap`). It is applied directly below instead: counted once, under one name.
+            const openAreaRegions = regions.filter((r) => r.source === 'open-area' && r.roomId != null);
+            const matchRegions = openAreaRegions.length ? regions.filter((r) => r.source !== 'open-area') : regions;
+            const subZoneIds = await planMarkFittings(matchRegions, pageRooms, 'fill');
             fittingIds = subZoneIds;
-            const out = auto.matchRoomsToRegions({ rooms: roomInput, regions, options: { subZoneIds } });
+            const out = auto.matchRoomsToRegions({ rooms: roomInput, regions: matchRegions, options: { subZoneIds } });
             const n = out.assignments.filter((a) => fillIds.has(a.roomId)).length;
             if (!best || n > best.n) best = { key: c.key, regions, out, n };
           }
@@ -4523,10 +4580,37 @@ async function planFillAreas(opts) {
             const code = skipBy.get(r.id) || 'no-outline';
             reasonCount.set(code, (reasonCount.get(code) || 0) + 1);
           }
+
+          // ---- open areas: the whole area, counted ONCE, under one name the user can change --------
+          // `best` is this PAGE's pass, so this must stay inside the page loop. A real measurement always
+          // wins over the fallback (the `assignments.has` guard), and the names inside the area ride along
+          // on the room so the table can offer to move the area to another of them.
+          // The head must be a ROOM, never an annotation label: MONITOR/SEATING/BENCH are fittings, not
+          // spaces that get cooled (they were the whole of fix #1). A fitting was chosen as the head of
+          // one open area and got an area of its own that way - prefer the largest name inside the area
+          // that is not a fitting, and ignore a region with no usable figure at all.
+          const isFit = (id) => {
+            const rr = roomById(id);
+            return !!(rr && rr.subZone) || !!(fittingIds && fittingIds.has(id));
+          };
+          for (const r of (best.regions || [])) {
+            if (r.source !== 'open-area' || !(Number(r.areaM2) > 0)) continue;
+            const insideList = (r.openArea && r.openArea.inside) || [];
+            const pick = insideList.filter((x) => x.id != null && !isFit(x.id))
+              .sort((a, b) => (b.areaM2 || 0) - (a.areaM2 || 0))[0];
+            const targetId = (r.roomId != null && !isFit(r.roomId)) ? r.roomId : (pick && pick.id);
+            if (targetId == null || !fillIds.has(targetId) || assignments.has(targetId)) continue;
+            assignments.set(targetId, {
+              areaM2: round2(r.areaM2), regionId: r.id,
+              openArea: { ...(r.openArea || {}), areaM2: round2(r.areaM2), roomId: targetId },
+            });
+          }
         }
 
+        const openAreas = [...assignments.values()].filter((a) => a.openArea).length;
+
         planApplyFill(assignments, reasonCount, {
-          fillable: fillable.length, pagesRead, pagesSkipped, regionsTotal, passKey, denom,
+          fillable: fillable.length, pagesRead, pagesSkipped, regionsTotal, passKey, denom, openAreas,
         });
       } finally {
         try { await doc.destroy(); } catch (e) { /* ignore */ }
@@ -4853,6 +4937,15 @@ function planMoveShapeTo(fromId, toId) {
   to.areaFromDrawing = true;
   delete to.areaTyped;        // the shape now provides the area: edits on it follow the shape again
   delete to.areaUnknown;
+  // An OPEN AREA travels with its shape: the list of names inside is what makes it reassignable, and the
+  // area must stay in the load, so the new row inherits both (and the rule that a name meaning an uncooled
+  // space stays out). The giving row forgets it - one owner at a time, so the total cannot double-count.
+  if (from.openArea) {
+    to.openArea = { ...from.openArea, roomId: to.id };
+    to.include = !NON_AC_WORDS.test(to.name || '');
+    delete from.openArea;
+    from.include = false;
+  }
   renderAll();
   saveNow();
   planRenderGeometry();     // the outline moved from one box to another on the sheet

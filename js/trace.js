@@ -812,6 +812,35 @@ function regionsFromCore(core, p) {
         });
         if (split && split.parts.length) {
           splitRegions += 1;
+          // ---- open areas: ONE whole area, given to ONE name ------------------------------------
+          // Parts are refused when the drawing does not enclose them (`open-plan`), yet the REGION's own
+          // outline IS measured. The owner's call: that area is real, so it belongs in the cooling load;
+          // what is uncertain is only WHICH name owns it, and that the user can change with one click.
+          // So when EVERY part of a region is refused as open-plan, the whole region goes out as ONE
+          // accepted entry (its own rings and area) under the name that fills its largest piece, with
+          // `openArea` carrying every name inside it. The parts are dropped, so the area is counted
+          // exactly once, and nothing is silent: `source:'open-area'` and `openArea` say what was done.
+          const refusedParts = split.parts.filter((x) => !x.accepted);
+          if (refusedParts.length === split.parts.length && refusedParts.every((x) => x.code === 'open-plan')) {
+            const wRings = outlineFromRegion(region, w, box, px, { simplifyTolPt: p.simplifyTolPt });
+            const wAreaPt2 = outlineAreaPt2(wRings);
+            const wAreaM2 = pt2ToM2(wAreaPt2, denom);
+            if (wRings.length && wAreaM2 > 0) {
+              const r2 = (v) => Math.round(v * 100) / 100;
+              const byArea = [...refusedParts].sort((a, b) => (b.areaM2 || 0) - (a.areaM2 || 0));
+              const head = byArea[0];
+              const inside = byArea.map((x) => ({ id: x.roomId, name: x.name || '', areaM2: r2(x.areaM2 || 0) }));
+              out.push({
+                id: `reg${region.index}open`,
+                rings: wRings, polygon: wRings[0] || [], areaPt2: wAreaPt2,
+                areaM2: r2(wAreaM2), closed: true,
+                cells: region.areaPx, labels: inside.length, bbox: region.bbox,
+                source: 'open-area', roomId: head.roomId,
+                openArea: { areaM2: r2(wAreaM2), roomId: head.roomId, inside },
+              });
+              continue;
+            }
+          }
           for (let k = 0; k < split.parts.length; k += 1) {
             const part = split.parts[k];
             out.push({
