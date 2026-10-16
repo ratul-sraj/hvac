@@ -37,6 +37,9 @@ import { isStairwellName } from './autotrace.js';
 // The location -> design-conditions table and its resolver (js/climates.js): pure data + a pure
 // lookup, loaded with the app. The auto-detect wiring below uses it; nothing here touches the DOM.
 import { resolveClimate, countryFromTimezone, countryFromLocale, locationKey } from './climates.js';
+// The design basis: every figure the load depends on with its source, and the gate that refuses to
+// total a load built on figures nobody has stood behind (js/basis.js).
+import { BASIS_FIELDS, basisFromProject, basisGaps, basisStats, basisLine, confirmField } from './basis.js';
 // Anonymous usage counting (js/usage.js): a strict allowlist of real actions plus
 // the utm_* campaign tags already in the URL. No cookies, no ids, no plan data —
 // see the module header. Every call is a no-op if counting is unavailable.
@@ -1553,9 +1556,206 @@ function card(k, v, unit, hero) {
     <div class="v">${v}${unit ? ` <small>${esc(unit)}</small>` : ''}</div></div>`;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* THE DESIGN BASIS (js/basis.js) — what the load actually stands on   */
+/* ------------------------------------------------------------------ */
+// The engine multiplies areas by about twenty constants. Until now none of them said where it came
+// from and the app totalled the load regardless. Now every one of them is an entry with a source, and
+// the summary REFUSES TO TOTAL while a figure the result depends on is unconfirmed — because a number
+// built on unconfirmed practice looks precise and means nothing. One click resolves the whole set, and
+// the report then states exactly which figures are cited and which a human confirmed.
+
+// The internal-gain and outdoor-air figures live per room TYPE in the engine (js/calc.js SPACE_TYPES),
+// so they have no single project value to show: the row shows the office row as the reference and says
+// the rest are per row in the table and the report.
+const BASIS_PER_TYPE = new Set(['oap', 'oaa', 'light', 'equip', 'm2pp', 'ps', 'pl']);
+
+/** The climate row the app used, with its provenance — a station row is sourced, an estimate is not. */
+function basisClimate() {
+  const row = state.project && state.project.city ? CLIMATES[state.project.city] : null;
+  if (!row) return null;
+  return {
+    db: row.db, wb: row.wb, station: row.station || '', src: row.src || '',
+    indicative: !!row.indicative, why: row.why || '',
+  };
+}
+
+/** The basis as it stands now: values from the engine's own settings, statuses from what the user saved. */
+function currentBasis() {
+  if (!state.project.basis || typeof state.project.basis !== 'object') state.project.basis = {};
+  const saved = state.project.basis;
+  const b = basisFromProject(state.project, basisClimate());
+  for (const f of BASIS_FIELDS) {
+    const s = saved[f.id];
+    if (!s || !s.status) continue;
+    const e = b.entries[f.id];
+    e.status = s.status;
+    e.note = s.note || '';
+    e.confirmedAt = s.confirmedAt || null;
+    if (e.value == null && !BASIS_PER_TYPE.has(f.id)) e.status = 'missing';
+    // A figure that was confirmed and has since been edited is the engineer's own number now: it does
+    // not block (they typed it), but it can never be reported as audited.
+    else if (s.status === 'confirmed' && s.value != null && e.value != null &&
+             Math.abs(Number(s.value) - Number(e.value)) > 1e-9) {
+      e.status = 'typed';
+      e.note = `${e.note ? e.note + ' ' : ''}Value changed since it was confirmed (was ${s.value}); recorded as hand-entered.`;
+    }
+  }
+  return b;
+}
+
+function basisGate() {
+  const b = currentBasis();
+  return { ok: basisStats(b).complete, gaps: basisGaps(b), stats: basisStats(b), basis: b };
+}
+
+const BASIS_STATE_LABEL = {
+  cited: 'from a published source', confirmed: 'confirmed', typed: 'hand-entered',
+  unconfirmed: 'unconfirmed', missing: 'no value',
+};
+
+function basisRowHtml(f, e, gap, stats) {
+  const perType = BASIS_PER_TYPE.has(f.id);
+  let valueText;
+  if (perType) {
+    const ref = SPACE_TYPES.office || {};
+    valueText = `office: ${fmtValue(ref[f.id] != null ? ref[f.id] : 0, 2)} ${esc(f.unit)} <span class="basis-sub">per room type</span>`;
+  } else if (e.value == null) {
+    valueText = '<span class="basis-sub">not set</span>';
+  } else {
+    valueText = `${fmtValue(e.value, 2)} ${esc(f.unit)}`;
+  }
+  // A value above the code's own limit is the one thing this panel must shout about.
+  const over = !perType && f.limit && e.value != null && Number(e.value) > Number(f.limit.value)
+    ? `<span class="pill pill-warn" title="${esc(f.limit.cite)}">above ${f.limit.value} ${esc(f.unit)}</span>` : '';
+  const state = gap ? (e.status === 'missing' ? 'missing' : 'unconfirmed') : e.status;
+  const pill = `<span class="pill pill-${state}" title="${esc(e.note || '')}">${esc(BASIS_STATE_LABEL[state] || state)}</span>`;
+  const btn = (e.status === 'confirmed') ? ''
+    : `<button type="button" class="btn btn-small btn-ghost" data-basis-confirm="${esc(f.id)}">Confirm</button>`;
+  return `<div class="basis-row${gap ? ' is-gap' : ''}" data-basis="${esc(f.id)}">
+      <div class="basis-main"><span class="basis-label">${esc(f.label)}</span><span class="basis-value">${valueText}${over}</span></div>
+      <div class="basis-src">${e.cite ? esc(e.cite) : (f.cite ? esc(f.cite) : '')}</div>
+      <div class="basis-actions">${pill}${btn}</div>
+    </div>`;
+}
+
+function renderBasisPanel() {
+  const wrap = document.getElementById('basisRows');
+  if (!wrap) return;
+  const b = currentBasis();
+  const s = basisStats(b);
+  const gaps = basisGaps(b);
+  const grade = document.getElementById('basisGrade');
+  if (grade) {
+    grade.textContent = s.complete
+      ? `complete — ${s.cited} cited, ${s.confirmed} confirmed, ${s.typed} hand-entered`
+      : `incomplete — ${gaps.length} to confirm`;
+    grade.className = `basis-grade ${s.complete ? 'is-ok' : 'is-bad'}`;
+  }
+  const hint = document.getElementById('basisHint');
+  if (hint) {
+    hint.textContent = s.complete
+      ? basisLine(b) + ' The load is shown and can be printed.'
+      : 'These are the figures the result is multiplied by. The ones marked "unconfirmed" come from engineering practice, not a standard — until each is confirmed the load is not totalled.';
+  }
+  let html = '', group = '';
+  for (const f of BASIS_FIELDS) {
+    if (f.group !== group) { group = f.group; html += `<h4 class="basis-group">${esc(group)}</h4>`; }
+    html += basisRowHtml(f, b.entries[f.id], gaps.find((g) => g.id === f.id), s);
+  }
+  wrap.innerHTML = html;
+  wireBasisConfirmButton(wrap);
+  const all = document.getElementById('btnBasisConfirmAll');
+  if (all && !all.dataset.wired) {
+    all.dataset.wired = '1';
+    all.addEventListener('click', confirmAllPractice);
+  }
+}
+
+function wireBasisConfirmButton(root) {
+  root.querySelectorAll('button[data-basis-confirm]').forEach((btn) => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => confirmOnePractice(btn.getAttribute('data-basis-confirm')));
+  });
+}
+
+/** The programmatic form of the "Confirm all practice values" button — same code path, same record.
+ *  Tests use it so they exercise the real gate instead of a bypass; a visitor uses the button. */
+function confirmBasisAll() { confirmAllPractice(); return basisStats(currentBasis()); }
+
+function basisWhen() { return new Date().toISOString().slice(0, 10); }
+function basisWho() { return (state.project.name || '').trim() || 'the user'; }
+
+function confirmOnePractice(id) {
+  const b = currentBasis();
+  const e = b.entries[id];
+  if (!e) return;
+  state.project.basis[id] = {
+    status: 'confirmed', confirmedAt: basisWhen(), value: e.value,
+    note: `Confirmed as-is by ${basisWho()} on ${basisWhen()}.`,
+  };
+  saveSoon();
+  afterProjectChange();
+}
+
+function confirmAllPractice() {
+  const b = currentBasis();
+  const gaps = basisGaps(b);
+  for (const g of gaps) {
+    const e = b.entries[g.id];
+    state.project.basis[g.id] = {
+      status: 'confirmed', confirmedAt: basisWhen(), value: e.value,
+      note: `Confirmed as-is by ${basisWho()} on ${basisWhen()}.`,
+    };
+  }
+  saveSoon();
+  afterProjectChange();
+  const hint = document.getElementById('basisHint');
+  if (hint) hint.textContent = `Confirmed ${gaps.length} figure${gaps.length === 1 ? '' : 's'}. ` + basisLine(currentBasis());
+}
+
+/** The refusal. Not a warning on top of a number — there is no number. */
+function renderBasisRefusal(gate) {
+  const n = gate.gaps.length;
+  const names = gate.gaps.slice(0, 6).map((g) => esc(g.label)).join(' · ');
+  el.summaryCards.innerHTML = `<div class="basis-refusal">
+      <h3>Not totalled — the design basis is unconfirmed</h3>
+      <p class="basis-refusal-body">This load is built on <strong>${n}</strong> figure${n === 1 ? '' : 's'} that
+      come from engineering practice, not from a standard or a published source, and nobody has stood behind
+      ${n === 1 ? 'it' : 'them'} yet. Until then a tonnage would look precise and mean nothing, so it is not shown.</p>
+      <p class="basis-refusal-list">${names}${n > 6 ? ` · and ${n - 6} more` : ''}</p>
+      <p class="basis-refusal-actions">
+        <button type="button" class="btn btn-primary" id="btnBasisConfirmAll2">Confirm ${n === 1 ? 'it' : 'all ' + n} as they are</button>
+        <button type="button" class="btn btn-ghost" id="btnBasisOpen">Review each one</button>
+      </p>
+      <p class="hint">Confirming records your name and the date against each figure; the printable report then
+      states plainly which figures are cited, which you confirmed, and which you entered by hand. Change any
+      figure in section 1 and this reappears.</p>
+    </div>`;
+  const c2 = document.getElementById('btnBasisConfirmAll2');
+  if (c2) c2.addEventListener('click', confirmAllPractice);
+  const open = document.getElementById('btnBasisOpen');
+  if (open) open.addEventListener('click', () => {
+    const block = document.getElementById('basisBlock');
+    if (block) block.scrollIntoView({ block: 'center' });
+    const btn = document.getElementById('btnBasisConfirmAll');
+    if (btn) btn.focus();
+  });
+  if (el.levelBody) el.levelBody.innerHTML = '<tr><td class="l" colspan="8">Not totalled: the design basis is incomplete.</td></tr>';
+  if (el.totalsBar) el.totalsBar.hidden = true;
+  setExportEnabled(false, 'Confirm the design basis first');
+}
+
 function renderSummary(calc) {
   const t = calc.totals;
   const sys = unitsSys();
+  renderBasisPanel();                       // the panel always shows the engine's own figures
+  const gate = basisGate();
+  // The refusal is about a LOAD: with no tonnage on screen there is nothing to refuse yet, so an empty
+  // project still reads as an empty project (and its buttons still say "Add rooms first").
+  if (t.tr > 0 && !gate.ok) { renderBasisRefusal(gate); return; }   // no basis, no tonnage
   el.summaryCards.innerHTML = [
     card('Total cooling load', fmt(t.tr, 2), 'TR', true),
     card('Total heat', fmtPower(t.totalW, sys), powerUnit(sys), true),
@@ -1617,12 +1817,12 @@ function renderSummary(calc) {
     /** Enable or disable the print / CSV controls. With no room included in the load there is nothing to
      *  export, so the buttons are disabled and say why, rather than producing an empty file. Driven from
      *  renderSummary(), i.e. the same render path as everything else. */
-    function setExportEnabled(enabled) {
+    function setExportEnabled(enabled, reason) {
       ['#btnPrint', '#btnCsv', '#btnPrint2', '#btnCsv2'].forEach((sel) => {
         const b = document.querySelector(sel);
         if (!b) return;
         b.disabled = !enabled;
-        b.title = enabled ? '' : 'Add rooms first';
+        b.title = enabled ? '' : (reason || 'Add rooms first');
       });
     }
 
@@ -6303,4 +6503,5 @@ window.__planSetupDebug = () => ({ gen: planSetupGen, running: planAutoSetupRunn
   rooms: state.rooms.length, withAt: state.rooms.filter((r) => r.at).length,
   placed: state.rooms.filter((r) => r.rect && r.rect.placed === true).length,
   traced: state.rooms.filter((r) => Array.isArray(r.poly) && r.poly.length > 2).length });
-window.webhvac = { state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a), planAutoSetup, maybeAutoSetupPlan, roomsHavePlanGeometry, planAutoSetupDone };
+window.webhvac = {
+  confirmBasisAll, state, currentCalc, renderAll, addRooms, buildReportHtml, toCsv, calcRoom, normalizeRoom, planMoveShapeTo, planDetachShape, planPlaceAllRooms, planClearPlaced, planTraceOutlines, planTraceClear, planFillAreas, planUndoFill, plan, planDrawShape, planCommitShape, planShowShapeChooser, setUnits, detectUnits: (...a) => detectUnits(...a), planAutoSetup, maybeAutoSetupPlan, roomsHavePlanGeometry, planAutoSetupDone };

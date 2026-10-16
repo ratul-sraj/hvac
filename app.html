@@ -209,6 +209,19 @@
         </label>
       </div>
     </details>
+
+    <!-- THE DESIGN BASIS — every figure the load depends on, with where it came from (js/basis.js).
+         The load is NOT totalled while a figure it depends on is unconfirmed: an unconfirmed basis is
+         not a design document. Rows are rendered by renderBasisPanel() in js/app.js, which reads the
+         values straight out of the engine's own project settings, so the two can never disagree. -->
+    <div class="basis" id="basisBlock">
+      <div class="basis-head">
+        <h3>Design basis <span class="basis-grade" id="basisGrade"></span></h3>
+        <button type="button" class="btn btn-small btn-ghost" id="btnBasisConfirmAll">Confirm all practice values</button>
+      </div>
+      <p class="hint" id="basisHint"></p>
+      <div id="basisRows"></div>
+    </div>
   </section>
 
   <!-- ---------------- upload ---------------- -->

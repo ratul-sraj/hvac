@@ -22,6 +22,16 @@ const ok = (label, pass, detail = "") => {
   console.log(`${pass ? "PASS" : "FAIL"}  ${label}${detail ? "  — " + detail : ""}`);
 };
 
+// The app refuses to total a load on an unconfirmed design basis (js/basis.js), and block 26 checks that
+// behaviour directly. Every OTHER check in this file wants a load, so each page opened here confirms the
+// basis on load — the same action a visitor takes from the summary card, on the same code path.
+const confirmBasisOnLoad = (p) => {
+  p.on("load", () => {
+    p.evaluate(() => { try { if (window.webhvac && window.webhvac.confirmBasisAll) window.webhvac.confirmBasisAll(); } catch (e) { /* before the app is ready */ } })
+      .catch(() => {});
+  });
+};
+
 const browser = await puppeteer.launch({
   executablePath: EDGE,
   headless: "new",
@@ -30,6 +40,7 @@ const browser = await puppeteer.launch({
 });
 instrumentBeacons(browser);   // this probe must not report into the live funnel
 const page = await browser.newPage();
+confirmBasisOnLoad(page);
 
 // Deny real file downloads. Capturing the CSV needs URL.createObjectURL, but that call cannot stop
 // the following anchor click from saving a file — without this, EVERY test run dropped another
@@ -4885,7 +4896,9 @@ if (!sampleMissing) {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const freshPage = async () => {
       const ctx = await browser.createBrowserContext();
-      return { ctx, p: await ctx.newPage() };
+      const p = await ctx.newPage();
+      confirmBasisOnLoad(p);
+      return { ctx, p };
     };
 
     // (a)+(b) a first-time visitor following the landing button
@@ -4944,6 +4957,7 @@ if (!sampleMissing) {
   {
     const ctx = await browser.createBrowserContext();
     const pg = await ctx.newPage();
+    confirmBasisOnLoad(pg);
     await pg.goto(BASE + "app.html?go=1", { waitUntil: "domcontentloaded", timeout: 90000 });
     await pg.waitForFunction(() => {
       const S = window.webhvac && window.webhvac.state;
@@ -5005,6 +5019,7 @@ if (!sampleMissing) {
     // Its own fresh page: (c) has just taken the box off the only box-shaped room on the sample.
     const ctx2 = await browser.createBrowserContext();
     const pg2 = await ctx2.newPage();
+    confirmBasisOnLoad(pg2);
     await pg2.goto(BASE + "app.html?go=1", { waitUntil: "domcontentloaded", timeout: 90000 });
     await pg2.waitForFunction(() => {
       const S = window.webhvac && window.webhvac.state;
@@ -5056,6 +5071,7 @@ if (!sampleMissing) {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));   // block-local: `wait` above is scoped to block 22
     const ctx = await browser.createBrowserContext();
     const pg = await ctx.newPage();
+    confirmBasisOnLoad(pg);
     pg.on("dialog", (d) => { d.accept().catch(() => {}); });
     await pg.goto(BASE + "app.html", { waitUntil: "domcontentloaded", timeout: 90000 });
     await wait(2500);
@@ -5113,6 +5129,7 @@ if (!sampleMissing) {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const ctx = await browser.createBrowserContext();
     const pg = await ctx.newPage();
+    confirmBasisOnLoad(pg);
     await pg.goto(BASE + "app.html?go=1", { waitUntil: "domcontentloaded", timeout: 90000 });
     await pg.waitForFunction(() => {
       const S = window.webhvac && window.webhvac.state;
@@ -5199,6 +5216,98 @@ if (!sampleMissing) {
       ok("25 (c) Ctrl+Z inside a table cell is left to the text box (the drawing is untouched)", false, "skipped: premise failed");
     }
     await ctx.close().catch(() => {});
+  }
+
+  // ---- 26: the design basis gate (js/basis.js) ------------------------------------------------
+  // The load is built on about twenty constants that used to be silently assumed. Each one now carries
+  // a source, and the summary REFUSES to total the load until a human stands behind the practice
+  // values. These checks pin the refusal itself, the one-click resolution, and that a figure edited
+  // after being confirmed stops being reported as sourced.
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    // Deliberately NOT wrapped in confirmBasisOnLoad(): this block exists to check the refusal, so its
+    // page must arrive as a fresh visitor with nothing confirmed.
+    const ctxBasis = await browser.createBrowserContext();
+    const pg = await ctxBasis.newPage();
+    await pg.goto(BASE + "app.html?go=1", { waitUntil: "domcontentloaded", timeout: 90000 });
+    await pg.evaluate(() => { try { localStorage.clear(); } catch (e) { /* fine */ } });
+    await pg.reload({ waitUntil: "domcontentloaded", timeout: 90000 });
+    await pg.waitForFunction(() => window.webhvac && window.webhvac.state && window.webhvac.state.rooms.length > 0,
+      { timeout: 240000, polling: 500 }).catch(() => {});
+    // Wait for a REAL load before asserting the refusal: the sample's automatic set-up places the rooms
+    // and fills their areas over about twenty seconds, and until it has, there is no tonnage to refuse
+    // (the app deliberately says nothing about the basis while the load is still zero).
+    await pg.waitForFunction(() => {
+      const c = window.webhvac && window.webhvac.currentCalc && window.webhvac.currentCalc();
+      return !!(c && c.totals && c.totals.tr > 0);
+    }, { timeout: 240000, polling: 500 }).catch(() => {});
+    await wait(1200);
+
+    const basisSnap = () => pg.evaluate(() => {
+      const txt = (s) => ((document.querySelector(s) || {}).textContent || "").trim();
+      const rows = [...document.querySelectorAll("#basisRows .basis-row")];
+      const print = document.querySelector("#btnPrint");
+      const saved = (window.webhvac.state.project && window.webhvac.state.project.basis) || {};
+      return {
+        refused: !!document.querySelector("#summaryCards .basis-refusal"),
+        head: txt("#summaryCards .basis-refusal h3"),
+        cards: txt("#summaryCards"),
+        grade: txt("#basisGrade"),
+        rows: rows.length,
+        gaps: rows.filter((r) => r.classList.contains("is-gap")).length,
+        exportDisabled: print ? print.disabled : null,
+        exportTitle: print ? print.title : "",
+        saved: Object.keys(saved).length,
+        dated: Object.values(saved).filter((b) => /^\d{4}-\d{2}-\d{2}$/.test(String(b.confirmedAt || ""))).length,
+      };
+    });
+
+    const before = await basisSnap();
+    ok("26 (a) an unconfirmed design basis refuses to total the load (no tonnage is shown at all)",
+      before.refused === true && !/\d+\.\d+\s*TR/.test(before.cards),
+      `refused=${before.refused} grade="${before.grade}"`);
+    ok("26 (b) and the refusal names how many figures it is waiting for, with print/CSV held back",
+      /^Not totalled/.test(before.head) && before.exportDisabled === true && /basis/i.test(before.exportTitle),
+      `"${before.head}" | print.title="${before.exportTitle}"`);
+    ok("26 (c) the panel lists every figure the load depends on, and marks the unconfirmed ones",
+      before.rows === 21 && before.gaps >= 10, `rows=${before.rows} marked=${before.gaps}`);
+    ok("26 (d) it says out loud when a value is above the code limit (wall U 2.0 vs ECBC 0.40)",
+      await pg.evaluate(() => {
+        const r = document.querySelector('#basisRows .basis-row[data-basis="uWall"]');
+        return !!r && /above 0\.4/.test((r.querySelector(".pill-warn") || {}).textContent || "");
+      }), "wall U row");
+
+    // The one click a visitor gets, through the app's own action (same path as the button).
+    await pg.evaluate(() => window.webhvac.confirmBasisAll());
+    await wait(1500);
+    const after = await basisSnap();
+    ok("26 (e) after confirming, the load IS totalled and export is released",
+      after.refused === false && /\d+\.\d+\s*TR/.test(after.cards) && after.exportDisabled === false,
+      `grade="${after.grade}"`);
+    ok("26 (f) every confirmation is recorded with a date, so the report can name what was confirmed",
+      after.saved >= 10 && after.dated >= 10, `saved=${after.saved} dated=${after.dated}`);
+
+    // Edit a confirmed figure: it becomes the engineer's own number and must NOT re-block the load,
+    // but it must stop being reported as audited.
+    await pg.evaluate(() => {
+      const inp = document.getElementById("proj-uWall");
+      inp.value = "0.42";
+      inp.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await wait(1200);
+    const edited = await pg.evaluate(() => {
+      const r = document.querySelector('#basisRows .basis-row[data-basis="uWall"]');
+      const pill = r ? r.querySelector(".pill:not(.pill-warn)") : null;
+      return {
+        pill: pill ? pill.textContent.trim() : "",
+        refused: !!document.querySelector("#summaryCards .basis-refusal"),
+        tr: (((document.querySelector("#summaryCards") || {}).textContent || "").match(/(\d+\.\d+)\s*TR/) || [])[1] || "",
+      };
+    });
+    ok("26 (g) a figure edited after confirming is recorded as hand-entered, and does not re-block",
+      /hand-entered/i.test(edited.pill) && edited.refused === false && Number(edited.tr) > 0,
+      `pill="${edited.pill}" tr=${edited.tr}`);
+    await ctxBasis.close().catch(() => {});
   }
 
   ok("in-browser self test (PDF reader + engine)", /ALL SELF TESTS PASSED/.test(selfOut),

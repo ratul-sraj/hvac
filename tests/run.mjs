@@ -81,6 +81,13 @@ const STANDALONE_NODE = [
   ["plan/geometry", "tests/test-planview.mjs"],
   ["room outlines", "tests/test-trace.mjs"],
   ["input guards", "tests/test-input-guards.mjs"],
+  // The evidence layer: what the load stands on (js/basis.js), whether each area can be checked
+  // (js/reconcile.js), how wide the answer really is (js/uncertainty.js), and the same calculation
+  // worked a second way (js/crosscheck.js).
+  ["design basis", "tests/test-basis.mjs"],
+  ["area reconciliation", "tests/test-reconcile.mjs"],
+  ["uncertainty", "tests/test-uncertainty.mjs"],
+  ["cross-check", "tests/test-crosscheck.mjs"],
 ];
 
 for (const [label, file] of STANDALONE_NODE) {

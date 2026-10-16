@@ -92,6 +92,10 @@ try {
   ok("reload restores the rooms with NO positions",
     restored.total === EXPECTED_ROOMS && restored.withAt === 0, `withAt=${restored.withAt}`);
 
+  // The app refuses to total a load on an unconfirmed design basis (js/basis.js), so a suite that wants
+  // a load must confirm it first — the same action the visitor takes from the summary card.
+  await page.evaluate(() => window.webhvac.confirmBasisAll());
+  await new Promise((r) => setTimeout(r, 600));
   const loadBefore = await readLoad();
   await page.click("#planPlaceAll");
   // The rooms already carry the locator boxes the automatic setup placed, so a wait for `rect` would
