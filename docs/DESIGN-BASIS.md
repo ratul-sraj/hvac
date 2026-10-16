@@ -171,8 +171,41 @@ meter logs, nothing measured. The report states that as a gap rather than quotin
 have. The metrics it *would* use (NMBE within ±5%, CV(RMSE) under 15% hourly) are named so the gap is
 obvious rather than hidden.
 
+## The stamped sheet (js/report.js)
+
+One document now carries the whole argument, in ten sections: the project and design conditions (1-2),
+the room-wise load (3), the summary (4), the level subtotals (5), **the design basis with a source and a
+status against every figure (6)**, **the per-room area reconciliation with the percentage disagreement
+(7)**, **the tonnage as a band with the drivers that widen it (8)**, **the cross-check with its term-by-term
+delta and the written explanation of it (9)**, the method notes and a signature block (10).
+
+**And it refuses to issue.** With the basis unconfirmed the export produces a one-page document that says
+`This report is NOT ISSUED`, prints no tonnage anywhere, and lists every outstanding figure with what is
+missing and how to fix it. Verified in a real browser (11 checks, including that no number of the form
+`N TR` appears in the withheld document) and in the node suite (16 checks).
+
+### What it measured on the level-11 sample
+
+| | |
+|---|---|
+| total cooling load, this tool | **42.66 TR** |
+| the same building, second method | **51.21 TR** (+20.0%) |
+| design hour used | 16:30, dry bulb 32.4 °C, GHI 662 W/m² |
+| band (5th-95th percentile, 10,000 draws) | **35.65 - 55.46 TR** |
+| area reconciliation | **nothing checkable** — this sheet prints no room areas |
+
+The cross-check's 20% sits almost entirely in two terms: **solar through glazing** (30.1 kW against 48.8 kW,
++62%) and **opaque walls** (7.5 kW against 17.0 kW, +128%). Everything shared agrees exactly (people,
+lighting, equipment, glazing conduction), and the outdoor-air term — worked as sensible+latent factors on
+one side and as an enthalpy difference on the other — agrees within 2%. The glazing gap is the tabulated
+per-orientation solar constant (one peak value per compass point, whatever the hour) against the sun's real
+position at the design hour; the wall gap is the fixed ETD against a sol-air temperature. Both are named in
+the report's own words, because a 20% gap that is explained is a design decision and a 20% gap that is not
+is a liability.
+
 ## What is still not here
 
-- The basis, the band and the reconciliation are not yet **printed in one report** with a signature block.
-- The gate is not yet wired to the **report** as well as the summary (the report prints the basis line, but
-  the export path is only blocked at the summary).
+- The geometry itself is not reconciled by an independent engine: a second implementation of the *tracing*
+  (not the load) is the remaining piece of WS2.
+- No meter data exists for any of these buildings, so the Guideline 14 metrics remain uncomputed — stated
+  as a gap in every report rather than assumed away.

@@ -88,6 +88,7 @@ const STANDALONE_NODE = [
   ["area reconciliation", "tests/test-reconcile.mjs"],
   ["uncertainty", "tests/test-uncertainty.mjs"],
   ["cross-check", "tests/test-crosscheck.mjs"],
+  ["printable report", "tests/test-report.mjs"],
 ];
 
 for (const [label, file] of STANDALONE_NODE) {

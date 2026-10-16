@@ -27,7 +27,7 @@
  * dark roof and a plastered wall, and they are the honest place to look when the two methods differ.
  */
 
-import { SPACE_TYPES, calcProject } from "./calc.js";
+import { SPACE_TYPES, calcProject, normalizeRoom } from "./calc.js";
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const DEG = Math.PI / 180;
@@ -225,7 +225,12 @@ export function crossCheck(rooms, project, day, opts = {}) {
 
   // how much of the outside air is the room given: the engine's own contract (per person + per area)
   const sun = sunPosition(day.lat, day.dayOfYear, day.hour + 0.5);
-  const usable = (rooms || []).filter((r) => r && r.include !== false && num(r.area) > 0);
+  // THE SAME ROOM OBJECTS THE ENGINE SEES. A room as saved carries only what the user set (id, name,
+  // area, type, include); the orientation, external wall, glass area and roof exposure are DERIVED from
+  // the project's assumptions. Reading those fields off the raw object gives zero for all of them - which
+  // is exactly what a cross-check must never do: it would "confirm" the engine by computing nothing.
+  const usable = (rooms || []).filter((r) => r && r.include !== false && num(r.area) > 0)
+    .map((r) => normalizeRoom(r, p));
   const app = calcProject(usable, p);
   const appTr = new Map(app.results.map((x) => [x.room.id, x.tr]));
 

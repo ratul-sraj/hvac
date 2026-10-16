@@ -13,6 +13,9 @@ import {
 
 /* ---------------- small helpers ---------------- */
 
+import { BASIS_FIELDS, savedBasis, basisGaps, basisStats, basisLine } from './basis.js';
+import { reconcileAreas, reconcileLine } from './reconcile.js';
+
 export function fmt(n, d = 0) {
   const v = parseFloat(n);
   if (!Number.isFinite(v)) return '-';
@@ -228,6 +231,9 @@ const REPORT_CSS = `
      so the button inside the document is a duplicate on screen. It was already hidden when
      printing; hide it on screen too, and the printed sheet stays clean either way. */
   .btnbar { display: none; }
+  .v-cited, .v-confirmed { color: #146c43; }
+  .v-typed { color: #8a6116; }
+  .v-unconfirmed, .v-missing, .v-practice, .v-flag { color: #b02a37; font-weight: 600; }
   @media print {
     body { margin: 8mm; font-size: 11px; }
     .btnbar { display: none; }
@@ -238,6 +244,83 @@ const REPORT_CSS = `
     @page { size: A4 landscape; margin: 10mm; }
   }
 `;
+
+/** Plain names for the cross-check's term keys, so the printed table reads like a calculation. */
+export const TERM_LABEL = {
+  oa: 'Outdoor (fresh) air', infil: 'Infiltration', glassSolar: 'Solar through glazing',
+  glassCond: 'Conduction through glazing', wall: 'Opaque walls', roof: 'Roof', partition: 'Partitions',
+  peopleS: 'People (sensible)', peopleL: 'People (latent)', light: 'Lighting', equip: 'Equipment',
+};
+
+/** Why two methods disagree — read off the term table, not assumed. */
+export function crossCheckExplain(cc) {
+  const terms = (cc && cc.termCompare) || [];
+  const big = terms.filter((t) => Math.abs(t.deltaW) > 500 && Math.abs(t.appW) > 100)
+    .sort((a, b) => Math.abs(b.deltaW) - Math.abs(a.deltaW));
+  const agree = terms.filter((t) => Math.abs(t.appW) > 1000 && Math.abs(t.deltaW) / Math.abs(t.appW) < 0.1);
+  const pct = (t) => (t.appW ? fmt((t.deltaW / t.appW) * 100, 0) : '-') + '%';
+  const L = (t) => TERM_LABEL[t.term] || t.term;
+  const bits = [];
+  if (agree.length) {
+    bits.push(`The two methods agree on ${agree.map((t) => L(t).toLowerCase()).join(', ')} ` +
+      `(within 10%), so the difference is not in those terms.`);
+  }
+  if (big.length) {
+    bits.push(`Almost all of it sits in ${big.map((t) => `${L(t).toLowerCase()} ` +
+      `(${fmt(t.appW / 1000, 1)} kW against ${fmt(t.xW / 1000, 1)} kW, ${pct(t)})`).join(' and ')}.`);
+    const glazing = big.find((t) => t.term === 'glassSolar');
+    if (glazing) {
+      bits.push('The glazing figure differs because this tool uses one tabulated peak solar value per ' +
+        'orientation, whatever the hour, while the second method computes the sun\'s real position at the ' +
+        'design hour: on a west-facing sheet the two cannot agree, and no single hour can put every ' +
+        'orientation at its own peak at once.');
+    }
+    const opaque = big.filter((t) => /roof|wall|part/i.test(t.term));
+    if (opaque.length) {
+      bits.push('Those are the opaque surfaces, and the reason is stated in the table: this tool pairs a ' +
+        'high U value with a mild effective temperature difference, while the second method builds a ' +
+        'sol-air temperature from the design day\'s sun and the surface\'s colour. For a dark, uninsulated ' +
+        'roof in full sun those two are inconsistent, and the tool is the low one. This is the figure in ' +
+        'this report most worth a second opinion.');
+    }
+  }
+  if (!bits.length) bits.push('The two methods agree within the reporting tolerance on every term.');
+  return bits.join(' ');
+}
+
+/** The report that is NOT issued. */
+export function refusalHtml(project, basis, gaps, when) {
+  const p = project || {};
+  const rows = gaps.map((g) => `<tr><td class="l">${esc(g.label || g.id)}</td><td>${esc(String(g.reason || 'unconfirmed'))}</td>
+    <td class="l">${esc(g.cite || '')}</td></tr>`).join('');
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Not issued &mdash; design basis incomplete</title>
+<style>${REPORT_CSS}</style></head>
+<body>
+<h1>${esc(p.name || 'HVAC Load Calculation')}</h1>
+<p class="sub">${esc(when)}</p>
+<h2>This report is NOT ISSUED</h2>
+<div class="notes">
+  <strong>The design basis for this project is not complete, so the load has not been totalled and no
+  tonnage is printed anywhere in this document.</strong>
+  <ul>
+    <li>A cooling load is only as good as the figures it stands on. ${gaps.length} of them are neither
+        sourced from a published standard nor confirmed by a person for this project.</li>
+    <li>Filling in a silent default would produce a number that looks finished and cannot be defended.
+        Listing the gap is the honest output.</li>
+    <li>Open the project in the calculator, read each figure in the Design basis panel, and either cite
+        it or confirm it. Then this report will issue with the full calculation.</li>
+  </ul>
+</div>
+<h2>What is still outstanding</h2>
+<table>
+  <thead><tr><th class="l">Figure</th><th class="l">Why it is a gap</th><th class="l">What is missing</th></tr></thead>
+  <tbody>${rows || '<tr><td colspan="3" class="l">-</td></tr>'}</tbody>
+</table>
+<p class="sub">${esc(basisLine(basis))}</p>
+<p class="credit">Calculated with LoadLens - loadlens.net</p>
+</body></html>`;
+}
 
 export function buildReportHtml(project, calcResult, opts = {}) {
   const p = Object.assign({}, project || {});
@@ -263,6 +346,170 @@ export function buildReportHtml(project, calcResult, opts = {}) {
   const oaAlt = sys === 'ip'
     ? 'outdoor air per the space types (ASHRAE 62.1)'
     : `${fmt((totals.oaLs || 0) * 0.001, 3)} m&sup3;/s`;
+
+  // ================================================================================================
+  // THE EVIDENCE LAYER
+  // A tonnage nobody can check is a guess with a decimal point. Before any figure is printed, the
+  // report states what the calculation stands on, whether each area can be checked at all, how wide
+  // the answer really is, and — if the basis is not confirmed — it REFUSES to issue at all.
+  // ================================================================================================
+  const basis = opts.basis || savedBasis(p, opts.climate);
+  const gaps = basisGaps(basis);
+  const bstats = basisStats(basis);
+  if (opts.enforceBasis !== false && gaps.length) {
+    return refusalHtml(p, basis, gaps, when);
+  }
+
+  const STATUS_WORD = {
+    cited: 'cited', confirmed: 'confirmed', typed: 'hand-entered', practice: 'UNSOURCED',
+    unconfirmed: 'NOT CONFIRMED', missing: 'NO VALUE', indicative: 'INDICATIVE',
+  };
+  const perType = new Set(['oap', 'oaa', 'light', 'equip', 'm2pp', 'ps', 'pl']);
+  const basisRows = BASIS_FIELDS.map((f) => {
+    const e = basis.entries[f.id];
+    if (!e) return '';
+    const v = perType.has(f.id) ? '-' : (e.value == null ? '-' : fmt(e.value, 2));
+    const st = STATUS_WORD[e.status] || e.status;
+    const when2 = e.confirmedAt ? ` <span class="muted">on ${esc(String(e.confirmedAt))}</span>` : '';
+    return `<tr>
+      <td class="l">${esc(f.label)}</td>
+      <td>${v}</td>
+      <td class="l">${esc(f.unit || '')}</td>
+      <td class="l">${esc(e.cite || f.cite || '')}${e.note ? ` <em>${esc(e.note)}</em>` : ''}</td>
+      <td class="l v-${esc(e.status)}">${esc(st)}${when2}</td>
+    </tr>`;
+  }).join('');
+  const basisSection = `
+<h2>6. Design basis &mdash; what this calculation stands on</h2>
+<p class="sub">${esc(basisLine(basis))}</p>
+<table class="basis">
+  <thead><tr><th class="l">Figure</th><th>Value</th><th class="l">Unit</th>
+    <th class="l">Source, as stated</th><th class="l">Status</th></tr></thead>
+  <tbody>${basisRows}</tbody>
+</table>
+<div class="notes">
+  <strong>Every figure above is either sourced, confirmed by a person, or listed as a gap.</strong>
+  <ul>
+    <li>A <em>cited</em> figure carries a published source (ECBC 2017, ASHRAE, IECC). A
+        <em>confirmed</em> figure is one a person stood behind for this project, with the date recorded.
+        A <em>hand-entered</em> figure was typed by hand and is not audited.</li>
+    <li>${esc(bstats.byKindLine ? bstats.byKindLine : '')} ${gaps.length
+        ? `${gaps.length} figure(s) are still unconfirmed.`
+        : 'Nothing is outstanding: the basis is complete for this project.'}</li>
+    <li>The room-type figures (outdoor air per person and per m&sup2;, lighting, equipment, occupancy
+        density, and the sensible/latent heat per person) are per-use values and are listed with the
+        calculation, not here, because they differ from room to room.</li>
+  </ul>
+</div>`;
+
+  // ---- area reconciliation ----------------------------------------------------------------------
+  const rec = reconcileAreas(res.filter((r) => r.room.include).map((r) => r.room), { tolerance: 5 });
+  const rs = rec.summary;
+  // The reconciliation rows carry the room's id and name, not the whole room: look up the sheet facts
+  // (its level and number) from the calculation so the printed row matches the room table above.
+  const roomById = new Map();
+  for (const r of res) if (r.room && r.room.id != null) roomById.set(String(r.room.id), r.room);
+  const recRows = rec.rows.filter((r) => r.verdict !== 'none').slice(0, 400).map((r) => {
+    const rm = roomById.get(String(r.id)) || {};
+    return `<tr>
+      <td>${esc(rm.level || '-')}</td>
+      <td class="l">${esc(rm.number || '-')}</td>
+      <td class="l">${esc(rm.name || r.name || '-')}</td>
+      <td>${r.geometry == null ? '-' : fmt(area(r.geometry, sys), 1)}</td>
+      <td>${r.sheet == null ? '-' : fmt(area(r.sheet, sys), 1)}</td>
+      <td>${r.diffPct == null ? '-' : fmt(Math.abs(r.diffPct), 1) + '%'}</td>
+      <td class="l v-${esc(r.verdict)}">${esc(r.verdict === 'flag' ? 'OVER TOLERANCE'
+        : r.verdict === 'agree' ? 'agrees' : r.verdict === 'sheet-derived' ? 'box sized from the sheet'
+        : r.verdict === 'typed' ? 'typed in' : 'not checkable')}</td>
+    </tr>`;
+  }).join('');
+  const recSection = `
+<h2>7. Room areas &mdash; checked against the drawing's own figures</h2>
+<p class="sub">${esc(reconcileLine(rec))}</p>
+${rs.independentSourceExists ? '' : `<div class="notes">
+  <strong>No room area on this sheet can be independently checked.</strong>
+  <ul><li>The drawing does not state an area for any room, and it carries no dimension chains, so the
+      only figure that exists is the one this tool measured from the drawing's own linework. That is a
+      single source, not two, and it is reported as such rather than dressed up as agreement.</li>
+      <li>A room whose box was placed by hand is <em>not</em> counted as agreement either: the box is
+      sized back from the printed area, so comparing them would compare a number with itself.</li></ul>
+</div>`}
+<table>
+  <thead><tr><th>Level</th><th class="l">No.</th><th class="l">Room</th>
+    <th>${esc(header('Measured', AU))}</th><th>${esc(header('On the sheet', AU))}</th>
+    <th>Difference</th><th class="l">Verdict</th></tr></thead>
+  <tbody>${recRows || '<tr><td colspan="7" class="l">-</td></tr>'}</tbody>
+  <tfoot><tr class="total"><td class="l" colspan="3">${rs.checkable} of ${rs.rooms} rooms could be checked</td>
+    <td colspan="2">${rs.flag} over ${fmt(rs.tolerance, 0)}%</td>
+    <td>${rs.medianAbsDiff == null ? '-' : fmt(rs.medianAbsDiff, 1) + '%'}</td>
+    <td class="l">median difference</td></tr></tfoot>
+</table>`;
+
+  // ---- the band ---------------------------------------------------------------------------------
+  const mc = opts.uncertainty || null;
+  const spread = mc ? mc.tr.spreadPct : null;
+  const topDrivers = mc ? mc.drivers.filter((d) => !d.inert).slice(0, 3) : [];
+  const bandSection = `
+<h2>8. How wide the answer is</h2>
+${mc ? `
+<p class="sub">The single tonnage on page one is the middle of this range, not the answer.</p>
+<table>
+  <tbody>
+    <tr><th class="l">Central value</th><td>${fmt(mc.tr.p50, 2)} TR</td>
+        <td class="l">median of ${fmt(mc.n, 0)} draws</td></tr>
+    <tr><th class="l">Middle 90%</th><td>${fmt(mc.tr.p05, 2)} &ndash; ${fmt(mc.tr.p95, 2)} TR</td>
+        <td class="l">5th to 95th percentile, i.e. &plusmn;${fmt(spread / 2, 0)}% around the middle</td></tr>
+    <tr><th class="l">Widest drivers</th><td colspan="2" class="l">${topDrivers.map((d, i) =>
+      `${i + 1}. ${esc(d.label || d.id)} (${fmt(d.share * 100, 0)}% of the swing)`).join(' &middot; ') || '-'}</td></tr>
+  </tbody>
+</table>
+<div class="notes"><strong>The three figures that move this answer most are ${topDrivers.length
+  ? esc(topDrivers.map((d) => String(d.label || d.id).toLowerCase()).join(', ')) : '-'}.</strong>
+  <ul>${mc.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>`
+  : `<p class="sub">Not computed for this report. The tool can run it (10,000 draws, a second or two);
+      it is omitted here rather than replaced with an assumed range.</p>`}`;
+
+  // ---- the second method ------------------------------------------------------------------------
+  const cc = opts.crosscheck || null;
+  const ccSection = `
+<h2>9. Independent cross-check, and what is NOT verified</h2>
+${cc ? `
+<p class="sub">The same rooms on the same basis, worked a second way: sol-air temperature and computed
+solar geometry from a weather file, against the engine's tabulated per-orientation values.</p>
+<table>
+  <thead><tr><th class="l">Term</th><th>This tool</th><th>Second method</th><th>Difference</th></tr></thead>
+  <tbody>${cc.termCompare.filter((t) => Math.abs(t.appW) > 1 || Math.abs(t.xW) > 1).map((t) => `<tr>
+      <td class="l">${esc(TERM_LABEL[t.term] || t.term)}</td><td>${fmt(t.appW / 1000, 1)} kW</td>
+      <td>${fmt(t.xW / 1000, 1)} kW</td>
+      <td>${t.appW ? (t.deltaW / t.appW >= 0 ? '+' : '') + fmt((t.deltaW / t.appW) * 100, 0) + '%' : '-'}</td>
+    </tr>`).join('')}
+    <tr class="grand"><td class="l">Total</td><td>${fmt(cc.totals.appTr, 2)} TR</td>
+      <td>${fmt(cc.totals.xTr, 2)} TR</td>
+      <td>${cc.totals.xTr >= cc.totals.appTr ? '+' : ''}${fmt(cc.totals.deltaPct, 1)}%</td></tr>
+  </tbody>
+</table>
+<p class="sub">Design hour taken from ${esc(cc.day.station || 'the weather file')}:
+  ${cc.day.day}/${cc.day.month} at ${cc.day.hour}:30, dry bulb ${fmt(cc.day.db, 1)} &deg;C,
+  global horizontal ${fmt(cc.day.ghi, 0)} W/m&sup2;. It is the hour this building's own load peaks,
+  found by running the second method for every daylight hour in the file.</p>
+<p><strong>Explanation of the difference:</strong> ${esc(crossCheckExplain(cc))}</p>`
+  : `<p class="sub">Not run for this report. It needs a weather file (EPW) for the site; without one the
+      cross-check is omitted rather than invented.</p>`}
+<div class="notes">
+  <strong>What this report does not prove.</strong>
+  <ul>
+    <li><strong>Nothing is calibrated.</strong> These projects have no meter data and no energy bills, so
+        the Guideline 14 metrics (NMBE within &plusmn;5%, CV(RMSE) under 15%) cannot be computed. They are
+        named here so the absence is obvious: this is an uncalibrated calculation.</li>
+    <li><strong>The geometry is not independently reconciled where the sheet offers nothing.</strong>
+        Room faces come from the drawing's own linework. Dimension chains and gridlines are not parsed,
+        and no second geometry engine was run, so a systematic error in reading the drawing would not be
+        caught by this report.</li>
+    <li><strong>No second engineering tool was run.</strong> EnergyPlus / OpenStudio or HAP / TRACE would
+        be the independent implementation; the cross-check above is a second <em>method</em>, written
+        here, using the same inputs. It catches method errors, not input errors.</li>
+  </ul>
+</div>`;
 
   const roomRows = included.map((r, i) => {
     const room = r.room;
@@ -432,7 +679,12 @@ ${skippedNote}
   </tfoot>
 </table>
 
-<h2>6. Important notes</h2>
+${basisSection}
+${recSection}
+${bandSection}
+${ccSection}
+
+<h2>10. Important notes</h2>
 <div class="notes">
   <strong>This is a simplified estimate. It must be checked by a qualified HVAC engineer before use.</strong>
   <ul>

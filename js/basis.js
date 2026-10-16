@@ -197,6 +197,37 @@ export function basisFromProject(project, climate) {
   return b;
 }
 
+/**
+ * The basis as it stands now: values from the project, statuses from what a person saved against it.
+ * ONE implementation, so the app's panel and the printed report cannot disagree about what is confirmed.
+ * @param {object} project
+ * @param {object} [climate] the resolved climate row (js/climates.js)
+ * @param {object} [opts] { perType } ids whose value lives per room type and is never a project figure
+ */
+export function savedBasis(project, climate, opts = {}) {
+  const p = project || {};
+  const saved = (p.basis && typeof p.basis === 'object') ? p.basis : {};
+  const perType = opts.perType || new Set();
+  const b = basisFromProject(p, climate);
+  for (const f of BASIS_FIELDS) {
+    const s = saved[f.id];
+    if (!s || !s.status) continue;
+    const e = b.entries[f.id];
+    e.status = s.status;
+    e.note = s.note || '';
+    e.confirmedAt = s.confirmedAt || null;
+    if (e.value == null && !perType.has(f.id)) e.status = 'missing';
+    else if (s.status === 'confirmed' && s.value != null && e.value != null &&
+             Math.abs(Number(s.value) - Number(e.value)) > 1e-9) {
+      // A figure that was confirmed and has since been edited is the engineer's own number now: it does
+      // not block (they typed it), but it can never be reported as audited.
+      e.status = 'typed';
+      e.note = `${e.note ? e.note + ' ' : ''}Value changed since it was confirmed (was ${s.value}); recorded as hand-entered.`;
+    }
+  }
+  return b;
+}
+
 /** Figures that BLOCK the total: no value at all, or a 'practice' value nobody has confirmed. */
 export function basisGaps(basis) {
   const out = [];

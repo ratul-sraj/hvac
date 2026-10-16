@@ -5,7 +5,7 @@ import {
   COUNTRIES, CLIMATES, ORIENTS, SPACE_TYPES, DEFAULT_PROJECT,
   normalizeRoom, calcRoom, calcProject, guessSpaceType, NON_AC_WORDS,
 } from './calc.js';
-import { buildReportHtml, toCsv, fmt, groupByLevel, breakdown, esc, typeLabel } from './report.js';
+import { buildReportHtml, toCsv, fmt, groupByLevel, breakdown, esc, typeLabel, refusalHtml } from './report.js';
 // The single source of truth for every conversion, unit and label (js/units.js). The load itself is
 // always computed in SI; these helpers only convert an already-computed result for display, so the
 // screen can never disagree with itself about what a number means. No literal factor is written here.
@@ -39,7 +39,10 @@ import { isStairwellName } from './autotrace.js';
 import { resolveClimate, countryFromTimezone, countryFromLocale, locationKey } from './climates.js';
 // The design basis: every figure the load depends on with its source, and the gate that refuses to
 // total a load built on figures nobody has stood behind (js/basis.js).
-import { BASIS_FIELDS, basisFromProject, basisGaps, basisStats, basisLine, confirmField } from './basis.js';
+import { BASIS_FIELDS, basisFromProject, basisGaps, basisStats, basisLine, confirmField, savedBasis } from './basis.js';
+import { monteCarlo } from './uncertainty.js';
+import { crossCheck, peakLoadHour } from './crosscheck.js';
+import { DESIGN_DAY_EPW } from './weather.js';
 // Anonymous usage counting (js/usage.js): a strict allowlist of real actions plus
 // the utm_* campaign tags already in the URL. No cookies, no ids, no plan data —
 // see the module header. Every call is a no-op if counting is unavailable.
@@ -1584,25 +1587,8 @@ function basisClimate() {
 /** The basis as it stands now: values from the engine's own settings, statuses from what the user saved. */
 function currentBasis() {
   if (!state.project.basis || typeof state.project.basis !== 'object') state.project.basis = {};
-  const saved = state.project.basis;
-  const b = basisFromProject(state.project, basisClimate());
-  for (const f of BASIS_FIELDS) {
-    const s = saved[f.id];
-    if (!s || !s.status) continue;
-    const e = b.entries[f.id];
-    e.status = s.status;
-    e.note = s.note || '';
-    e.confirmedAt = s.confirmedAt || null;
-    if (e.value == null && !BASIS_PER_TYPE.has(f.id)) e.status = 'missing';
-    // A figure that was confirmed and has since been edited is the engineer's own number now: it does
-    // not block (they typed it), but it can never be reported as audited.
-    else if (s.status === 'confirmed' && s.value != null && e.value != null &&
-             Math.abs(Number(s.value) - Number(e.value)) > 1e-9) {
-      e.status = 'typed';
-      e.note = `${e.note ? e.note + ' ' : ''}Value changed since it was confirmed (was ${s.value}); recorded as hand-entered.`;
-    }
-  }
-  return b;
+  // js/basis.js owns this merge: the panel, the totals and the printed report must never disagree.
+  return savedBasis(state.project, basisClimate(), { perType: BASIS_PER_TYPE });
 }
 
 function basisGate() {
@@ -6104,7 +6090,31 @@ function copyLoadLensLink() {
  *  nothing to allow. */
 function printReport() {
   if (!state.rooms.length) { setStatus('warn', 'There are no rooms to report yet.'); return; }
-  const html = buildReportHtml(state.project, currentCalc());
+  const calc = currentCalc();
+  // ---- the evidence the report carries -----------------------------------------------------------
+  // The basis as it stands, the band, and the second method. Computed here, once, on the user's click
+  // (about a second for 10,000 draws), and never invented: anything that cannot be computed is left
+  // out of the report and named as missing there.
+  const climate = basisClimate();
+  const basis = savedBasis(state.project, climate, { perType: BASIS_PER_TYPE });
+  const gaps = basisGaps(basis);
+  let html;
+  if (gaps.length) {
+    // buildReportHtml returns the refusal document: no tonnage is printed when the basis is incomplete.
+    html = buildReportHtml(state.project, calc, { climate, basis });
+    setStatus('warn', `The report is NOT issued: ${gaps.length} figure(s) in the design basis are ` +
+      'unconfirmed. The report lists them and prints no load.');
+  } else {
+    const rooms = state.rooms.filter((r) => r && r.include !== false && Number(r.area) > 0);
+    let uncertainty = null;
+    let crosscheck = null;
+    try { uncertainty = monteCarlo(rooms, state.project, { n: 10000 }); } catch (e) { uncertainty = null; }
+    try {
+      const day = peakLoadHour(DESIGN_DAY_EPW, rooms, state.project);
+      if (day) crosscheck = crossCheck(rooms, state.project, day);
+    } catch (e) { crosscheck = null; }
+    html = buildReportHtml(state.project, calc, { climate, basis, uncertainty, crosscheck });
+  }
   const view = el.reportView;
   const frame = el.reportFrame;
   if (!view || !frame) {
