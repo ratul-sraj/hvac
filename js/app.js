@@ -1341,10 +1341,14 @@ function shapeLinkBlock(raw) {
         <label class="muted small" for="bdShapeTarget">Link the shape to</label>
         <select id="bdShapeTarget">${shapeTargetOptions(raw)}</select>
         <button type="button" class="btn btn-small" id="bdShapeMove">Move the shape</button>
+        <button type="button" class="btn btn-small" id="bdShapeFit">Bubble it out to the walls</button>
         <button type="button" class="btn btn-small btn-ghost" id="bdShapeDetach">Remove the shape from this row</button>
       </div>
       <p class="muted small">Moving the shape gives the other row this shape and its area, and the load
-        changes with it. Removing it leaves this row with the area you can type yourself.</p>
+        changes with it. Removing it leaves this row with the area you can type yourself.
+        <strong>Bubble it out</strong> floods the drawing from inside this outline until the walls stop
+        it, and keeps the result as this room's shape and area — so you only have to draw the space
+        roughly, and the drawing decides where its edges are.</p>
     </div>`;
 }
 
@@ -1708,6 +1712,8 @@ function renderDetail(calc) {
       }
     });
   }
+  const fitBtn = el.detailBody.querySelector('#bdShapeFit');
+  if (fitBtn) fitBtn.addEventListener('click', () => planFitShapeToWalls(state.ui.openId));
   const detachBtn = el.detailBody.querySelector('#bdShapeDetach');
   if (detachBtn) detachBtn.addEventListener('click', () => planDetachShape(state.ui.openId));
   const oaBtn = el.detailBody.querySelector('#bdOpenAreaMove');
@@ -4809,6 +4815,119 @@ function planConvertRectToPoly(room, ring, page, final) {
 let pendingShape = null;   // { ring:[{x,y}], page }
 
 /** A shape closed in the overlay: refuse a nonsense one, otherwise ask what room it belongs to. */
+/**
+ * BUBBLE IT OUT TO THE WALLS. The user draws a rough outline of a space; this floods the free space from
+ * inside that outline until the drawing's own walls stop it (js/trace.js growToWalls) and keeps the
+ * result as the room's outline and area. The user says WHICH space, the drawing says where its edges are.
+ *
+ * The same line classes the tracer tries are tried here, so a fit agrees with the rest of the app: a
+ * class that reached a wall beats one that only ran out of bubble distance, and then area wins. A space
+ * the drawing leaves OPEN cannot reach a wall in every direction: the flood stops at FIT_BUBBLE_M from
+ * the user's own outline, and the message says so plainly rather than pretending it found the edge.
+ */
+const FIT_BUBBLE_M = 2.5;     // how far beyond the user's rough outline the flood may run
+const FIT_PRUNE_M = 0.5;      // a lobe thinner than this (a tongue through a doorway) is dropped
+
+async function planFitShapeToWalls(roomId) {
+  const room = roomById(roomId);
+  if (!room) return;
+  if (!Array.isArray(room.poly) || room.poly.length < 3) {
+    setStatus('warn', 'This row has no outline to start from. Draw one roughly over the space first — ' +
+      'then bubble it out to the walls.', 'plan');
+    return;
+  }
+  const rec = await drawingBytesForTrace();
+  if (!rec) {
+    setStatus('warn', 'The drawing is not kept in this browser any more, so its linework cannot be read. ' +
+      'Upload it again and try.', 'plan');
+    return;
+  }
+  // js/trace.js is loaded on demand (a build without it still runs the calculator), so take it here
+  // rather than assuming a module-level name: without this the handler threw "trace is not defined".
+  const trace = await loadTraceModule();
+  const denom = roomDenom(room);
+  const page = Number(room.polyPage) || 1;
+  const jx = room.poly.reduce((s, q) => s + q.x, 0) / room.poly.length;
+  const jy = room.poly.reduce((s, q) => s + q.y, 0) / room.poly.length;
+  const before = Number(normalizeRoom(room, state.project).area) || 0;
+  setStatus('info', `Bubbling ${room.name || 'the shape'} out to the walls…`, 'plan');
+  const doc = await pdfjs.getDocument({ data: rec.bytes.slice(0), verbosity: 0 }).promise;
+  let best = null;
+  try {
+    if (page < 1 || page > doc.numPages) {
+      setStatus('warn', `That outline is on page ${page}, which this drawing does not have.`, 'plan');
+      return;
+    }
+    const pg = await doc.getPage(page);
+    const v = pg.view;
+    const box = { x0: v[0], y0: v[1], x1: v[2], y1: v[3] };
+    const opList = await pg.getOperatorList();
+    const segs = lineSegmentsForPage(opList.fnArray, opList.argsArray, pdfjs.OPS, trace);
+    if (!segs.length) {
+      setStatus('warn', 'This page has no wall lines, so there is nothing to bubble out to.', 'plan');
+      return;
+    }
+    const keys = trace.styleCounts(segs).slice(0, 3).map(([key]) => key);
+    keys.push('all lines');
+    for (const key of keys) {
+      const list = key === 'all lines' ? segs : trace.filterByStyle(segs, key);
+      if (!list.length) continue;
+      const out = trace.growToWalls({
+        segments: list, box, pxPerPt: TRACE_PX_PER_PT, thickness: TRACE_THICKNESS, denom,
+        closeGaps: 6, poly: room.poly.map((q) => ({ x: q.x, y: q.y })),
+        bubbleM: FIT_BUBBLE_M, pruneM: FIT_PRUNE_M,
+      });
+      if (!out || !Array.isArray(out.rings) || !out.rings.length) continue;
+      const score = (out.grewTo === 'walls' ? 1e9 : 0) + out.areaM2;
+      if (!best || score > best.score) best = { key, out, score };
+    }
+  } finally {
+    if (doc && typeof doc.destroy === 'function') doc.destroy();
+  }
+  if (!best) {
+    setStatus('warn', 'There is no free space inside that outline to bubble out into — it is sitting on ' +
+      'the drawing\'s walls. Draw it a little inside the room and try again.', 'plan');
+    return;
+  }
+  const raw = best.out.rings;
+  const ring = ringFor(raw, { x: jx, y: jy }, trace);
+  if (!Array.isArray(ring) || ring.length < 3) {
+    setStatus('warn', 'The flood found only walls around that outline, so there is no shape to keep.', 'plan');
+    return;
+  }
+  const areaM2 = round2(trace.pt2ToM2(trace.outlineAreaPt2(raw), denom));
+  const islands = Math.max(0, raw.length - 1);
+  undoPush('Bubbled the shape out to the walls');
+  planSync();
+  room.source = 'traced';
+  setRoomRing(room, ring, page);
+  room.area = areaM2;
+  room.scaleDenom = planScaleDenom();
+  delete room.areaTyped;          // the traced shape provides the area from now on
+  delete room.areaUnknown;
+  delete room.openArea;           // it has an edge of its own now, so it is no longer an open area
+  delete room.polyRatio;
+  renderAll();
+  saveNow();
+  planRenderGeometry();
+  const delta = round2(areaM2 - before);
+  // Say what actually happened. `grewTo: 'walls'` means the flood was stopped by a wall on every side.
+  // Otherwise some of it ran out - through a door the gap-closer did not seal, or through an opening the
+  // drawing really leaves open - and the prune cut that escaped part back (leakedM2 says how much).
+  const leaked = Number(best.out.leakedM2) || 0;
+  const hit = best.out.grewTo === 'walls'
+    ? 'it reached the walls on every side'
+    : `it reached its walls, and the part that ran out through an opening was trimmed ` +
+      `(${fmt(leaked, 2)} m² trimmed, at most ${fmt(FIT_BUBBLE_M, 1)} m past your outline)`;
+  setStatus(before > 0 ? 'ok' : 'info',
+    `${room.name || 'Room'}: bubbled out to the walls — ${fmt(areaM2, 2)} m² ` +
+    `(${delta >= 0 ? '+' : ''}${fmt(delta, 2)} m² vs before), ${hit}. ` +
+    `Traced from ${passLabel([best.key])}` +
+    (islands ? `, and ${islands} island${islands === 1 ? '' : 's'} inside it (shafts, courtyards) ` +
+      'are kept out of the area' : '') +
+    '. Undo puts the outline you drew back.', 'plan');
+}
+
 function planDrawShape(ring, info) {
   const page = (info && info.page) || plan.page || 1;
   const denom = planScaleDenom();

@@ -1068,3 +1068,174 @@ export async function pickWallLinesAsync(segments, opts, onProgress) {
   }
   return { ...best, tried };
 }
+
+
+// ---------------------------------------------------------------------------------------------
+// 6. Grow a rough outline to the walls ("bubble out and hit the walls")   [js/app.js: Fit to walls]
+// ---------------------------------------------------------------------------------------------
+// The user draws a ROUGH outline over a space; this floods the free space from every free cell inside
+// that outline until the drawing's own walls stop it, drops thin lobes that escape through a doorway,
+// and hands back the outline of what it found. The user says WHICH space; the drawing says where its
+// edges are. Nothing is invented: the result never leaves the free space the flood ran through, and it
+// never crosses a wall it could not pass.
+//
+// `bubbleM` is how far beyond the rough outline the flood may run (default 2 m) - a space the drawing
+// leaves open needs a stop somewhere, and this is it. `pruneM` drops lobes thinner than that (default
+// 0.5 m): a lobe squeezing through a doorway is thin compared with the space the user drew.
+
+/** Free cells inside a rough outline, keeping only the LARGEST connected group (a rough outline that
+ *  happens to straddle a wall would otherwise seed two spaces at once). */
+function seedCellsInPoly(poly, grid, w, h, box, pxPerPt) {
+  const inside = (x, y) => {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+      const a = poly[i], b = poly[j];
+      if (((a.y > y) !== (b.y > y)) && (x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x)) hit = !hit;
+    }
+    return hit;
+  };
+  const xs = poly.map((q) => q.x), ys = poly.map((q) => q.y);
+  const x0 = Math.max(0, Math.floor((Math.min(...xs) - box.x0) * pxPerPt) - 1);
+  const x1 = Math.min(w - 1, Math.ceil((Math.max(...xs) - box.x0) * pxPerPt) + 1);
+  const y0 = Math.max(0, Math.floor((Math.min(...ys) - box.y0) * pxPerPt) - 1);
+  const y1 = Math.min(h - 1, Math.ceil((Math.max(...ys) - box.y0) * pxPerPt) + 1);
+  const seen = new Uint8Array(w * h);
+  const stack = new Int32Array(w * h);
+  let best = [];
+  for (let cy = y0; cy <= y1; cy += 1) {
+    for (let cx = x0; cx <= x1; cx += 1) {
+      const i = cy * w + cx;
+      if (grid[i] || seen[i]) continue;
+      if (!inside(box.x0 + (cx + 0.5) / pxPerPt, box.y0 + (cy + 0.5) / pxPerPt)) continue;
+      let n = 0;
+      stack[n] = i; n += 1; seen[i] = 1;
+      const comp = [];
+      while (n > 0) {
+        const u = stack[n - 1]; n -= 1;
+        comp.push(u);
+        const ux = u % w, uy = (u - ux) / w;
+        for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const xx = ux + ox, yy = uy + oy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const v = yy * w + xx;
+          if (grid[v] || seen[v] || !inside(box.x0 + (xx + 0.5) / pxPerPt, box.y0 + (yy + 0.5) / pxPerPt)) continue;
+          seen[v] = 1; stack[n] = v; n += 1;
+        }
+      }
+      if (comp.length > best.length) best = comp;
+    }
+  }
+  return best;
+}
+
+/**
+ * Flood a rough outline out to the walls.
+ * @param {object} p  segments, box, pxPerPt, thickness, denom, closeGaps, simplifyTolPt,
+ *   poly (the user's rough outline, PDF points, [{x,y}...]), bubbleM, pruneM.
+ * @returns {null|{rings, polygon, areaPt2, areaM2, cells, grewTo:'walls'|'bubble', seedCells}}
+ */
+export function growToWalls(p) {
+  const pxPerPt = p.pxPerPt || 2;
+  const denom = p.denom || 100;
+  const box = p.box;
+  const poly = (p.poly || []).filter((q) => Number.isFinite(q && q.x) && Number.isFinite(q && q.y));
+  if (poly.length < 3 || !p.segments || !p.segments.length) return null;
+  const rast = rasterizeWalls(p.segments, box, pxPerPt, p.thickness || 2);
+  const gapR = Math.round(Number(p.closeGaps) || 0);
+  const { w, h } = rast;
+  const grid = gapR > 0 ? morphClose(rast.grid, w, h, gapR) : rast.grid;
+  const n = w * h;
+  const mPerCell = metresPerPt(denom) / pxPerPt;
+
+  const seed = seedCellsInPoly(poly, grid, w, h, box, pxPerPt);
+  if (!seed.length) return null;                       // the outline covers only walls/outside
+
+  // Geodesic distance from the seed over FREE cells only, stopping at the bubble distance.
+  const capCells = Math.max(1, Math.round((Number(p.bubbleM) || 2) / mPerCell));
+  const dist = new Int32Array(n).fill(-1);
+  const q = new Int32Array(n);
+  let qt = 0, qh = 0;
+  for (const i of seed) { if (dist[i] < 0) { dist[i] = 0; q[qt] = i; qt += 1; } }
+  let grewTo = 'walls';
+  while (qh < qt) {
+    const u = q[qh]; qh += 1;
+    const du = dist[u];
+    if (du >= capCells) { grewTo = 'bubble'; continue; }
+    const ux = u % w, uy = (u - ux) / w;
+    for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const xx = ux + ox, yy = uy + oy;
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+      const v = yy * w + xx;
+      if (grid[v] || dist[v] >= 0) continue;
+      dist[v] = du + 1;
+      q[qt] = v; qt += 1;
+    }
+  }
+  const flooded = q.subarray(0, qt);                   // every cell the flood reached, seed included
+
+  // Prune thin lobes: erode the flood by pruneR, keep the group that still holds part of the seed, then
+  // let that group flood back out through the flood again - so the final shape follows the walls exactly
+  // but no longer sticks a tongue through a doorway.
+  const pruneR = Math.max(1, Math.round((Number(p.pruneM) || 0.5) / mPerCell));
+  const ero = new Uint8Array(n);
+  for (const i of flooded) {
+    const x = i % w, y = (i - x) / w;
+    let ok = true;
+    for (let oy = -pruneR; oy <= pruneR && ok; oy += 1) {
+      for (let ox = -pruneR; ox <= pruneR; ox += 1) {
+        const xx = x + ox, yy = y + oy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h || dist[yy * w + xx] < 0) { ok = false; break; }
+      }
+    }
+    if (ok) ero[i] = 1;
+  }
+  // A seed smaller than the prune radius erodes away entirely: keep the unpruned flood then.
+  let core = [];
+  for (const i of seed) if (ero[i]) { core.push(i); }
+  const usePrune = core.length > 0;
+  const finalSeen = new Uint8Array(n);
+  const fq = new Int32Array(n);
+  let ft = 0, fh = 0;
+  for (const i of (usePrune ? core : seed)) { if (!finalSeen[i]) { finalSeen[i] = 1; fq[ft] = i; ft += 1; } }
+  while (fh < ft) {
+    const u = fq[fh]; fh += 1;
+    const ux = u % w, uy = (u - ux) / w;
+    for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const xx = ux + ox, yy = uy + oy;
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+      const v = yy * w + xx;
+      if (finalSeen[v] || dist[v] < 0) continue;
+      finalSeen[v] = 1; fq[ft] = v; ft += 1;
+    }
+  }
+  // What the flood reached MINUS what survived the prune = the part that ran out through an opening and
+  // was cut back. Reported so the app can say what really happened: on a room whose door leaks (gaps are
+  // only closed up to `closeGaps` pixels) the flood still reaches the room's walls on every other side,
+  // so "it did not find a wall" would be wrong - what happened is that some of it escaped.
+  const leakedCells = Math.max(0, qt - ft);
+  const cells = [];
+  let bx0 = w, by0 = h, bx1 = 0, by1 = 0;
+  for (let i = 0; i < n; i += 1) {
+    if (!finalSeen[i]) continue;
+    cells.push(i);
+    const x = i % w, y = (i - x) / w;
+    if (x < bx0) bx0 = x;
+    if (y < by0) by0 = y;
+    if (x > bx1) bx1 = x;
+    if (y > by1) by1 = y;
+  }
+  const region = { cells, areaPx: cells.length, bbox: { x0: bx0, y0: by0, x1: bx1, y1: by1 } };
+  const rings = outlineFromRegion(region, w, box, pxPerPt, { simplifyTolPt: p.simplifyTolPt });
+  const areaPt2 = outlineAreaPt2(rings);
+  return {
+    rings,
+    polygon: rings[0] || [],
+    areaPt2,
+    areaM2: pt2ToM2(areaPt2, denom),
+    cells: cells.length,
+    leakedM2: Math.round(leakedCells * mPerCell * mPerCell * 100) / 100,
+    grewTo,
+    seedCells: seed.length,
+    pruned: usePrune,
+  };
+}
