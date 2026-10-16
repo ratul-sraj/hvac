@@ -5259,6 +5259,11 @@ if (!sampleMissing) {
         exportTitle: print ? print.title : "",
         saved: Object.keys(saved).length,
         dated: Object.values(saved).filter((b) => /^\d{4}-\d{2}-\d{2}$/.test(String(b.confirmedAt || ""))).length,
+        statements: [...document.querySelectorAll("#basisGroups .basis-statement")].length,
+        openStatements: [...document.querySelectorAll("#basisGroups .basis-statement:not(.is-ok)")].length,
+        statementWords: [...document.querySelectorAll("#basisGroups .basis-statement h4")].map((h) => h.textContent.trim()).join(" | "),
+        acceptBtns: [...document.querySelectorAll("#basisGroups button[data-basis-accept]")].length,
+        refusalNames: (txt("#summaryCards .basis-refusal-list") || "").slice(0, 200),
       };
     });
 
@@ -5277,14 +5282,33 @@ if (!sampleMissing) {
         return !!r && /above 0\.4/.test((r.querySelector(".pill-warn") || {}).textContent || "");
       }), "wall U row");
 
+    // The user is asked to stand behind SUBJECTS, not constants. Twenty-one rows of jargon behind one
+    // collapse, and the sentences in front of them are the ones a person can actually answer.
+    ok("26 (e) the gauntlet is six plain sentences, not twenty-one constants",
+      before.statements === 6 && before.acceptBtns === before.openStatements && before.openStatements >= 3,
+      `${before.statements} statements, ${before.openStatements} needing an answer`);
+    ok("26 (f) those sentences are in a person's words, not figure names",
+      /how much fresh air/i.test(before.statementWords) && /what the walls/i.test(before.statementWords) &&
+      /how many people/i.test(before.statementWords), before.statementWords.slice(0, 170));
+    ok("26 (g) the refusal names the subjects too, not the constants",
+      /how much fresh air|what the walls|how many people/i.test(before.refusalNames) ||
+      before.refusalNames.length === 0, before.refusalNames.slice(0, 120));
+    // ...and accepting ONE sentence settles exactly the figures behind it.
+    const acceptOne = await pg.$("#basisGroups .basis-statement:not(.is-ok) button[data-basis-accept]");
+    let oneTaken = null;
+    if (acceptOne) { await acceptOne.click(); await wait(1400); oneTaken = await basisSnap(); }
+    ok("26 (h) accepting one sentence settles that one and no more",
+      !!oneTaken && oneTaken.openStatements === before.openStatements - 1 && oneTaken.saved > before.saved,
+      oneTaken ? `open ${before.openStatements} -> ${oneTaken.openStatements}, saved ${before.saved} -> ${oneTaken.saved}` : "no button");
+
     // The one click a visitor gets, through the app's own action (same path as the button).
     await pg.evaluate(() => window.webhvac.confirmBasisAll());
     await wait(1500);
     const after = await basisSnap();
-    ok("26 (e) after confirming, the load IS totalled and export is released",
+    ok("26 (i) after confirming, the load IS totalled and export is released",
       after.refused === false && /\d+\.\d+\s*TR/.test(after.cards) && after.exportDisabled === false,
       `grade="${after.grade}"`);
-    ok("26 (f) every confirmation is recorded with a date, so the report can name what was confirmed",
+    ok("26 (j) every confirmation is recorded with a date, so the report can name what was confirmed",
       after.saved >= 10 && after.dated >= 10, `saved=${after.saved} dated=${after.dated}`);
 
     // Edit a confirmed figure: it becomes the engineer's own number and must NOT re-block the load,
@@ -5304,7 +5328,7 @@ if (!sampleMissing) {
         tr: (((document.querySelector("#summaryCards") || {}).textContent || "").match(/(\d+\.\d+)\s*TR/) || [])[1] || "",
       };
     });
-    ok("26 (g) a figure edited after confirming is recorded as hand-entered, and does not re-block",
+    ok("26 (k) a figure edited after confirming is recorded as hand-entered, and does not re-block",
       /hand-entered/i.test(edited.pill) && edited.refused === false && Number(edited.tr) > 0,
       `pill="${edited.pill}" tr=${edited.tr}`);
     await ctxBasis.close().catch(() => {});

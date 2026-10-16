@@ -214,14 +214,20 @@
          The load is NOT totalled while a figure it depends on is unconfirmed: an unconfirmed basis is
          not a design document. Rows are rendered by renderBasisPanel() in js/app.js, which reads the
          values straight out of the engine's own project settings, so the two can never disagree. -->
-    <div class="basis" id="basisBlock">
-      <div class="basis-head">
-        <h3>Design basis <span class="basis-grade" id="basisGrade"></span></h3>
-        <button type="button" class="btn btn-small btn-ghost" id="btnBasisConfirmAll">Confirm all practice values</button>
-      </div>
+    <details class="adv basis" id="basisBlock">
+      <summary>Design basis <span class="basis-grade" id="basisGrade"></span>
+        <span class="adv-hint" id="basisSummaryLine">what this load stands on</span></summary>
       <p class="hint" id="basisHint"></p>
-      <div id="basisRows"></div>
-    </div>
+      <!-- What the user is asked to stand behind: six sentences, not twenty-one constants. -->
+      <div id="basisGroups"></div>
+      <!-- ...and underneath, every figure with its own source and status, for the engineer. -->
+      <details class="basis-detail">
+        <summary>Every figure, with its source and its status</summary>
+        <div id="basisRows"></div>
+        <p class="basis-all"><button type="button" class="btn btn-small btn-ghost" id="btnBasisConfirmAll">
+          Accept every remaining figure as it stands</button></p>
+      </details>
+    </details>
   </section>
 
   <!-- ---------------- upload ---------------- -->

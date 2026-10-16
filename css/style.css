@@ -976,6 +976,20 @@ a.app-nav-brand:focus-visible { outline: 2px solid var(--accent); outline-offset
 .basis-grade.is-bad { color: var(--warn); }
 .basis-group { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5b6b7c;
   margin: 14px 0 4px; }
+/* The sentences the user is asked to accept: one per subject, not one per constant (js/basis.js). */
+.basis-statement { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin: 8px 0;
+  background: #fffdf6; }
+.basis-statement.is-ok { background: #f6faf7; border-color: #cfe3d4; }
+.basis-statement-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.basis-statement-head h4 { margin: 0; font-size: 13.5px; color: var(--accent-dark); }
+.basis-statement p { margin: 4px 0 8px; font-size: 12.5px; color: #5b6b7c; line-height: 1.45; }
+.basis-values { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; margin-bottom: 8px; }
+.basis-kv { color: #445; }
+.basis-kv b { font-weight: 600; color: #5b6b7c; }
+.basis-statement-actions { display: flex; gap: 8px; }
+.basis-detail { margin-top: 12px; }
+.basis-detail > summary { font-size: 12.5px; color: var(--accent-dark); cursor: pointer; }
+.basis-all { margin: 8px 0 0; }
 .basis-row { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(240px, 1.6fr) auto;
   gap: 10px; align-items: start; padding: 7px 8px; border-bottom: 1px solid var(--line-soft); }
 .basis-row.is-gap { background: #fffdf5; border-left: 3px solid var(--warn); }

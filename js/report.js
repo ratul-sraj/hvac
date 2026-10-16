@@ -13,7 +13,7 @@ import {
 
 /* ---------------- small helpers ---------------- */
 
-import { BASIS_FIELDS, savedBasis, basisGaps, basisStats, basisLine } from './basis.js';
+import { BASIS_FIELDS, savedBasis, basisGaps, basisStats, basisLine, basisStatements } from './basis.js';
 import { reconcileAreas, reconcileLine } from './reconcile.js';
 
 export function fmt(n, d = 0) {
@@ -379,9 +379,12 @@ export function buildReportHtml(project, calcResult, opts = {}) {
       <td class="l v-${esc(e.status)}">${esc(st)}${when2}</td>
     </tr>`;
   }).join('');
+  const stmts = basisStatements(basis);
   const basisSection = `
 <h2>6. Design basis &mdash; what this calculation stands on</h2>
 <p class="sub">${esc(basisLine(basis))}</p>
+<p class="sub">In plain words, the calculation stands on ${stmts.length} statements:
+  ${stmts.map((s) => `${esc(s.label)}${s.settled ? ' (settled)' : ' &mdash; NOT confirmed'}`).join(' &middot; ')}.</p>
 <table class="basis">
   <thead><tr><th class="l">Figure</th><th>Value</th><th class="l">Unit</th>
     <th class="l">Source, as stated</th><th class="l">Status</th></tr></thead>

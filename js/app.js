@@ -39,7 +39,8 @@ import { isStairwellName } from './autotrace.js';
 import { resolveClimate, countryFromTimezone, countryFromLocale, locationKey } from './climates.js';
 // The design basis: every figure the load depends on with its source, and the gate that refuses to
 // total a load built on figures nobody has stood behind (js/basis.js).
-import { BASIS_FIELDS, basisFromProject, basisGaps, basisStats, basisLine, confirmField, savedBasis } from './basis.js';
+import { BASIS_FIELDS, basisFromProject, basisGaps, basisStats, basisLine, confirmField, savedBasis,
+  basisStatements, openStatements } from './basis.js';
 import { monteCarlo } from './uncertainty.js';
 import { crossCheck, peakLoadHour } from './crosscheck.js';
 import { DESIGN_DAY_EPW } from './weather.js';
@@ -1626,24 +1627,89 @@ function basisRowHtml(f, e, gap, stats) {
     </div>`;
 }
 
+/** What the user is asked to stand behind: a sentence per subject, not a number per constant. */
+function statementHtml(st) {
+  const ref = SPACE_TYPES.office || {};
+  const vals = st.fields.map((f) => {
+    const e = f.entry;
+    const unit = f.def ? esc(f.def.unit || '') : '';
+    // A figure that lives per room type has no single value; show the office row, which is what the
+    // reader will recognise, and say it is the reference.
+    const v = BASIS_PER_TYPE.has(f.id)
+      ? `${fmtValue(ref[f.id] != null ? ref[f.id] : 0, 2)} ${unit} <span class="basis-sub">office; varies by use</span>`
+      : (e.value == null ? '<em>not set</em>' : `${fmtValue(e.value, 2)} ${unit}`);
+    return `<span class="basis-kv"><b>${esc(f.def ? f.def.label : f.id)}</b> ${v}</span>`;
+  }).join('');
+  const pill = st.settled
+    ? '<span class="pill pill-confirmed">settled</span>'
+    : `<span class="pill pill-unconfirmed">needs your OK${st.needs.length > 1 ? ` (${st.needs.length} figures)` : ''}</span>`;
+  const btn = st.settled ? ''
+    : `<button type="button" class="btn btn-small" data-basis-accept="${esc(st.id)}">These are right</button>`;
+  return `<div class="basis-statement${st.settled ? ' is-ok' : ''}" data-statement="${esc(st.id)}">
+      <div class="basis-statement-head"><h4>${esc(st.label)}</h4>${pill}</div>
+      <p>${esc(st.plain)}</p>
+      <div class="basis-values">${vals}</div>
+      <div class="basis-statement-actions">${btn}</div>
+    </div>`;
+}
+
+function wireBasisAcceptButtons(root) {
+  root.querySelectorAll('button[data-basis-accept]').forEach((btn) => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => confirmStatement(btn.getAttribute('data-basis-accept')));
+  });
+}
+
+/** One statement accepted = the figures behind it confirmed, in one write and one record. */
+function confirmStatement(id) {
+  const b = currentBasis();
+  const st = basisStatements(b).find((x) => x.id === id);
+  if (!st || !st.needs.length) return;
+  for (const fid of st.needs) {
+    const e = b.entries[fid];
+    if (!e) continue;
+    state.project.basis[fid] = {
+      status: 'confirmed', confirmedAt: basisWhen(), value: e.value,
+      note: `Confirmed as-is by ${basisWho()} on ${basisWhen()}.`,
+    };
+  }
+  saveSoon();
+  afterProjectChange();
+  setStatus('ok', `Accepted: ${st.label.toLowerCase()}.`);
+}
+
 function renderBasisPanel() {
   const wrap = document.getElementById('basisRows');
   if (!wrap) return;
   const b = currentBasis();
   const s = basisStats(b);
   const gaps = basisGaps(b);
+  const sts = basisStatements(b);
+  const open = sts.filter((x) => !x.settled);
   const grade = document.getElementById('basisGrade');
   if (grade) {
     grade.textContent = s.complete
-      ? `complete — ${s.cited} cited, ${s.confirmed} confirmed, ${s.typed} hand-entered`
-      : `incomplete — ${gaps.length} to confirm`;
+      ? `complete — ${s.cited} from a standard, ${s.confirmed} confirmed by you, ${s.typed} hand-entered`
+      : `needs your OK — ${open.length} of ${sts.length}`;
     grade.className = `basis-grade ${s.complete ? 'is-ok' : 'is-bad'}`;
+  }
+  const sumLine = document.getElementById('basisSummaryLine');
+  if (sumLine) {
+    sumLine.textContent = s.complete ? '(all settled — the load is totalled)' : '(what this load stands on)';
   }
   const hint = document.getElementById('basisHint');
   if (hint) {
     hint.textContent = s.complete
       ? basisLine(b) + ' The load is shown and can be printed.'
-      : 'These are the figures the result is multiplied by. The ones marked "unconfirmed" come from engineering practice, not a standard — until each is confirmed the load is not totalled.';
+      : 'Six sentences, not twenty-one constants. Accept the ones you can answer and the load is totalled. ' +
+        'Every figure behind them is listed underneath with where it came from, and the printable report ' +
+        'prints all of it.';
+  }
+  const groups = document.getElementById('basisGroups');
+  if (groups) {
+    groups.innerHTML = sts.map(statementHtml).join('');
+    wireBasisAcceptButtons(groups);
   }
   let html = '', group = '';
   for (const f of BASIS_FIELDS) {
@@ -1704,21 +1770,24 @@ function confirmAllPractice() {
 
 /** The refusal. Not a warning on top of a number — there is no number. */
 function renderBasisRefusal(gate) {
-  const n = gate.gaps.length;
-  const names = gate.gaps.slice(0, 6).map((g) => esc(g.label)).join(' · ');
+  // The user is asked about SUBJECTS, not constants: "how much fresh air each space gets", not
+  // "outdoor air per person 2.5 L/s". A refusal nobody understands is not a gate, it is a wall.
+  const openSts = openStatements(gate.basis);
+  const n = openSts.length;
+  const names = openSts.map((s) => esc(s.label)).join(' · ');
   el.summaryCards.innerHTML = `<div class="basis-refusal">
-      <h3>Not totalled — the design basis is unconfirmed</h3>
-      <p class="basis-refusal-body">This load is built on <strong>${n}</strong> figure${n === 1 ? '' : 's'} that
-      come from engineering practice, not from a standard or a published source, and nobody has stood behind
-      ${n === 1 ? 'it' : 'them'} yet. Until then a tonnage would look precise and mean nothing, so it is not shown.</p>
-      <p class="basis-refusal-list">${names}${n > 6 ? ` · and ${n - 6} more` : ''}</p>
+      <h3>Not totalled — ${n} thing${n === 1 ? '' : 's'} still need your OK</h3>
+      <p class="basis-refusal-body">This load is multiplied by figures that come from engineering practice,
+      not from a standard, and nobody has stood behind ${n === 1 ? 'this one' : 'these ' + n} yet. A tonnage
+      built on numbers nobody chose would look precise and mean nothing, so it is not shown.</p>
+      <p class="basis-refusal-list">${names}</p>
       <p class="basis-refusal-actions">
-        <button type="button" class="btn btn-primary" id="btnBasisConfirmAll2">Confirm ${n === 1 ? 'it' : 'all ' + n} as they are</button>
-        <button type="button" class="btn btn-ghost" id="btnBasisOpen">Review each one</button>
+        <button type="button" class="btn btn-primary" id="btnBasisConfirmAll2">Yes, these are right</button>
+        <button type="button" class="btn btn-ghost" id="btnBasisOpen">Show me them one by one</button>
       </p>
-      <p class="hint">Confirming records your name and the date against each figure; the printable report then
-      states plainly which figures are cited, which you confirmed, and which you entered by hand. Change any
-      figure in section 1 and this reappears.</p>
+      <p class="hint">Accepting them records the date against each figure; the printable report then states
+      plainly which figures came from a standard, which you accepted, and which you typed by hand. Change a
+      value in section 1 and this comes back.</p>
     </div>`;
   const c2 = document.getElementById('btnBasisConfirmAll2');
   if (c2) c2.addEventListener('click', confirmAllPractice);

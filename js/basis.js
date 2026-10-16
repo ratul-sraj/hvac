@@ -228,6 +228,71 @@ export function savedBasis(project, climate, opts = {}) {
   return b;
 }
 
+/**
+ * The design basis grouped the way a PERSON can answer it, not the way it is stored.
+ *
+ * Nobody can stand behind "roof effective temperature difference 22 K" as a number — it is a modelling
+ * constant, and asking for a personal confirmation of it is theatre. What a person CAN answer is what the
+ * building is made of, how many people are in it, and how much fresh air they get. These sentences are
+ * what the user is asked to accept; the figures behind each one stay visible underneath for the engineer,
+ * and the report still prints every figure with its own source and status.
+ */
+export const BASIS_STATEMENTS = [
+  {
+    id: 'site', label: 'The site and its summer design conditions',
+    plain: 'How hot and humid it gets where this building is. Filled from a weather station — check it is ' +
+      'the right one for the site, or set the two values yourself.',
+    ids: ['outDb', 'outWb'],
+  },
+  {
+    id: 'comfort', label: 'The conditions you want inside',
+    plain: 'The dry bulb and relative humidity the rooms will be held at for the load.',
+    ids: ['inDb', 'inRh'],
+  },
+  {
+    id: 'air', label: 'How much fresh air each space gets',
+    plain: 'Outdoor air per person and per square metre. The Indian code delegates this rate instead of ' +
+      'stating one, so it is a decision, not a default the tool can be right about.',
+    ids: ['oap', 'oaa'],
+  },
+  {
+    id: 'fabric', label: 'What the walls, roof and glass are made of',
+    plain: 'Insulation and glass quality decide how much heat comes through the fabric. These are the same ' +
+      'values as "Construction and system assumptions" above.',
+    ids: ['uWall', 'uRoof', 'uGlass', 'sc', 'roofEtd', 'uPart', 'wwr'],
+  },
+  {
+    id: 'gains', label: 'How many people, lights and appliances',
+    plain: 'Internal gains. Occupancy density moves this answer more than any other figure in the list.',
+    ids: ['light', 'equip', 'm2pp', 'ps', 'pl'],
+  },
+  {
+    id: 'allowances', label: 'The allowances added on top',
+    plain: 'Air leakage through the envelope, the safety margin on the room heat, and the supply-air ' +
+      'temperature difference.',
+    ids: ['infilAch', 'safety', 'supplyDt'],
+  },
+];
+
+/** One statement per group of figures, with what is still standing in its way. */
+export function basisStatements(basis) {
+  const b = basis && basis.entries ? basis : makeBasis();
+  const gaps = new Set(basisGaps(b).map((g) => g.id));
+  return BASIS_STATEMENTS.map((s) => {
+    const needs = s.ids.filter((id) => gaps.has(id));
+    return {
+      id: s.id, label: s.label, plain: s.plain, ids: s.ids.slice(), needs,
+      settled: needs.length === 0,
+      fields: s.ids.map((id) => ({ id, entry: b.entries[id], def: byId.get(id) })).filter((f) => f.entry),
+    };
+  });
+}
+
+/** The statements a person still has to stand behind. */
+export function openStatements(basis) {
+  return basisStatements(basis).filter((s) => !s.settled);
+}
+
 /** Figures that BLOCK the total: no value at all, or a 'practice' value nobody has confirmed. */
 export function basisGaps(basis) {
   const out = [];

@@ -71,5 +71,34 @@ ok("marked typed, not cited", b5.entries.uWall.status === "typed");
 ok("kind downgraded to practice", b5.entries.uWall.kind === "practice");
 ok("the note keeps the reason", /spec/.test(b5.entries.uWall.note));
 
+console.log("basis: the user is asked to accept sentences, not constants");
+{
+  const sts = basis.basisStatements(b0);
+  // Coverage: every figure must sit in exactly one statement, or a figure could never be accepted.
+  const seen = {};
+  for (const s of sts) for (const id of s.ids) seen[id] = (seen[id] || 0) + 1;
+  ok("every figure sits in exactly one statement",
+    basis.BASIS_FIELDS.every((f) => seen[f.id] === 1),
+    basis.BASIS_FIELDS.filter((f) => seen[f.id] !== 1).map((f) => f.id).join(",") || "all covered");
+  ok("no figure is left out and none is doubled", Object.keys(seen).length === basis.BASIS_FIELDS.length,
+    Object.keys(seen).length + " of " + basis.BASIS_FIELDS.length);
+  ok("it is a handful of sentences, not a wall of rows", sts.length >= 4 && sts.length <= 8, String(sts.length));
+  ok("an untouched basis leaves every statement open", basis.openStatements(b0).length === sts.length);
+  ok("each statement says what it means in plain words", sts.every((s) => s.plain.length > 40));
+  ok("no statement is named after a figure", sts.every((s) => !basis.BASIS_FIELDS.some((f) => f.label === s.label)));
+  ok("the fabric statement carries the seven envelope figures",
+    (sts.find((s) => s.id === "fabric") || {}).ids.length === 7);
+  ok("a statement lists what is standing in its way",
+    basis.openStatements(b0).every((s) => s.needs.length > 0 && s.needs.length <= s.ids.length));
+
+  // Confirming every figure must settle every sentence, and leave nothing open.
+  const p = Object.assign({}, DEFAULT_PROJECT, { name: "TEST" });
+  const climate = { db: 35, wb: 28, src: "ASHRAE 2021 Ch.14", station: "TEST STATION", indicative: false };
+  const b1 = basis.basisFromProject(p, climate);
+  for (const f of basis.BASIS_FIELDS) basis.confirmField(b1, f.id, "Test engineer", "2026-10-16");
+  ok("confirming every figure settles every sentence", basis.openStatements(b1).length === 0);
+  ok("...and no figure is left blocking", basis.basisGaps(b1).length === 0);
+}
+
 console.log("\nbasis: " + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
