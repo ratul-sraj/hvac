@@ -28,6 +28,7 @@
  */
 
 import { splitRegion } from './splitregion.js';
+import { closeOpenings } from './portalclose.js';
 
 // Curve flattening: how many straight pieces one Bezier is cut into. Walls are drawn as lines and
 // rectangles in practice; curves (door swings, rounded corners) only need to be smooth enough that a
@@ -742,6 +743,22 @@ function extractRegions(p) {
   return drainSync(extractRegionsGen(p));
 }
 
+// OPT-IN `closePortals: true` — close the openings the drawing leaves between spaces, at the wall ends
+// that frame them (js/portalclose.js), BEFORE the raster is built. Re-extracting then yields spaces
+// closed along their own walls instead of one blob cut by a watershed line through open floor. The
+// biggest opening closed is `portalMaxM` metres (default 4) - wider than that and the space is open
+// floor, not a doorway. Off by default: the default output stays byte-identical.
+function withPortals(p) {
+  if (!p.closePortals || !p.segments || !p.segments.length) return { ...p, portals: 0 };
+  const mPerPt = metresPerPt(p.denom || 100);
+  const maxPt = (Number(p.portalMaxM) || 4) / mPerPt;
+  const extra = closeOpenings(p.segments, {
+    maxPt, mergeTol: 1.5, minPt: (Number(p.portalMinM) || 0.6) / mPerPt,
+  });
+  if (!extra.length) return { ...p, portals: 0 };
+  return { ...p, segments: [...p.segments, ...extra], portals: extra.length };
+}
+
 // On a NAME-ONLY plan (the case this feature exists for) no room states an area, so traceRooms' cap —
 // a few times the largest STATED area — collapses to noise size and would discard every real room.
 // traceRegions() therefore caps at the whole raster instead: bounded, and it never invents a region.
@@ -768,8 +785,11 @@ export function traceRegions(p) {
   const pxPerPt = p.pxPerPt || 2;
   const bw = Math.max(1, Math.ceil((p.box.x1 - p.box.x0) * pxPerPt));
   const bh = Math.max(1, Math.ceil((p.box.y1 - p.box.y0) * pxPerPt));
-  const core = extractRegions({ ...p, maxCells: p.maxCells != null ? p.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) });
-  return regionsFromCore(core, p);
+  const pp = withPortals(p);
+  const core = extractRegions({ ...pp, maxCells: pp.maxCells != null ? pp.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) });
+  const out = regionsFromCore(core, pp);
+  if (out.stats) out.stats.portals = pp.portals || 0;
+  return out;
 }
 
 /** The async face of traceRegions: identical maths, but `onProgress({done, total})` is awaited once
@@ -778,11 +798,14 @@ export async function traceRegionsAsync(p, onProgress) {
   const pxPerPt = p.pxPerPt || 2;
   const bw = Math.max(1, Math.ceil((p.box.x1 - p.box.x0) * pxPerPt));
   const bh = Math.max(1, Math.ceil((p.box.y1 - p.box.y0) * pxPerPt));
+  const pp = withPortals(p);
   const core = await driveGen(
-    extractRegionsGen({ ...p, maxCells: p.maxCells != null ? p.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) }),
+    extractRegionsGen({ ...pp, maxCells: pp.maxCells != null ? pp.maxCells : Math.min(REGION_MAX_CELLS, bw * bh) }),
     onProgress,
   );
-  return regionsFromCore(core, p);
+  const out = regionsFromCore(core, pp);
+  if (out.stats) out.stats.portals = pp.portals || 0;
+  return out;
 }
 
 /** Everything traceRegions does after region extraction — shared, so the sync and async faces can

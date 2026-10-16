@@ -313,3 +313,42 @@ robust on its own, measured on its own, with no gate involved. That is the right
 attempt: (1) make `shared` counting immune to a room that already owns a part, verify 21 -> 21 with
 zero change, then (2) switch the portal gate on and verify 21 -> 23+ with zero wrong. Both steps are
 reverted; the baseline is 21 of 30 (70%) with 0 wrong.
+
+
+## §6.3 Portal-closing — built, measured, OFF  (16 Oct)
+
+`js/portalclose.js` (+ `closePortals` / `portalMaxM` / `portalMinM` on `traceRegions`/`traceRegionsAsync`)
+implements the retry this file's earlier ledger called for: find the wall ENDS that frame an opening and
+join them, so a space open to its neighbour can still be traced along its own walls. Re-extraction then
+yields spaces closed by the drawing's walls plus the join.
+
+MEASURED on the built-in sample (L11, truth 30 real rooms):
+
+| rule | joins found | coverage | WRONG |
+|---|---|---|---|
+| free wall ends only (a wall that simply stops), up to 6 m | 29, all 0.48-1.29 m (median 0.53 m) - i.e. door-width gaps the existing gap-closer already handles; count does NOT grow as the cap widens | 18/30 | 0 |
+| + corner-framed openings (two parallel walls facing each other across the join) | 265-405 depending on the cap | **17/30** at 2 m, **16/30** at 3 m, 16/30 at 4 m | 0 |
+| portals off (shipped default) | - | **18/30** | 0 |
+
+So it closes openings honestly - it never produced a wrong area - but on this sheet it costs real rooms
+and gains none, which is exactly the trade §6's rule forbids. **It stays off by default**; the default
+path is unchanged (node suite 30/30, app 25 rooms with areas / 42.66 TR).
+
+WHY the wide openings around the centre lobby are not found by the strict rule: measured near the lobby
+label (page pt 799,596), every wall point within 6 m has **2-4 lines meeting** it - these are corners of
+the lift shafts, not free wall ends. In this drawing walls are two parallel lines that turn corners, so
+an opening between two spaces is framed by two CORNERS. The corner rule finds them, and that is what
+costs the rooms: the same rule also closes openings that a room needs to stay one room.
+
+TWO THINGS WORTH KEEPING FROM THIS:
+1. An open area now carries its OUTLINE, not just its area: open areas are applied by the fill path and
+   the trace path (the only writer of outlines) drops them, so a "detected" open space used to have a
+   figure and no boundary on the drawing (measured: LOBBY polyPoints 0 -> 65). Commit 56aaf03.
+2. `splitRegion`'s flood now starts from each space's OPENED CORE instead of the single cell under each
+   name, so two pieces meet at the narrowest passage rather than at the equidistant midline. Measured
+   NEUTRAL on this sample (all five names in the centre open zone share one core), so it changes nothing
+   today - it is groundwork, and it was verified not to change the shipped default.
+
+A room the drawing leaves genuinely open cannot be given a "true" boundary by any of this: the honest
+route there is the user's own outline (draw the shape; the area follows it) or the open-area piece as
+shipped (counted once, reassignable).
