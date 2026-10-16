@@ -5119,6 +5119,14 @@ if (!sampleMissing) {
       const bar = document.getElementById("planProgress");
       return !!S && !S.ui.busy && !(bar && bar.getAttribute("data-active") === "1");
     }, { timeout: 300000, polling: 1000 }).catch(() => {});
+    // The auto set-up places the boxes AFTER the page first reports itself idle, so waiting for "not
+    // busy" alone raced it: this check then found no placed box at all and reported a failure of its OWN
+    // premise (3 checks red in bcheck17, all "no placed box on the sample"). Wait for the set-up's
+    // completion marker exactly as check 24 does, then for a placed box to really exist.
+    await pg.waitForFunction(() => window.webhvac.planAutoSetupDone && window.webhvac.planAutoSetupDone.size > 0,
+      { timeout: 180000, polling: 500 }).catch(() => {});
+    await pg.waitForFunction(() => window.webhvac.state.rooms.some((q) => q.rect && q.rect.placed === true),
+      { timeout: 120000, polling: 500 }).catch(() => {});
     // The panel opens in "Draw shape" mode, where a drag DRAWS instead of moving: the edit gestures live
     // in "Select / edit". Click the radio plainly - setting .checked first makes the click a no-op.
     await pg.evaluate(() => {
