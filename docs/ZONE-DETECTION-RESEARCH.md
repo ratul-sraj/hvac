@@ -272,6 +272,20 @@ What has been MEASURED on this, and each one reverted:
 | watershed "sibling carve" attribution (a delegated worker, 27 min) | 21 -> **8** fills |
 | portal-closing gate: a part whose outline is mostly the drawing's OWN WALL may accept a cut face wider than a door (`wallFrac >= 0.5`) | 21 -> **18**, 0 wrong |
 | ...plus a membership fix (a room belongs only to its own part) | 21 -> **10**, 0 wrong |
+| the portal gate AND the sibling membership rule together (the order this document recommended) | 21 -> **10**, 0 wrong |
+
+**The recommended order was tried, and it does not work either.** The sibling rule alone is a measured
+no-op (21 -> 21, which is why it looked safe), but with the gate switched on the pair lands on the SAME
+10 the blunt owner rule produced - the membership fix costs far more than the gate gains, and the two
+interact. Reverted: baseline is 21 of 30 real rooms (70%) with 0 wrong, node suite 30/30.
+
+**What that rules out, for whoever tries next:** every saving so far has come from a change that only
+removes area from the load (fix #1: fittings), and every attempt to ADD area has lost some instead.
+Do not tune the neck, the gap, the wall-fraction or the membership rules again - each has now been
+measured at least twice. A part can only be added safely when its outline is verified against the wall
+NETWORK (a part whose outline is one closed opening away from being a wall-bounded room), not against
+the matcher's bookkeeping.
+
 
 Every one of them trades real coverage or accuracy away, which is the spec's own stop rule. The
 existing machinery (`js/splitregion.js` cuts a shared region at a "neck" of at most `NECK_MAX_M` = 2 m)
