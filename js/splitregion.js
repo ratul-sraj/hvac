@@ -418,6 +418,13 @@ export function splitRegion(p) {
     }
     parts.push({
       label: L, roomId: s.room && s.room.id != null ? s.room.id : L, name: (s.room && s.room.name) || '',
+      // WHOSE PIECE IS THIS? Exactly the name that seeded it. The seeds are one-per-cell (see `taken`
+      // above), so a piece's own cells can never hold another name's seed. This matters because the
+      // consumer (js/autotrace.js) used to answer the same question by testing each label against the
+      // piece's SIMPLIFIED OUTLINE, which is a hull: a label sitting just outside the piece, in the
+      // neighbour, still fell inside that hull, so the piece looked like it held five names and was
+      // refused - that is exactly why the centre LOBBY could not be given its own 48.7 m².
+      memberIds: [s.room && s.room.id != null ? s.room.id : L],
       cells: used, bbox, rings, areaPt2, areaM2, accepted, code, reason, cuts,
     });
   }

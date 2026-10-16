@@ -313,9 +313,18 @@ export function matchRoomsToRegions(p = {}) {
 
   // ---- which names sit in which region --------------------------------------------------
   for (const g of regionInfo) {
+    // A region that came from the tracer carries `memberIds`: the names whose anchor cell really is
+    // inside it, computed from the raster itself. That is EXACT, and it is preferred over asking whether
+    // a label falls inside the region's simplified OUTLINE - a hull around the region, which also
+    // swallows a neighbour's label that sits just outside the region's cells. Measured: the centre LOBBY
+    // looked like a piece holding SECURITY, PUBLIC LIFT LOBBY and two ESCAPE ONLY labels, so it was
+    // refused; its own cells hold exactly one name. Regions with no `memberIds` (hand-built, older
+    // callers, tests) keep the outline test unchanged.
+    const ids = g.region && Array.isArray(g.region.memberIds) ? new Set(g.region.memberIds) : null;
     if (!g.rings.length) continue;
     for (const info of roomInfo) {
       if (!info.hasPos || info.sub) continue;
+      if (ids) { if (ids.has(info.id)) g.members.push({ info, where: 'in' }); continue; }
       const where = pointInRegion(info.room.at.x, info.room.at.y, g.rings, eps);
       if (where !== 'out') g.members.push({ info, where });
     }

@@ -812,37 +812,62 @@ function regionsFromCore(core, p) {
         });
         if (split && split.parts.length) {
           splitRegions += 1;
-          // ---- open areas: ONE whole area, given to ONE name ------------------------------------
-          // Parts are refused when the drawing does not enclose them (`open-plan`), yet the REGION's own
-          // outline IS measured. The owner's call: that area is real, so it belongs in the cooling load;
-          // what is uncertain is only WHICH name owns it, and that the user can change with one click.
-          // So when EVERY part of a region is refused as open-plan, the whole region goes out as ONE
-          // accepted entry (its own rings and area) under the name that fills its largest piece, with
-          // `openArea` carrying every name inside it. The parts are dropped, so the area is counted
-          // exactly once, and nothing is silent: `source:'open-area'` and `openArea` say what was done.
-          const refusedParts = split.parts.filter((x) => !x.accepted);
-          if (refusedParts.length === split.parts.length && refusedParts.every((x) => x.code === 'open-plan')) {
+          // A watershed does not hand out equal pieces: one seed usually takes almost the whole region
+          // and the others come away with boundary SLIVERS (measured: 0.01-0.04 m² against a 48.7 m²
+          // piece). A sliver is not a room's worth of floor, so only a piece holding at least a quarter
+          // of the region is worth counting - and the slivers' names are not offered as owners either.
+          const regionArea = split.parts.reduce((s, x) => s + (Number(x.areaM2) || 0), 0);
+          // EVERY piece refused: the region itself is the honest unit (a real measured outline, counted
+          // once) - that is the owner's rule for a whole open area, e.g. the 305 m² gallery blob. Some
+          // OTHER piece accepted: the region was mostly rooms and only the substantial refused pieces are
+          // left, so each is given to its own name (this is what lets the centre LOBBY be drawn at all).
+          // The two rules are exclusive, so nothing is ever counted twice.
+          if (split.parts.every((x) => !x.accepted)) {
             const wRings = outlineFromRegion(region, w, box, px, { simplifyTolPt: p.simplifyTolPt });
             const wAreaPt2 = outlineAreaPt2(wRings);
             const wAreaM2 = pt2ToM2(wAreaPt2, denom);
             if (wRings.length && wAreaM2 > 0) {
               const r2 = (v) => Math.round(v * 100) / 100;
-              const byArea = [...refusedParts].sort((a, b) => (b.areaM2 || 0) - (a.areaM2 || 0));
+              const byArea = [...split.parts].sort((a, b) => (b.areaM2 || 0) - (a.areaM2 || 0));
               const head = byArea[0];
-              const inside = byArea.map((x) => ({ id: x.roomId, name: x.name || '', areaM2: r2(x.areaM2 || 0) }));
+              const names = byArea.map((x) => ({ id: x.roomId, name: x.name || '', areaM2: r2(x.areaM2 || 0) }));
               out.push({
                 id: `reg${region.index}open`,
                 rings: wRings, polygon: wRings[0] || [], areaPt2: wAreaPt2,
                 areaM2: r2(wAreaM2), closed: true,
-                cells: region.areaPx, labels: inside.length, bbox: region.bbox,
+                cells: region.areaPx, labels: names.length, bbox: region.bbox,
                 source: 'open-area', roomId: head.roomId,
-                openArea: { areaM2: r2(wAreaM2), roomId: head.roomId, inside },
+                openArea: { areaM2: r2(wAreaM2), roomId: head.roomId, inside: names },
               });
               continue;
             }
           }
+          const bigPiece = (x) => (Number(x.areaM2) || 0) >= Math.max(2, regionArea * 0.25);
+          const inside = split.parts.filter(bigPiece)
+            .map((x) => ({ id: x.roomId, name: x.name || '', areaM2: Math.round((x.areaM2 || 0) * 100) / 100 }));
           for (let k = 0; k < split.parts.length; k += 1) {
             const part = split.parts[k];
+            // ---- an open PIECE: given to ONE name, which the user can change -----------------------
+            // A piece is refused when its face to a sibling is wider than a door: the drawing does not
+            // enclose it. Its area is still MEASURED floor, so - the owner's call - it belongs in the
+            // cooling load; only WHICH name owns it is uncertain, and the app offers to move it. This is
+            // per PIECE, not per region: a region whose other pieces really are rooms must not lose them,
+            // and giving each refused name its own piece is what lets a closed-but-open-plan space like
+            // the centre LOBBY be drawn at all. The pieces tile the region, so nothing is counted twice,
+            // and `source:'open-area'` + `openArea.inside` say exactly what was done.
+            if (!part.accepted && part.code === 'open-plan' && part.roomId != null && bigPiece(part)) {
+              const r2 = (v) => Math.round(v * 100) / 100;
+              out.push({
+                id: `reg${region.index}s${k}open`,
+                rings: part.rings, polygon: part.rings[0] || [], areaPt2: part.areaPt2,
+                areaM2: r2(part.areaM2), closed: part.rings.length > 0,
+                cells: part.cells.length, labels: inside.length, bbox: part.bbox,
+                source: 'open-area', roomId: part.roomId,
+                openArea: { areaM2: r2(part.areaM2), roomId: part.roomId, inside },
+                memberIds: part.memberIds,
+              });
+              continue;
+            }
             out.push({
               id: `reg${region.index}s${k}`,
               rings: part.rings,
@@ -855,6 +880,9 @@ function regionsFromCore(core, p) {
               bbox: part.bbox,
               source: part.accepted ? 'split' : part.code,
               roomId: part.roomId,
+              // Whose piece this is, EXACTLY - see js/splitregion.js `memberIds`. The consumer must never
+              // have to infer it from the simplified outline.
+              memberIds: part.memberIds,
               ...(part.accepted ? {} : { openPlan: true, refuseCode: part.code }),
             });
           }
@@ -873,6 +901,9 @@ function regionsFromCore(core, p) {
       closed: rings.length > 0,
       cells: region.areaPx,
       labels: labelsPerRegion.get(region.key) || 0,
+      // The names whose anchor cell really IS in this region (exact, from the seeding), so a consumer
+      // never has to guess membership from the simplified outline.
+      memberIds: (regionRooms.get(region.index) || []).map((r) => r && r.id).filter((x) => x != null),
       bbox: region.bbox,
     });
   }
