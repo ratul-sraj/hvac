@@ -1409,7 +1409,11 @@ function rowHtml(idx, calc) {
   const inc = room.include !== false;
   const nm = room.name || 'room';
   const sys = unitsSys();         // the chosen results system for this row's computed cells
-  return `<tr data-idx="${idx}" data-id="${esc(raw.id)}" class="clickable${inc ? '' : ' excluded'}">
+  // `fitting` is set HERE, where the row is built: the toggle in updateLive() reads a field the
+  // normalised room does not carry, and the row is usually built after the classifier has marked it, so
+  // a fitting (MONITOR, SEATING, COMMISSIONERS' BENCH) came out looking like an ordinary room that
+  // simply failed - the row never said what it really was.
+  return `<tr data-idx="${idx}" data-id="${esc(raw.id)}" class="clickable${inc ? '' : ' excluded'}${raw.subZone ? ' fitting' : ''}">
     <td class="c-include col-in"><input type="checkbox" data-field="include" ${inc ? 'checked' : ''}
           aria-label="Include ${esc(nm)} in the load"></td>
     <td class="l c-lv"><input type="text" data-field="level" value="${esc(raw.level || '')}"
@@ -1506,7 +1510,10 @@ function updateLive() {
     const orSel = tr.querySelector('select[data-field="orient"]');
     if (orSel && raw.orient === undefined) orSel.value = r.room.orient;
     tr.classList.toggle('excluded', r.room.include === false);
-    tr.classList.toggle('fitting', !!r.room.subZone);   // styled and findable as a fitting, not a room
+    // `subZone` lives on the RAW room: the normalised room the engine builds has no such field, so this
+    // toggle never fired and a fitting came out looking like an ordinary room that simply failed
+    // ("excluded"), which is exactly how MONITOR/BENCH/SEATING read as "no longer detected".
+    tr.classList.toggle('fitting', !!(raw.subZone || r.room.subZone));   // styled and findable as a fitting, not a room
     if (raw && r.room.include !== false) {
       const cb = tr.querySelector('input[data-field="include"]');
       if (cb) cb.checked = true;
