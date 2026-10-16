@@ -280,10 +280,60 @@ export function splitRegion(p) {
   }
   if (seeds.length < 2) return null;
 
+  // The morphological-opening radius: how far (in cells) a cell must sit from every wall to survive an
+  // opening that severs a neck up to NECK_MAX_M wide. +1 absorbs the raster's rounding. Declared HERE
+  // because the flood now starts from the opened cores, which are defined by this same radius.
+  const cellSizeM = metresPerPt(denom) / pxPerPt;
+  const rOpen = Math.ceil((neckMaxM / 2) / cellSizeM) + 1;
+  const cellM2 = cellSizeM * cellSizeM;
+
   // ---- 3. seeded watershed: priority flood, highest distance first ---------------------------
+  // The flood starts from the OPENED CORE of each space, not from the one cell under each name.
+  // Flooding from single cells makes two pieces meet at the equidistant MIDLINE between them, which on a
+  // wide or irregular space lands nowhere near a wall - that is why the centre LOBBY's outline came out as
+  // a straight watershed line instead of its own walls. Flooding from the cores makes them meet at the
+  // NARROWEST passage instead, i.e. in the doorway, so the boundary follows the drawing's walls and
+  // closes across the door. `dist` is this region's own distance-to-wall, in cells, so the same `rOpen`
+  // that the unnamed-space test uses decides what counts as a core (see the opening test below).
   const label = new Int32Array(n).fill(-1);
   const heap = makeHeap(dist);
-  for (const s of seeds) { label[s.idx] = s.label; heap.push(s.idx); }
+  {
+    const coreOf = new Int32Array(n).fill(-1);
+    let comps = 0;
+    const stack = [];
+    for (let i = 0; i < n; i += 1) {
+      if (dist[i] <= rOpen || coreOf[i] !== -1) continue;
+      const comp = comps; comps += 1;
+      coreOf[i] = comp; stack.push(i);
+      while (stack.length) {
+        const u = stack.pop();
+        for (const g of neighbors(cells[u], w, h)) {
+          const j = localOf.get(g);
+          if (j === undefined || coreOf[j] !== -1) continue;
+          if (dist[j] <= rOpen) continue;
+          coreOf[j] = comp; stack.push(j);
+        }
+      }
+    }
+    // Which core does each name's own cell fall in? A core holding ONE name is seeded whole; a core
+    // holding several names (a genuinely open space) keeps them as single cells, so the old behaviour
+    // applies there and the pieces are refused as before.
+    const namesPerCore = new Map();
+    for (const s of seeds) {
+      const c = coreOf[s.idx];
+      if (c < 0) continue;
+      if (!namesPerCore.has(c)) namesPerCore.set(c, []);
+      namesPerCore.get(c).push(s);
+    }
+    for (const s of seeds) {
+      const comp = coreOf[s.idx];
+      if (comp >= 0 && namesPerCore.get(comp).length === 1) {
+        for (let i = 0; i < n; i += 1) if (coreOf[i] === comp) { label[i] = s.label; heap.push(i); }
+      } else {
+        label[s.idx] = s.label; heap.push(s.idx);
+      }
+    }
+  }
   while (heap.size) {
     const u = heap.pop();
     const lu = label[u];
@@ -294,11 +344,6 @@ export function splitRegion(p) {
   }
 
   // ---- 4. neck safety test + unnamed-space test, per sub-region -----------------------------
-  // The morphological-opening radius: how far (in cells) a cell must sit from every wall to survive
-  // an opening that severs a neck up to NECK_MAX_M wide. +1 absorbs the raster's rounding.
-  const cellSizeM = metresPerPt(denom) / pxPerPt;
-  const rOpen = Math.ceil((neckMaxM / 2) / cellSizeM) + 1;
-  const cellM2 = cellSizeM * cellSizeM;
   // Gather each label's cells in ONE pass (a per-seed scan would be O(n x names)).
   const membersByLabel = new Map();
   for (let i = 0; i < n; i += 1) {

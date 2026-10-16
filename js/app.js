@@ -4384,6 +4384,19 @@ function planApplyFill(assignments, reasonCount, info) {
     // An OPEN AREA: the whole region went to this one name because the drawing does not draw its edge.
     // Recorded on the room so the table can mark it and offer to move the area to another name inside.
     if (a.openArea) room.openArea = a.openArea; else delete room.openArea;
+    // An OPEN AREA carries its outline: the boundary the tracer measured (the plan's own walls where
+    // they exist, closed across the opening). Stored exactly like a traced outline, so the overlay
+    // draws it and the row's shape behaves like any other.
+    if (a.openArea && Array.isArray(a.rings) && a.rings.length) {
+      const ring = Array.isArray(a.rings[0]) ? a.rings[0] : a.rings;
+      if (ring.length > 2) {
+        room.poly = ring.map((pt) => ({ x: round2(pt.x), y: round2(pt.y) }));
+        room.polyPage = a.page != null ? a.page : (plan.page || 1);
+        room.polyDrawing = plan.drawingId;
+        room.polyArea = round2(Number(a.areaM2) || 0);
+        room.source = room.source || 'label';
+      }
+    }
   }
   // Only a run that CHANGED something becomes the Undo step. A run that filled nothing must leave the
   // previous Undo intact — otherwise pressing Fill areas a second time (which changes nothing, and says
@@ -4609,6 +4622,11 @@ async function planFillAreas(opts) {
             if (targetId == null || !fillIds.has(targetId) || assignments.has(targetId)) continue;
             assignments.set(targetId, {
               areaM2: round2(r.areaM2), regionId: r.id,
+              // The OUTLINE travels with the area. Without it the row had a figure but nothing on the
+              // drawing: the trace path is what stores outlines, and it drops these regions (their own
+              // verdict is a refusal), so an open area was "detected" with no boundary drawn - reported
+              // from real use ("the lobby is now detected but it's not tracing the actual boundaries").
+              rings: r.rings, page: p,
               openArea: { ...(r.openArea || {}), areaM2: round2(r.areaM2), roomId: targetId },
             });
           }
