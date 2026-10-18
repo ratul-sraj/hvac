@@ -35,7 +35,7 @@ ok("the gap reason names a practice value",
 
 console.log("basis: a climate row carries its station provenance");
 const b2 = basis.basisFromProject(Object.assign({}, DEFAULT_PROJECT), {
-  db: 34.6, wb: 27.8, station: "KOCHI/CIAL", cite: "ASHRAE 2021 Fundamentals Ch.14 (via js/climates.js)",
+  db: 34.6, wb: 27.8, station: "KOCHI/CIAL", cite: "ASHRAE 2021 Fundamentals Ch.14",
 });
 ok("the climate figure is marked as climate-sourced", b2.entries.outDb.kind === "climate");
 ok("the station is recorded", /KOCHI/.test(b2.entries.outDb.station || ""));

@@ -546,7 +546,7 @@ export async function ocrPdf(arrayBuffer, { pdfjs, onProgress, langs = cfg.langs
   for (const r of rooms) if (usedOcr.includes(num(r.page, 1))) r.source = "ocr";
   if (!rooms.length && usedOcr.length && items.length) {
     warnings.push(
-      `OCR read ${items.length} word(s) on page(s) ${usedOcr.join(", ")} but js/pdfparse.js could not build a room from them: ` +
+      `OCR read ${items.length} word(s) on page(s) ${usedOcr.join(", ")} but no room could be built from them: ` +
         `a room needs a readable NAME and AREA, and on a scanned drawing the area tags ("96.0 m²") are the first thing OCR loses. ` +
         `A CSV/XLSX room schedule exported from Revit/Excel is far more accurate for scanned sheets.`
     );

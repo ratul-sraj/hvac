@@ -63,11 +63,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', im
 /* is ticked.                                                          */
 /* ------------------------------------------------------------------ */
 
-const MISSING_SCHEDULE = 'the room-schedule reader (js/schedule.js) is not in this build';
-const MISSING_OCR = 'the OCR reader (js/ocr.js) is not in this build';
-const MISSING_TRACE = 'the outline tracer (js/trace.js) is not in this build';
-const MISSING_AUTOTRACE = 'the area filler (js/autotrace.js) is not in this build';
-const MISSING_SCALECAL = 'the scale reader (js/scalecal.js) is not in this build';
+const MISSING_SCHEDULE = 'the room-schedule reader is not in this build';
+const MISSING_OCR = 'the OCR reader is not in this build';
+const MISSING_TRACE = 'the outline tracer is not in this build';
+const MISSING_AUTOTRACE = 'the area filler is not in this build';
+const MISSING_SCALECAL = 'the scale reader is not in this build';
 
 // vendored tesseract files, served from the site (no CDN at runtime)
 const OCR_VENDOR = new URL('../vendor/tesseract/', import.meta.url).href;

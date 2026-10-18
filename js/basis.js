@@ -179,7 +179,7 @@ export function basisFromProject(project, climate) {
         "confirm it against a station, a local weather file (EPW), or the client's own design brief."
       : (climate.cite || climate.citeLine ||
          [climate.station ? "station " + climate.station : "", climate.src || ""].filter(Boolean).join(" — ") ||
-         "ASHRAE 2021 Fundamentals Ch.14 climatic design conditions (via js/climates.js)");
+         "ASHRAE 2021 Fundamentals Ch.14 climatic design conditions");
   const cStatus = climate && !climate.indicative && (climate.station || climate.src) ? "cited" : "unconfirmed";
   put("outDb", p.outDb, { kind: "climate", status: cStatus, cite: cCite, station: (climate && climate.station) || "" });
   put("outWb", p.outWb, { kind: "climate", status: cStatus, cite: cCite, station: (climate && climate.station) || "" });
@@ -192,7 +192,7 @@ export function basisFromProject(project, climate) {
   for (const id of ["oap", "oaa", "light", "equip", "m2pp", "ps", "pl"]) {
     const f = byId.get(id);
     b.entries[id].value = null;
-    b.entries[id].note = `Per room type (js/calc.js ROOM_TYPES): ${f ? f.label : id} differs by use — stated per row in the report.`;
+    b.entries[id].note = `Per room type: ${f ? f.label : id} differs by use — stated per row in the report.`;
   }
   return b;
 }
