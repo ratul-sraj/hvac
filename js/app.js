@@ -4656,10 +4656,13 @@ function planApplyFill(assignments, reasonCount, info) {
     // An OPEN AREA: the whole region went to this one name because the drawing does not draw its edge.
     // Recorded on the room so the table can mark it and offer to move the area to another name inside.
     if (a.openArea) room.openArea = a.openArea; else delete room.openArea;
-    // An OPEN AREA carries its outline: the boundary the tracer measured (the plan's own walls where
-    // they exist, closed across the opening). Stored exactly like a traced outline, so the overlay
-    // draws it and the row's shape behaves like any other.
-    if (a.openArea && Array.isArray(a.rings) && a.rings.length) {
+    // EVERY measured area carries the outline it was measured from - a closed room's traced ring as
+    // much as an open area's grown boundary. This used to be gated to open areas alone, so an
+    // ordinary room got a figure with no geometry behind it: nothing on the drawing to check it
+    // against, `reconcile.js` would not count it as measured (it requires the ring), and the
+    // bubble-out control had no outline to work from. Stored exactly like a traced outline, so the
+    // overlay draws it and the row's shape behaves like any other.
+    if (Array.isArray(a.rings) && a.rings.length) {
       const ring = Array.isArray(a.rings[0]) ? a.rings[0] : a.rings;
       if (ring.length > 2) {
         room.poly = ring.map((pt) => ({ x: round2(pt.x), y: round2(pt.y) }));
@@ -4857,11 +4860,22 @@ async function planFillAreas(opts) {
           else if (passKey !== best.key) passKey = 'mixed';
 
           const assignBy = new Map(best.out.assignments.map((a) => [a.roomId, a]));
+          const regionById = new Map((best.regions || []).map((rg) => [rg.id, rg]));
           const skipBy = new Map(best.out.skipped.filter((s) => s.kind === 'room').map((s) => [s.id, s.code]));
           for (const r of pageRooms) {
             if (!fillIds.has(r.id)) continue;
             const a = assignBy.get(r.id);
-            if (a) { assignments.set(r.id, { areaM2: a.areaM2, regionId: a.regionId }); continue; }
+            if (a) {
+              // The matcher's assignment carries the figure and a region id but NOT the geometry; the
+              // region itself does (js/trace.js gives every region `rings` + `polygon`). Carry it here
+              // so the fill can store the boundary the figure came from, exactly as an open area does.
+              const rg = regionById.get(a.regionId);
+              assignments.set(r.id, {
+                areaM2: a.areaM2, regionId: a.regionId,
+                rings: rg && rg.rings, poly: (rg && rg.polygon) || null, page: p,
+              });
+              continue;
+            }
             // An ANNOTATION LABEL is not a room that could not be measured - it is a fitting inside a
             // room (MONITOR, SEATING, IN/OUT, COMMISSIONERS' BENCH ...). Counting those as "could not
             // be verified" told the user nothing; they get their own words.
