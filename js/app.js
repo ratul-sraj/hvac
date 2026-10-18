@@ -296,7 +296,7 @@ const el = {
   planShapeAssignClose: $('#planShapeAssignClose'),
   planHint: $('#planHint'),
   planShapeLink: $('#planShapeLink'), planShapeLinkName: $('#planShapeLinkName'),
-  planLinkTarget: $('#planLinkTarget'), planLinkMove: $('#planLinkMove'), planLinkDetach: $('#planLinkDetach'),
+  planLinkTarget: $('#planLinkTarget'), planLinkMove: $('#planLinkMove'), planLinkDetach: $('#planLinkDetach'), planShapeFit: $('#planShapeFit'),
   planStatus: $('#planStatus'),
   planScaleFix: $('#planScaleFix'),
   planProgress: $('#planProgress'),
@@ -6055,6 +6055,11 @@ async function openPlan(bytes, opts) {
           + 'so pressing Move without picking one cannot move a shape onto a room you never chose.', 'plan');
       }
     });
+  }
+  // Same handler as the breakdown's button (#bdShapeFit), so bubbling out behaves identically
+  // whether you reach it under the drawing or inside the room's breakdown.
+  if (el.planShapeFit) {
+    el.planShapeFit.addEventListener('click', () => planFitShapeToWalls(state.ui.openId));
   }
   if (el.planLinkDetach) {
     el.planLinkDetach.addEventListener('click', () => planDetachShape(state.ui.openId));
