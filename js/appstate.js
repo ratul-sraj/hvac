@@ -362,12 +362,3 @@ export function download(name, text, mime) {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
-
-// The undo-once snapshot is written from BOTH sides of the split (the plan pane's gestures and
-// the table's own undo), so it lives here and is written through setPendingUndo().
-export let pendingUndo = null;     // { label, rooms } of the gesture in flight, or null
-export function setPendingUndo(v) { pendingUndo = v; }
-
-// The plan status timer is started and cleared on both sides of the split, so it lives here.
-export let planStatusTimer = null;
-export function setPlanStatusTimer(v) { planStatusTimer = v; }
