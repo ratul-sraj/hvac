@@ -833,6 +833,9 @@ async function main() {
 
   let texts = [];
   let files = null;
+  // Set when the bucket could not be listed. A caller reading --json must be able to tell a real
+  // zero-traffic window from "we never got the logs" - otherwise it writes a confident empty report.
+  let listError = null;
 
   if (opts.file) {
     try { texts.push(readLocalLogFile(opts.file).text); }
@@ -840,6 +843,7 @@ async function main() {
   } else {
     const list = listLogObjects(opts);
     if (!list.ok) {
+      listError = String(list.error || 'unknown listing failure');
       console.log(`! could not list the log bucket: ${list.error}`);
       console.log("  (check your AWS credentials / region, then try again)\n");
     } else if (list.objects.length === 0) {
@@ -899,6 +903,7 @@ async function main() {
       region: opts.region,
       window: { start, end },
       files,
+      listError,
       totalRequests: stats.totalRequests,
       skipped: stats.skipped,
       excluded: stats.excluded,
