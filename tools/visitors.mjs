@@ -439,6 +439,10 @@ function analyze(parsed, opts = {}) {
   const perPage = new Map();           // path -> unique visitor count
   const byStem = new Map();            // clean request counts per uri stem
   const api = { count: 0, byStatus: new Map() };
+  // The SAME count taken BEFORE any exclusion, and split by the owner's own addresses. Without this
+  // the only parse figure was post-exclusion: it read 0 while CloudWatch showed 4 parse calls from the
+  // owner's own testing, so the one number that decides whether the product works looked wrong.
+  const apiAll = { count: 0, own: 0, byStatus: new Map() };
   // Per-campaign attribution. Visitors are tracked as the SAME (day|id) keys as elsewhere, so a
   // campaign count is unique PEOPLE, not requests — the hourly batching (one file per UTC hour)
   // changes nothing about who is unique; a person is one id per UTC day.
@@ -462,6 +466,12 @@ function analyze(parsed, opts = {}) {
     if (stem && PAGE_PATHS.has(stem)) {
       const id = makeVisitorId(ip, ua, day);
       allIds.add(`${day}|${id}`);
+    }
+
+    if (stem === "/api/parse") {
+      apiAll.count += 1;
+      if (ipMatchesAny(ip, ownIps)) apiAll.own += 1;
+      apiAll.byStatus.set(status || "(none)", (apiAll.byStatus.get(status || "(none)") || 0) + 1);
     }
 
     let reason = null;
@@ -565,7 +575,13 @@ function analyze(parsed, opts = {}) {
       visitors: probeOnly.size,
       stems: [...probeStemCount.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     },
-    api: { count: api.count, byStatus: Object.fromEntries([...api.byStatus.entries()].sort()) },
+    api: {
+      count: api.count,                                        // by real visitors, after exclusions
+      byStatus: Object.fromEntries([...api.byStatus.entries()].sort()),
+      all: apiAll.count,                                       // every /api/parse request in the window
+      own: apiAll.own,                                         // ...of which the owner's own addresses
+      allByStatus: Object.fromEntries([...apiAll.byStatus.entries()].sort()),
+    },
     campaigns: {
       rows: campaignRows,
       content: contentRows,
@@ -717,7 +733,8 @@ function printReport(stats, opts, meta) {
   if (!top.length) console.log(`      (none)`);
   for (const [stem, n] of top) console.log(`      ${padL(n, 6)}  ${stem}`);
   console.log("");
-  console.log(`POST /api/parse (did the tool actually work): ${stats.api.count}`);
+  console.log(`POST /api/parse (did the tool actually work): ${stats.api.count} by visitors` +
+    (stats.api.all === stats.api.count ? "" : `, ${stats.api.own} by your own addresses (excluded), ${stats.api.all} in total`));
   if (stats.api.count) {
     const split = Object.entries(stats.api.byStatus)
       .sort((a, b) => b[1] - a[1])
@@ -917,6 +934,7 @@ async function main() {
       untaggedRequests: stats.campaigns.untaggedRequests,
       topStems: stats.byStem.slice(0, 15),
       apiParse: stats.api,
+      breakdown: stats.breakdown,
       ownIpsFile: { path: ownIpsInfo.path, exists: ownIpsInfo.exists, entries: ownIpsInfo.entries.length },
       note: "no raw IP is printed or stored; visitors are 12-char salted hashes, one per UTC day",
     }, null, 2));

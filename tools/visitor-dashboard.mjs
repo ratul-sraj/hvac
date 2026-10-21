@@ -82,6 +82,9 @@ const uni = { n: numOf(data.uniqueVisitors), key: "uniqueVisitors" };
 const read = { n: numOf(data.totalRequests), key: "totalRequests" };
 const excl = { n: numOf(data.excluded), key: "excluded" };
 const parseHit = { n: numOf(data.apiParse) ?? 0, key: "apiParse" };
+const parseAll = (data.apiParse && typeof data.apiParse === "object" && typeof data.apiParse.all === "number") ? data.apiParse.all : null;
+const parseOwn = (data.apiParse && typeof data.apiParse === "object" && typeof data.apiParse.own === "number") ? data.apiParse.own : null;
+const bd = (data.breakdown && typeof data.breakdown === "object") ? data.breakdown : null;
 const peak = Math.max(1, ...days.map((x) => x[1]));
 const topPage = pages.length ? Math.max(1, pages[0][1]) : 1;
 const stamp = new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
@@ -97,11 +100,15 @@ const css = ':root{color-scheme:dark}body{margin:0;padding:28px;font:15px/1.5 ui
  + 'td.d{color:#aab3c5;white-space:nowrap;width:150px;overflow:hidden;text-overflow:ellipsis}td.b{position:relative;height:22px}'
  + 'td.b i{position:absolute;left:0;top:3px;bottom:3px;background:linear-gradient(90deg,#2f6df6,#4d8dff);border-radius:3px}'
  + 'td.b b{position:relative;padding-left:6px;font-weight:600}.note{color:#79839a;font-size:12.5px;max-width:840px;margin-top:26px;border-top:1px solid #1b212b;padding-top:12px}.zero{color:#ffb4b4}';
+const parseVal = (parseAll == null || parseAll === parseHit.n) ? String(parseHit.n) : (parseHit.n + " <small>by visitors</small> / " + parseAll + " <small>yours</small>");
 const tile = (label, val, cls) => '<div class="t"><span>' + label + '</span><b class="' + (cls || "") + '">' + val + '</b></div>';
 const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>LoadLens - visitors (private)</title><style>' + css + '</style></head><body>'
  + '<h1>LoadLens - visitors</h1><p class="sub">Last ' + hours + ' hours - generated ' + stamp + ' - a local file, never deployed</p><div class="tiles">'
- + tile("unique real visitors", uni ? uni.n : "-") + tile("requests read", read ? read.n : "-") + tile("excluded", excl ? excl.n : "-")
- + tile("POST /api/parse", parseHit ? parseHit.n : 0, parseHit && parseHit.n > 0 ? "" : "zero") + '</div>'
+ + tile("real browsers", bd && typeof bd.verified === "number" ? bd.verified : "-", bd && bd.verified > 0 ? "" : "zero")
+ + tile("unique visitors (bots out)", uni ? uni.n : "-")
+ + tile("fetched one page, nothing else", bd && typeof bd.pageOnly === "number" ? bd.pageOnly : "-")
+ + tile("reached the calculator", bd && typeof bd.reachedApp === "number" ? bd.reachedApp : "-")
+ + tile("POST /api/parse", parseVal, parseHit && parseHit.n > 0 ? "" : "zero") + '</div>'
  + '<h2>Unique visitors per day (UTC)</h2><table>' + (dayRows || '<tr><td class="d">no data</td><td></td></tr>') + '</table>'
  + '<h2>Pages (unique visitors)</h2><table>' + (pageRows || '<tr><td class="d">no data</td><td></td></tr>') + '</table>'
  + '<p class="note">A visitor is a 12-character salted hash, one per UTC day, computed by tools/visitors.mjs - the same code the terminal report uses. Raw addresses are never printed, never stored and never reach this file.</p></body></html>';
