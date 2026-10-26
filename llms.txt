@@ -94,8 +94,11 @@ used — do not let the default stand silently.
 ## The other endpoints
 
 - `GET /api/health` — liveness, cheap.
-- `GET /api/climates` — `{countries, cities}`: the design conditions the tool ships, by country and
-  city. Use it to pick honest `outDb`/`outWb` rather than assuming.
+- `GET /api/climates` — the design conditions the tool ships, in two shapes:
+  `countries`: country → city → `{db, wb}`, and `cities`: city → `{db, wb, country}` (flat, 42 cities).
+  12 countries, including India (19 cities), UAE, Saudi Arabia, Qatar, Oman, Kuwait, Bahrain, Sri Lanka,
+  Maldives, Singapore, Malaysia, plus `Custom`. Use it to pick honest `outDb`/`outWb` instead of assuming
+  them — e.g. Kochi comes back `{"db":35,"wb":28}`, Dubai is a different number entirely.
 - `POST /api/parse` — multipart upload of a floor-plan PDF; returns the rooms it can read. Built for a
   human in a browser. If you already have room areas, use `/api/calc` instead: it is faster, it is
   deterministic, and it does not depend on reading linework.
