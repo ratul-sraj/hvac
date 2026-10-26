@@ -1,0 +1,183 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LoadLens — cooling load calculation",
+    "version": "1.0.0",
+    "description": "Design-stage cooling load (TR) from room areas and space types, with the full design basis returned so every figure can be checked. A first estimate, not a stamped HAP/Trace calculation. No key, no account, no tracking of the caller. Long form: https://loadlens.net/llms.txt",
+    "contact": { "name": "Ratul S Raj", "email": "ratul.sraj@gmail.com", "url": "https://loadlens.net/method.html" },
+    "license": { "name": "Source available", "url": "https://github.com/ratul-sraj/hvac" }
+  },
+  "servers": [{ "url": "https://loadlens.net", "description": "production" }],
+  "paths": {
+    "/api/calc": {
+      "post": {
+        "summary": "Cooling load for one or more rooms",
+        "description": "Give rooms; get per-room and total load. Absent room fields are filled from the space-type table and the filled values are echoed back in results[].room, so the basis of every number is visible. Units: W, TR, L/s (CFM also returned).",
+        "operationId": "calculateLoad",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CalcRequest" },
+              "examples": {
+                "one office": {
+                  "summary": "50 m² office, everything else defaulted",
+                  "value": { "rooms": [{ "name": "Office", "area": 50, "type": "office" }] }
+                },
+                "with basis": {
+                  "summary": "Override the design basis and the construction",
+                  "value": {
+                    "rooms": [{ "name": "Meeting", "area": 30, "type": "conference", "orient": "W", "glass": 9 }],
+                    "project": { "city": "Kochi", "outDb": 35, "outWb": 28, "inDb": 24, "inRh": 50, "uWall": 0.4, "uRoof": 0.33, "uGlass": 3.0, "sc": 0.31, "safety": 10 }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Load computed",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalcResponse" } } }
+          },
+          "400": {
+            "description": "rooms was not an array",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "error": { "type": "string" } } } } }
+          }
+        }
+      }
+    },
+    "/api/climates": {
+      "get": {
+        "summary": "Design conditions the tool ships, by country and city",
+        "description": "Use this to choose honest outdoor design conditions rather than assuming them.",
+        "operationId": "listClimates",
+        "responses": { "200": { "description": "countries and cities", "content": { "application/json": { "schema": { "type": "object", "properties": { "countries": { "type": "array", "items": { "type": "string" } }, "cities": { "type": "array" } } } } } } }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Liveness",
+        "operationId": "health",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    },
+    "/api/parse": {
+      "post": {
+        "summary": "Read rooms from a floor-plan PDF (multipart upload)",
+        "description": "Built for a human in a browser. Agents that already know the room areas should call /api/calc instead: it is deterministic and does not depend on reading drawing linework.",
+        "operationId": "parseDrawing",
+        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "properties": { "file": { "type": "string", "format": "binary" } }, "required": ["file"] } } } },
+        "responses": { "200": { "description": "rooms read from the drawing", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Room": {
+        "type": "object",
+        "description": "Only area is required. Anything absent is filled from the space-type table and echoed back with the same key.",
+        "properties": {
+          "name": { "type": "string", "description": "label only; never used in the maths" },
+          "area": { "type": "number", "description": "floor area, m² — the dominant input" },
+          "type": {
+            "type": "string",
+            "enum": ["office", "conference", "cabin", "reception", "retail", "restaurant", "bedroom", "living", "classroom", "hospital", "server", "gym", "general"],
+            "default": "general",
+            "description": "space type; unknown values fall back to general"
+          },
+          "height": { "type": "number", "default": 3, "description": "ceiling height, m" },
+          "people": { "type": "integer", "description": "occupants; overrides the area-based default" },
+          "light": { "type": "number", "description": "lighting, W/m²" },
+          "equip": { "type": "number", "description": "equipment/plug load, W/m²" },
+          "orient": { "type": "string", "enum": ["N", "NE", "E", "SE", "S", "SW", "W", "NW"], "default": "W" },
+          "glass": { "type": "number", "description": "glazing area m²; overrides the % of exposed wall" },
+          "extWall": { "type": "number", "description": "exposed wall area m²; derived from area if absent" },
+          "roof": { "type": "boolean", "default": false, "description": "has an exposed roof" },
+          "include": { "type": "boolean", "default": true, "description": "false leaves it out of the total (toilets, shafts)" }
+        },
+        "required": ["area"]
+      },
+      "Project": {
+        "type": "object",
+        "description": "The design basis. Every field is optional and defaults to general Indian practice — override anything the building actually is, and say which values you used. Note the tool's default wall U (2.0 W/m²K) and roof U (2.0) are starting values; ECBC 2017 warm-humid asks for 0.40 and 0.33.",
+        "properties": {
+          "name": { "type": "string", "default": "HVAC Load Calculation" },
+          "country": { "type": "string", "default": "India" },
+          "city": { "type": "string", "default": "Kochi" },
+          "outDb": { "type": "number", "default": 35, "description": "outdoor dry bulb, °C" },
+          "outWb": { "type": "number", "default": 28, "description": "coincident wet bulb, °C" },
+          "inDb": { "type": "number", "default": 24, "description": "indoor dry bulb, °C" },
+          "inRh": { "type": "number", "default": 50, "description": "indoor relative humidity, %" },
+          "uWall": { "type": "number", "default": 2.0, "description": "W/m²K — 230 mm brick, plastered" },
+          "uGlass": { "type": "number", "default": 5.8, "description": "W/m²K — single clear glass" },
+          "sc": { "type": "number", "default": 0.6, "description": "shading coefficient" },
+          "uRoof": { "type": "number", "default": 2.0, "description": "W/m²K — RCC slab with waterproofing" },
+          "roofEtd": { "type": "number", "default": 22, "description": "roof equivalent ΔT, K" },
+          "uPart": { "type": "number", "default": 2.2, "description": "partition to non-AC space, W/m²K" },
+          "infilAch": { "type": "number", "default": 0.5, "description": "air changes per hour" },
+          "safety": { "type": "number", "default": 10, "description": "safety factor, %" },
+          "supplyDt": { "type": "number", "default": 11, "description": "room minus supply air temperature, K" },
+          "wwr": { "type": "number", "default": 30, "description": "glazing as % of exposed wall when glass area is absent" },
+          "units": { "type": "string", "enum": ["si", "ip"], "default": "si", "description": "display only; the maths is always SI" }
+        }
+      },
+      "CalcRequest": {
+        "type": "object",
+        "required": ["rooms"],
+        "properties": {
+          "rooms": { "type": "array", "items": { "$ref": "#/components/schemas/Room" }, "minItems": 1 },
+          "project": { "$ref": "#/components/schemas/Project" }
+        }
+      },
+      "CalcResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "room": { "type": "object", "description": "the room as the engine used it, with every default filled in" },
+                "warnings": { "type": "array", "items": { "type": "string" } },
+                "sensible": { "type": "object", "description": "glassSolar, glassCond, wall, roof, partition, people, lighting, equipment, infiltration — W" },
+                "latent": { "type": "object", "description": "people, infiltration — W" },
+                "rsh": { "type": "number", "description": "room sensible heat, W" },
+                "rlh": { "type": "number", "description": "room latent heat, W" },
+                "oaSens": { "type": "number" },
+                "oaLat": { "type": "number" },
+                "oaLs": { "type": "number", "description": "outdoor air, L/s" },
+                "safetyW": { "type": "number" },
+                "totalW": { "type": "number", "description": "total cooling load, W" },
+                "tr": { "type": "number", "description": "total cooling load, tons of refrigeration" },
+                "shf": { "type": "number", "description": "sensible heat factor" },
+                "supplyLs": { "type": "number" },
+                "supplyDt": { "type": "number" },
+                "cfm": { "type": "number" },
+                "oaCfm": { "type": "number" },
+                "totalBtuh": { "type": "number" },
+                "m2PerTr": { "type": "number" },
+                "sqftPerTr": { "type": "number" }
+              }
+            }
+          },
+          "warnings": { "type": "array", "items": { "type": "string" } },
+          "totals": {
+            "type": "object",
+            "description": "project totals: rooms, area, areaSqft, totalW, tr, ls, oaLs, cfm",
+            "properties": {
+              "rooms": { "type": "integer" },
+              "area": { "type": "number" },
+              "areaSqft": { "type": "number" },
+              "totalW": { "type": "number" },
+              "tr": { "type": "number" },
+              "ls": { "type": "number" },
+              "oaLs": { "type": "number" },
+              "cfm": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

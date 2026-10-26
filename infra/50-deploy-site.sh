@@ -78,6 +78,7 @@ CT_JS="text/javascript; charset=utf-8"
 CT_SVG="image/svg+xml"
 CT_TEXT="text/plain; charset=utf-8"
 CT_XML="application/xml; charset=utf-8"
+CT_JSON="application/json; charset=utf-8"
 CT_PNG="image/png"
 CT_GZIP="application/gzip"
 
@@ -94,7 +95,7 @@ else
 
   # Same file set as .github/workflows/pages.yml.
   COPIED=0
-  for item in *.html robots.txt sitemap.xml favicon.svg css js vendor img; do
+  for item in *.html robots.txt sitemap.xml llms.txt openapi.json favicon.svg css js vendor img; do
     [ -e "$item" ] || { log_warn "missing from the repo: $item"; continue; }
     cp -r "$item" "$STAGE_DIR/" && COPIED=$((COPIED + 1))
   done
@@ -173,14 +174,15 @@ fi
 # robots.txt and sitemap.xml live at the root. Without an explicit include here the root sync
 # (which is *.html only) silently drops them, and CloudFront then answers the missing key with
 # /index.html — a 200 that serves the landing page instead of the sitemap. Crawlers see HTML.
-for _f in robots.txt sitemap.xml; do
+for _f in robots.txt sitemap.xml llms.txt openapi.json; do
   if [ -f "$SRC/$_f" ]; then
     case "$_f" in
       *.xml) _ct="$CT_XML" ;;
+      *.json) _ct="$CT_JSON" ;;
       *)     _ct="$CT_TEXT" ;;
     esac
     aws s3 sync "$SRC_NATIVE" "s3://$BUCKET" --exclude "*" --include "$_f" \
-      --content-type "$_ct" --cache-control "$CACHE_SHORT" --no-progress
+      --content-type "$_ct" --cache-control "$CACHE_HTML" --no-progress
     log_ok "$_f -> $_ct, cache-control: $CACHE_SHORT"
   else
     log_warn "$_f not found — crawlers will not be told about the site"

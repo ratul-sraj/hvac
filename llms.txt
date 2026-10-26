@@ -1,0 +1,114 @@
+# LoadLens — cooling load calculation, for agents
+
+LoadLens turns room dimensions and space types into a design cooling load (tons of refrigeration, TR)
+with a stated design basis. It is a **first-estimate / design-stage check**, not a substitute for a
+stamped HAP or Trace calculation on a real project. Say so if you pass its numbers on.
+
+Everything below is live and callable without a key. No account, no cookie, no tracking of the caller.
+
+## The one call that does the work: POST /api/calc
+
+Give it rooms; it gives back per-room and total cooling load.
+
+    curl -s -X POST https://loadlens.net/api/calc \
+      -H 'content-type: application/json' \
+      -d '{"rooms":[{"name":"Office","area":50,"type":"office"}]}'
+
+Real response, trimmed to the parts that matter (50 m² office, all other inputs defaulted):
+
+    {"results":[{"room":{"name":"Office","area":50,"type":"office","height":3,"people":5,
+       "light":10,"equip":15,"orient":"W","extWall":21.21,"glass":6.36,"roof":false,"include":true},
+      "sensible":{"glassSolar":1793.5,"glassCond":405.8,"wall":445.5,"roof":0,"partition":0,
+       "people":375,"lighting":500,"equipment":750,"infiltration":281.9},
+      "latent":{"people":275,"infiltration":738.6},
+      "rsh":5006.8,"rlh":1115.0,"oaSens":372.1,"oaLat":975.0,"oaLs":27.5,"safetyW":556.5,
+      "totalW":7468.9,"tr":2.1236,"shf":0.8179,"supplyLs":370.1,"supplyOk":true,"supplyDt":11,
+      "cfm":784.1,"oaCfm":58.3,"totalBtuh":25484.8,"m2PerTr":23.54,"sqftPerTr":253.43}],
+     "warnings":[],"totals":{"rooms":1,"area":50,"totalW":7468.9,"tr":2.1236,"ls":370.1,"cfm":784.1,...}}
+
+So a 50 m² office in Kochi, default construction, comes to **2.12 TR**. Units: W for power, TR for
+cooling load, L/s for airflow (CFM also returned), plus *Btuh fields for IP.
+
+### Room object — the fields that change the answer
+
+| field | meaning | default if absent |
+|---|---|---|
+| `name` | label only, never used in the maths | "Room" |
+| `area` | **floor area, m²** — the single most important input | required |
+| `type` | space type, from the table below | `general` |
+| `height` | ceiling height, m | 3 |
+| `people` | occupants (overrides the area-based default) | area ÷ m²/person for the type |
+| `light` | lighting, W/m² | per type |
+| `equip` | equipment / plug load, W/m² | per type |
+| `orient` | one of N, NE, E, SE, S, SW, W, NW | W |
+| `glass` | glazing area, m² (overrides the % of wall) | 30% of exposed wall |
+| `extWall` | exposed wall area, m² | derived from area |
+| `roof` | true if this room has an exposed roof | false |
+| `include` | false leaves the room out of the total (toilets, shafts) | true |
+
+Unknown keys are ignored; unknown `type` falls back to `general`. Nothing is invented: an absent
+field is filled from the table below and the filled value is **echoed back in `results[].room`**, so
+you can see exactly what the number rests on. Read that echo instead of assuming.
+
+### Space types (`type`), with their defaults
+
+m²/person · lighting W/m² · equipment W/m² · people sensible/latent W · outdoor air L/s per person and
+per m² (ASHRAE 62.1):
+
+    office      10 · 10 · 15 · 75/55 · 2.5 / 0.3
+    conference   2.5 · 12 · 5 · 75/55 · 2.5 / 0.3
+    cabin        8 · 10 · 15 · 75/55 · 2.5 / 0.3
+    reception    7 · 12 · 5 · 75/55 · 2.5 / 0.3
+    retail       6 · 20 · 5 · 75/55 · 3.8 / 0.6
+    restaurant   1.5 · 12 · 10 · 80/80 · 3.8 / 0.9
+    bedroom      7 · 6 · 5 · 70/35 · 2.5 / 0.3
+    living       6 · 8 · 8 · 70/45 · 2.5 / 0.3
+    classroom    2 · 10 · 5 · 70/45 · 5.0 / 0.6
+    hospital     8 · 10 · 10 · 70/45 · 12 / 0
+    server      30 · 10 · 300 · 75/55 · 2.5 / 0.3
+    gym          5 · 10 · 10 · 210/315 · 10 / 0.3
+    general     10 · 10 · 10 · 75/55 · 2.5 / 0.3
+
+### Project object — the design basis (send `project` to override any of it)
+
+    {"name":"HVAC Load Calculation","country":"India","city":"Kochi",
+     "outDb":35,"outWb":28,          // outdoor design dry bulb / coincident wet bulb, °C
+     "inDb":24,"inRh":50,            // indoor setpoint, °C and %
+     "uWall":2.0,                    // W/m²K  230 mm brick, plastered
+     "uGlass":5.8,                   // single clear glass
+     "sc":0.6,                       // shading coefficient (clear + internal blinds)
+     "uRoof":2.0,                    // RCC slab with waterproofing
+     "roofEtd":22,                   // roof equivalent temperature difference, K
+     "uPart":2.2,                    // partition to non-AC space
+     "infilAch":0.5,                 // air changes per hour
+     "safety":10,                    // % safety factor
+     "supplyDt":11,                  // K, room minus supply air
+     "wwr":30,                       // % glazing of exposed wall when glass area is absent
+     "units":"si"}                   // display only; the maths is always SI
+
+**These defaults are general Indian practice, not a statement about any particular building.** The
+wall U of 2.0 W/m²K and roof U of 2.0 are the tool's starting values; ECBC 2017 (warm-humid) asks for
+0.40 and 0.33. If you are doing anything that will be built on, override them and say which values you
+used — do not let the default stand silently.
+
+## The other endpoints
+
+- `GET /api/health` — liveness, cheap.
+- `GET /api/climates` — `{countries, cities}`: the design conditions the tool ships, by country and
+  city. Use it to pick honest `outDb`/`outWb` rather than assuming.
+- `POST /api/parse` — multipart upload of a floor-plan PDF; returns the rooms it can read. Built for a
+  human in a browser. If you already have room areas, use `/api/calc` instead: it is faster, it is
+  deterministic, and it does not depend on reading linework.
+
+## If you quote this
+
+The method is a standard psychrometric block load: sol-air style conduction, solar gain through glass
+at the design hour, people/lighting/equipment, infiltration and outdoor-air load, a safety factor, then
+TR. The design basis above is the whole of the assumption set — nothing else is hidden. When a figure
+cannot be supported (a room with no area, a drawing with no readable outline), the tool says so rather
+than filling the gap.
+
+Machine-readable spec: https://loadlens.net/openapi.json
+Human page with the same method in long form: https://loadlens.net/method.html
+Source and tests: https://github.com/ratul-sraj/hvac
+Contact: ratul.sraj@gmail.com

@@ -74,6 +74,7 @@ const PAGE_PATHS = new Set([
 // Keep in step with what infra/50-deploy-site.sh uploads. If it drifts, the cost is only that a path
 // shows up in the probe block (visible, and reported) rather than in the traffic table.
 const SITE_FILE_LIST = [
+    "/llms.txt", "/openapi.json",
   "/a538267c22d3d06f0d9dda2d2e87746e.txt", "/about.html", "/app.html",
   "/case-study.html", "/css/landing.css", "/css/style.css",
   "/design-conditions.html", "/favicon.ico", "/favicon.svg",
@@ -946,6 +947,7 @@ async function main() {
 }
 
 export {
+  isSitePath, SITE_FILES, API_PATHS, PROBE_BURST,   // used by tools/visitor-people.mjs so it reuses THIS classifier, not a copy
   PAGE_PATHS, UA_DENY, VISITOR_SALT, DEFAULT_OWN_IPS,
   parseArgs, parseLog, makeVisitorId, isBot, loadOwnIps, ipMatchesAny, ipInCidr,
   analyze, printReport, printCampaigns, listLogObjects, hourStartFromKey, decodeLog,

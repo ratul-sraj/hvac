@@ -3,5 +3,9 @@
 User-agent: *
 Allow: /
 
+# Agent-readable: what this tool does, and the API to call
+#   https://loadlens.net/llms.txt        (plain text, the whole contract)
+#   https://loadlens.net/openapi.json    (machine-readable spec)
+
 # Sitemap
 Sitemap: https://loadlens.net/sitemap.xml
