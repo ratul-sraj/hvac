@@ -444,6 +444,13 @@ function analyze(parsed, opts = {}) {
   // the only parse figure was post-exclusion: it read 0 while CloudWatch showed 4 parse calls from the
   // owner's own testing, so the one number that decides whether the product works looked wrong.
   const apiAll = { count: 0, own: 0, byStatus: new Map() };
+  // Per-day and per-endpoint API usage, counted BEFORE any exclusion and split own-vs-visitor. This is
+  // what answers "did anyone actually upload a drawing and calculate", and it keeps the owner's own
+  // runs visible beside it instead of silently subtracting them (an all-zero line cannot tell
+  // "nobody used it" apart from "your own tests were removed").
+  const apiDay = new Map();            // day -> stem -> { all, own, byStatus }
+  const apiTotals = new Map();         // stem -> { all, own }
+
   // Per-campaign attribution. Visitors are tracked as the SAME (day|id) keys as elsewhere, so a
   // campaign count is unique PEOPLE, not requests — the hourly batching (one file per UTC hour)
   // changes nothing about who is unique; a person is one id per UTC day.
@@ -473,6 +480,21 @@ function analyze(parsed, opts = {}) {
       apiAll.count += 1;
       if (ipMatchesAny(ip, ownIps)) apiAll.own += 1;
       apiAll.byStatus.set(status || "(none)", (apiAll.byStatus.get(status || "(none)") || 0) + 1);
+    }
+
+    if (API_PATHS.includes(stem)) {
+      const isOwn = ipMatchesAny(ip, ownIps);
+      if (!apiDay.has(day)) apiDay.set(day, new Map());
+      const dayMap = apiDay.get(day);
+      if (!dayMap.has(stem)) dayMap.set(stem, { all: 0, own: 0, byStatus: new Map() });
+      const e = dayMap.get(stem);
+      e.all += 1;
+      if (isOwn) e.own += 1;
+      e.byStatus.set(status || "(none)", (e.byStatus.get(status || "(none)") || 0) + 1);
+      const t = apiTotals.get(stem) || { all: 0, own: 0 };
+      t.all += 1;
+      if (isOwn) t.own += 1;
+      apiTotals.set(stem, t);
     }
 
     let reason = null;
@@ -582,6 +604,11 @@ function analyze(parsed, opts = {}) {
       all: apiAll.count,                                       // every /api/parse request in the window
       own: apiAll.own,                                         // ...of which the owner's own addresses
       allByStatus: Object.fromEntries([...apiAll.byStatus.entries()].sort()),
+      // Every API path, per UTC day, before exclusions: uploads parsed, loads calculated, and the
+      // beacons in between. `own` is the owner's own addresses, so "visitors" is all - own and a
+      // reader sees both instead of only the post-exclusion zero.
+      byPath: Object.fromEntries([...apiTotals.entries()].sort((a, b) => b[1].all - a[1].all).map(([s, t]) => [s, { all: t.all, own: t.own, visitors: t.all - t.own }])),
+      byDay: Object.fromEntries([...apiDay.entries()].sort().map(([d, m]) => [d, Object.fromEntries([...m.entries()].sort().map(([s, e]) => [s, { all: e.all, own: e.own, visitors: e.all - e.own, status: Object.fromEntries([...e.byStatus.entries()].sort()) }]))])),
     },
     campaigns: {
       rows: campaignRows,

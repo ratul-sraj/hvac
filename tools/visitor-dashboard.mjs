@@ -99,8 +99,33 @@ const css = ':root{color-scheme:dark}body{margin:0;padding:28px;font:15px/1.5 ui
  + 'table{border-collapse:collapse;width:100%;max-width:780px}td{padding:4px 10px 4px 0;border-bottom:1px solid #1b212b;font-variant-numeric:tabular-nums}'
  + 'td.d{color:#aab3c5;white-space:nowrap;width:150px;overflow:hidden;text-overflow:ellipsis}td.b{position:relative;height:22px}'
  + 'td.b i{position:absolute;left:0;top:3px;bottom:3px;background:linear-gradient(90deg,#2f6df6,#4d8dff);border-radius:3px}'
- + 'td.b b{position:relative;padding-left:6px;font-weight:600}.note{color:#79839a;font-size:12.5px;max-width:840px;margin-top:26px;border-top:1px solid #1b212b;padding-top:12px}.zero{color:#ffb4b4}';
+ + 'td.b b{position:relative;padding-left:6px;font-weight:600}.note{color:#79839a;font-size:12.5px;max-width:840px;margin-top:26px;border-top:1px solid #1b212b;padding-top:12px}.zero{color:#ffb4b4}'
+ + 'table.grid th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:#8b93a7;padding:0 14px 6px 0;font-weight:600;border-bottom:1px solid #232a36}'
+ + 'table.grid td.n{font-size:16px;font-weight:600;padding-right:22px;white-space:nowrap}'
+ + '.dim{color:#5d6678;font-weight:400}small{font-weight:400;color:#8b93a7}';
 const parseVal = (parseAll == null || parseAll === parseHit.n) ? String(parseHit.n) : (parseHit.n + " <small>by visitors</small> / " + parseAll + " <small>yours</small>");
+// API usage, per endpoint and per day. Read from apiParse.byPath / .byDay, which are counted BEFORE
+// any exclusion: the split is explicit (visitors = all - own) so the owner's own uploads never
+// masquerade as a visitor's, and an empty day can be read as "nobody" rather than "subtracted".
+const apiObj = (data.apiParse && typeof data.apiParse === "object") ? data.apiParse : {};
+const apiByPath = (apiObj.byPath && typeof apiObj.byPath === "object") ? apiObj.byPath : {};
+const apiByDay = (apiObj.byDay && typeof apiObj.byDay === "object") ? apiObj.byDay : {};
+const pathOf = (p) => { const v = apiByPath[p]; return { all: n0(v && v.all), own: n0(v && v.own), visitors: n0(v && (v.visitors != null ? v.visitors : n0(v && v.all) - n0(v && v.own))) }; };
+const splitTile = (o) => o.all === 0 ? "0" : (o.visitors + " <small>visitors</small>" + (o.own ? " / " + o.own + " <small>yours</small>" : ""));
+const parseT = pathOf("/api/parse");
+const calcT = pathOf("/api/calc");
+const beaconsT = pathOf("/api/event");
+const statusBrief = (p) => { const s = apiByPath[p] && apiByPath[p].status; const v = apiByPath[p] || {}; const st = v.byStatus || v.status; return st && typeof st === "object" ? Object.entries(st).map(([k, n]) => k + "×" + n).join(", ") : ""; };
+const parseStatus = statusBrief("/api/parse") || (apiObj.allByStatus ? Object.entries(apiObj.allByStatus).map(([k, n]) => k + "×" + n).join(", ") : "");
+const dayCell = (s) => { if (!s) return '<span class="dim">·</span>'; const all = n0(s.all), own = n0(s.own), vis = all - own;
+  if (!all) return '<span class="dim">·</span>';
+  return String(vis) + (own ? ' <small class="dim">+' + own + " yours</small>" : ""); };
+const apiDayList = Object.entries(apiByDay).sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+const apiDayRows = apiDayList.map(([d, m]) => '<tr><td class="d">' + esc(d) + '</td><td class="n">' + dayCell(m["/api/parse"]) + '</td><td class="n">' + dayCell(m["/api/calc"]) + '</td><td class="n">' + dayCell(m["/api/event"]) + '</td></tr>').join("");
+const apiSummary = apiDayList.length
+  ? ("over the window: <b>" + parseT.all + "</b> upload(s) parsed (" + parseT.visitors + " by visitors, " + parseT.own + " yours), <b>" + calcT.all + "</b> load(s) calculated (" + calcT.visitors + " / " + calcT.own + "), <b>" + beaconsT.all + "</b> app beacon(s)" + (parseStatus ? " &middot; parse responses: " + esc(parseStatus) : ""))
+  : "";
+
 const tile = (label, val, cls) => '<div class="t"><span>' + label + '</span><b class="' + (cls || "") + '">' + val + '</b></div>';
 const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>LoadLens - visitors (private)</title><style>' + css + '</style></head><body>'
  + '<h1>LoadLens - visitors</h1><p class="sub">Last ' + hours + ' hours - generated ' + stamp + ' - a local file, never deployed</p><div class="tiles">'
@@ -108,7 +133,14 @@ const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>
  + tile("unique visitors (bots out)", uni ? uni.n : "-")
  + tile("fetched one page, nothing else", bd && typeof bd.pageOnly === "number" ? bd.pageOnly : "-")
  + tile("reached the calculator", bd && typeof bd.reachedApp === "number" ? bd.reachedApp : "-")
- + tile("POST /api/parse", parseVal, parseHit && parseHit.n > 0 ? "" : "zero") + '</div>'
+ + tile("POST /api/parse", parseVal, parseHit && parseHit.n > 0 ? "" : "zero")
+ + tile("uploads parsed", splitTile(parseT), parseT.all > 0 ? "" : "zero")
+ + tile("loads calculated", splitTile(calcT), calcT.all > 0 ? "" : "zero") + '</div>'
+ + '<h2>API usage - uploads and calculations (per UTC day)</h2>'
+ + (apiDayRows
+     ? '<table class="grid"><tr><th>day</th><th>/api/parse - drawings uploaded</th><th>/api/calc - loads calculated</th><th>/api/event - beacons</th></tr>' + apiDayRows + '</table>'
+     + (apiSummary ? '<p class="note" style="border:0;margin-top:10px">' + apiSummary + '</p>' : '')
+     : '<p class="note" style="border:0">No /api/ call of any kind in this window - nobody uploaded or calculated, including you.</p>')
  + '<h2>Unique visitors per day (UTC)</h2><table>' + (dayRows || '<tr><td class="d">no data</td><td></td></tr>') + '</table>'
  + '<h2>Pages (unique visitors)</h2><table>' + (pageRows || '<tr><td class="d">no data</td><td></td></tr>') + '</table>'
  + '<p class="note">A visitor is a 12-character salted hash, one per UTC day, computed by tools/visitors.mjs - the same code the terminal report uses. Raw addresses are never printed, never stored and never reach this file.</p></body></html>';
