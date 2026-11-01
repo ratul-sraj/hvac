@@ -1,7 +1,10 @@
 // js/pdfparse.js — extract rooms from architectural / MEP PDF drawings.
 //
-//   export async function parsePdf(arrayBuffer, { pdfjs, onProgress }) -> { rooms, pages, text, warnings }
-//   export function parseText(items) -> { rooms, warnings }   // pure + testable
+//   export async function parsePdf(arrayBuffer, { pdfjs, onProgress }) -> { rooms, pages, text, warnings, skipped }
+//   export function parseText(items) -> { rooms, warnings, skipped }   // pure + testable
+//
+// `skipped` lists NAME-ONLY lines refused as obvious non-room notes ({page, name, reason}) — a
+// drawing note, license/title-page prose or a sentence fragment; printed-area labels are untouched.
 //
 // `items` are in DISPLAY coordinates: x to the right, y DOWN, page coordinates at scale 1
 // (exactly what pdfjs.Util.transform(viewport.transform, item.transform) gives us). Each item also
@@ -443,6 +446,87 @@ function clusterNameTags(candidates) {
   return tags;
 }
 
+// ---------------------------------------------------------------- non-room notes
+// A sheet that prints no area figures gives a label nothing to be checked against, so the name-only
+// fallback must judge a leftover line by WHAT IT SAYS. Only a line with EXPLICIT note evidence is
+// refused: license / title-page furniture, an instruction aimed at the reader ("needs to be
+// reserved", "cannot", "must not"), a specific note heading ("Keys:", "Points to note:",
+// "Buildings:"), a date stamp, or a line that OPENS with a bare copula ("be blocked" - a sentence
+// continuation, not a name). Everything else is only SUSPECT: a single colon, one leading dash,
+// six words, an article or a generic verb proves nothing by itself (MEETING ROOM: EAST, - STORE,
+// THE LOUNGE, NO BREAK UPS ROOM, HOT AND COLD WATER PUMP ROOM, SPECIAL NEEDS CLASSROOM,
+// SALA DO PROFESSOR all stay), and two INDEPENDENT weak clues are required before a line may be
+// dropped. There is still no English room-word list (see the controls in
+// tests/test-label-hygiene.mjs): an unusual, foreign or short genuine name is never touched, and a
+// line with no obvious note evidence is KEPT, because hiding an uncertain label is worse than
+// showing it.
+const NOTE_META_RE =
+  /[\u00a9\u00ae\u2122]|\bhttps?:\/\/|\b(attribution|share[-\s]?alike|creative\s+commons|copyright|all\s+rights\s+reserved|public\s+domain|cover\s+page|title\s+page|disclaimer)\b/i;
+// An explicit instruction aimed at whoever reads the sheet. A lone generic verb (do / needs /
+// should) is deliberately NOT enough - a real name may contain one (SALA DO PROFESSOR,
+// SPECIAL NEEDS CLASSROOM).
+const NOTE_INSTRUCTION_RE =
+  /\b(?:cannot|can\u2019?t|must\s+(?:not|be|have)|shall\s+(?:not|be|have)|should\s+(?:not|be)|would\s+be|needs?\s+to|do(?:es)?\s+not|are\s+to\s+be)\b/i;
+// A line that OPENS with a bare copula continues a sentence ("be blocked"); a one-word line is
+// left alone.
+const NOTE_COPULA_RE = /^(?:be|been|being|is|are|was|were)\b/i;
+// Heading evidence is SPECIFIC: the colon is trailing and the stem before it is one of the sheet's
+// field / note words. A colon anywhere else proves nothing ("MEETING ROOM: EAST").
+const NOTE_HEADING_RE =
+  /^(?:keys?|notes?|legend|index|abbreviations|revisions?|buildings?|contents|references?|disclaimer|general\s+notes?|points?\s+(?:to|of)\s+note)$/i;
+// A wrapped note or sentence piece often OPENS with a function word ("be blocked", "FOR ALL
+// DIMENSIONS ..."). Weak on its own. Deliberately excludes prepositions that can start a real
+// space name (IN / OUT / ON / AT / BY), so "IN PATIENT WARD" is not caught.
+const NOTE_LEAD_WORDS = new Set([
+  "be", "been", "being", "is", "are", "was", "were", "and", "or", "but", "the", "a", "an", "of",
+  "to", "for", "from", "with", "not", "no", "if", "as", "than", "which", "when", "where",
+]);
+const NOTE_MARK_RE = /^[-\u2013\u2014\u2022\u00b7*]/;           // leading list dash / bullet (weak)
+const NOTE_DATE_RE =
+  /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/i;
+const NOTE_WEAK_VERB_RE = /\b(?:do|does|did|needs?|should|would|could|might|shall|must)\b/i;
+const NOTE_PUNCT_RE = /[.;,()]/;                                 // sentence punctuation (weak)
+const NOTE_UNIT_RE =
+  /\b\d+(?:[.,]\d+)?\s*[-\u2013]?\s*(?:mm|cm|km|ft|feet|foot|inch(?:es)?|in|metre(?:s)?|meter(?:s)?|m\u00b2|m2|sqm|m)\b/i;
+const NOTE_WORD_RE = /[A-Za-z\u2019']+/g;
+
+/**
+ * Why a leftover NAME-ONLY line is not a room name, as a stable code - or null when it might be one.
+ * Codes: 'metadata' (license / title-page furniture, \u00a9 or a URL), 'instruction' (an explicit
+ * "needs to" / "cannot" / "must not" phrasing), 'heading' (a specific trailing-colon note heading
+ * such as "Keys:" or "Points to note:"), 'sentence' (six or more words, sentence punctuation or a
+ * printed dimension - only together with a second weak clue), 'date' (a date stamp), 'fragment'
+ * (a line opening with a bare copula, or two independent weak clues such as a leading bullet plus a
+ * generic verb). One weak clue alone - a single colon, a dash, an article, six words, "do"/"needs" -
+ * never refuses a line.
+ * @returns {'metadata'|'instruction'|'heading'|'sentence'|'date'|'fragment'|null}
+ */
+function nonRoomNoteReason(str) {
+  const s = clampStr(str);
+  if (!s) return null;
+  if (NOTE_META_RE.test(s)) return "metadata";
+  if (NOTE_INSTRUCTION_RE.test(s)) return "instruction";
+  const words = s.match(NOTE_WORD_RE) || [];
+  if (words.length >= 2 && NOTE_COPULA_RE.test(s)) return "fragment";
+  const colon = s.indexOf(":");
+  if (colon > 0 && NOTE_HEADING_RE.test(clampStr(s.slice(0, colon)).replace(/[.\s]+$/, "")))
+    return "heading";
+  if (NOTE_DATE_RE.test(s)) return "date";
+  // Weak, non-proving clues. A line is refused only when TWO INDEPENDENT ones agree, and the
+  // winning code keeps the refusal auditable (word count, sentence punctuation and a printed
+  // dimension are separate clues - any two of them refuse a line).
+  const weak = [];
+  if (colon >= 0) weak.push("heading");
+  if (words.length >= 6) weak.push("sentence");
+  if (NOTE_PUNCT_RE.test(s)) weak.push("sentence");
+  if (NOTE_UNIT_RE.test(s)) weak.push("sentence");
+  if (NOTE_WEAK_VERB_RE.test(s)) weak.push("fragment");
+  if (NOTE_MARK_RE.test(s)) weak.push("fragment");
+  if (words.length > 0 && NOTE_LEAD_WORDS.has(words[0].toLowerCase())) weak.push("fragment");
+  if (weak.length < 2) return null;
+  return weak.includes("heading") ? "heading" : weak.includes("sentence") ? "sentence" : "fragment";
+}
+
 /** Rooms from drawing room tags: NAME line(s), NUMBER, AREA stacked top-to-bottom. */
 function parseLabels(items, levelByPage, warnings, usedSet) {
   const areas = [];
@@ -558,7 +642,17 @@ function parseLabels(items, levelByPage, warnings, usedSet) {
     const na = areasOnPage.get(page) || 0, nc = candsOnPage.get(page) || 0;
     return nc > 0 && na < Math.max(1, Math.floor(nc * 0.2));
   };
-  const leftovers = candidates.filter((c) => !usedSet.has(c) && fewAreas(c.page));
+  // Judge each leftover line by what it says (nonRoomNoteReason) before it can become a room, and
+  // keep every skip with a reason so an exclusion is auditable (a plain per-page warning follows).
+  // A line with no obvious note evidence stays a candidate, however unusual its wording.
+  const leftovers = [];
+  const skipped = [];
+  for (const c of candidates) {
+    if (usedSet.has(c) || !fewAreas(c.page)) continue;
+    const reason = nonRoomNoteReason(c.str);
+    if (reason) { skipped.push({ page: c.page, name: clampStr(c.str), reason }); continue; }
+    leftovers.push(c);
+  }
   for (const lines of clusterNameTags(leftovers)) {
     let number = "";
     const parts = [];
@@ -585,12 +679,27 @@ function parseLabels(items, levelByPage, warnings, usedSet) {
     }));
   }
 
+  // Exclusions are auditable: one plain warning per page saying how many note lines were skipped
+  // and why (the same counts are returned structurally as `skipped`).
+  const skippedByPage = new Map();
+  for (const s of skipped) {
+    const m = skippedByPage.get(s.page) || { n: 0, by: new Map() };
+    m.n += 1;
+    m.by.set(s.reason, (m.by.get(s.reason) || 0) + 1);
+    skippedByPage.set(s.page, m);
+  }
+  for (const [page, m] of [...skippedByPage].sort((a, b) => a[0] - b[0])) {
+    const by = [...m.by].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+      .map(([r, n]) => `${r} ${n}`).join(", ");
+    warnings.push(`Page ${page}: ${m.n} note line${m.n > 1 ? "s" : ""} skipped as non-room text (${by})`);
+  }
+
   for (const [page, n] of [...orphan].sort((x, y) => x[0] - y[0]))
     warnings.push(`Page ${page}: ${n} area label${n > 1 ? "s" : ""} without a room name`);
   const nePages = [...new Set(notEnclosedItems.map((it) => it.page))].sort();
   for (const p of nePages)
     warnings.push(`Page ${p}: ${notEnclosedItems.filter((it) => it.page === p).length} "Not Enclosed" label(s) skipped (no area)`);
-  return rooms;
+  return { rooms, skipped };
 }
 
 // ---------------------------------------------------------------- assembly
@@ -676,7 +785,8 @@ export function parseText(items) {
   }
 
   const usedSet = new Set();
-  rooms.push(...parseLabels(labelItems, levelByPage, warnings, usedSet));
+  const labels = parseLabels(labelItems, levelByPage, warnings, usedSet);
+  rooms.push(...labels.rooms);
 
   const finalized = finalize(rooms, warnings);
   // Say plainly how many rooms came from names alone with no printed area, and what to do about it.
@@ -692,7 +802,9 @@ export function parseText(items) {
   if (!finalized.length) warnings.push("no rooms found in this PDF");
   // The raw unit evidence travels with the rooms so js/unitdetect.js can say what system the sheet
   // speaks without re-reading the PDF. Additive: every existing field keeps its name and meaning.
-  return { rooms: finalized, warnings, evidence: unitEvidence(list) };
+  // `skipped` lists the name-only lines refused as non-room notes ({page, name, reason}), so an
+  // exclusion can be audited without re-running the parser.
+  return { rooms: finalized, warnings, evidence: unitEvidence(list), skipped: labels.skipped };
 }
 
 /**
@@ -740,6 +852,6 @@ export async function parsePdf(arrayBuffer, { pdfjs, onProgress } = {}) {
     if (typeof onProgress === "function") onProgress(p, total);
   }
 
-  const { rooms, warnings, evidence } = parseText(items);
-  return { rooms, pages: total, text: textParts.join("\n"), warnings, evidence };
+  const { rooms, warnings, evidence, skipped } = parseText(items);
+  return { rooms, pages: total, text: textParts.join("\n"), warnings, evidence, skipped };
 }

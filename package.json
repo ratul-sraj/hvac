@@ -20,6 +20,7 @@
     "serverless-http": "^4.0.0"
   },
   "devDependencies": {
+    "@turf/polygonize": "^7.4.0",
     "puppeteer-core": "^25.12.0",
     "tesseract.js": "^7.0.0"
   }

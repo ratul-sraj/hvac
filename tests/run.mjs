@@ -19,12 +19,14 @@ import * as calc from "./test-calc.mjs";
 import * as samplePlan from "./test-sample-plan.mjs";
 import * as parseText from "./test-parseText.mjs";
 import * as samplePdf from "./test-sample-pdf.mjs";
+import * as labelHygiene from "./test-label-hygiene.mjs";
 
 const suites = [
   ["engine/calc", calc],
   ["text/parseText", parseText],
   ["pdf/sample", samplePdf],
   ["pdf/sample-plan", samplePlan],
+  ["pdf/label-hygiene", labelHygiene],
 ];
 
 const only = process.argv[2];
