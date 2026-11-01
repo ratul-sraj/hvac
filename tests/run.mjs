@@ -93,6 +93,7 @@ const STANDALONE_NODE = [
   ["printable report", "tests/test-report.mjs"],
   ["scale calibration", "tests/test-scalecal.mjs"],
   ["area provenance", "tests/test-area-source.mjs"],
+  ["rate limit", "tests/test-ratelimit.mjs"],
   // LoadLens as a remote MCP server (POST /mcp): mounts the real app and drives
   // the JSON-RPC handshake, tools/list and tools/call over HTTP.
   ["remote MCP", "tests/test-mcp.mjs"],
