@@ -58,6 +58,23 @@ export const STAIR_RE = /\bstair(?:s|well|case|way)?\b/i;
 /** How close to an outline a name counts as sitting ON it (PDF points). */
 export const ON_EDGE_EPS = 1e-6;
 
+/**
+ * Samples along the LONGER side of the overlap box when measuring how much floor two candidate
+ * regions actually share (see `ringsIntersectionArea`). The measured shared slivers are 0.00-0.01% of
+ * the smaller region against a 10% threshold, so 100 samples resolve the decision with two orders of
+ * magnitude to spare while keeping the extra match cost near 0.5 s on a real A1 sheet.
+ */
+export const OVERLAP_GRID = 100;
+
+/**
+ * A shared area below this fraction of the SMALLER region is a SLIVER: the two outlines cross because
+ * they meet along a shared wall (a traced ring runs along the wall centreline and the neighbour's
+ * along its own face, so they cross by a hair without either room being traced twice). A shared area
+ * at or above this fraction is the region itself appearing twice — a duplicate trace, or one region
+ * wholly containing another — and BOTH are refused as before.
+ */
+export const OVERLAP_SLIVER_FRAC = 0.10;
+
 // ---------------------------------------------------------------------------------------------
 // Fixed, documented reason set
 // ---------------------------------------------------------------------------------------------
@@ -256,6 +273,40 @@ export function ringsOverlap(aRings, bRings) {
   return false;
 }
 
+/** Total area of a ring set (outer rings minus nothing — the even-odd rule is honoured by the
+ *  point test, so this is the same figure the region's own area is measured from). */
+export function ringSetArea(rings) {
+  return (rings || []).reduce((s, r) => s + (r && r.length >= 3 ? ringArea(r) : 0), 0);
+}
+
+/**
+ * Area the two ring sets really share, in the rings' own units (PDF pt²). Deterministic: a fixed
+ * sample grid over the overlap box, each sample judged with the SAME even-odd rule the rest of this
+ * module uses — so the same input always yields the same figure, with no randomness and no
+ * tolerance drift. Used only to tell a shared-wall sliver from a genuine duplicate (see
+ * `OVERLAP_SLIVER_FRAC`); it never decides an area.
+ */
+export function ringsIntersectionArea(aRings, bRings, samples = OVERLAP_GRID) {
+  const a = ringsBBox(aRings), b = ringsBBox(bRings);
+  if (!a || !b) return 0;
+  const x0 = Math.max(a.x0, b.x0), y0 = Math.max(a.y0, b.y0);
+  const x1 = Math.min(a.x1, b.x1), y1 = Math.min(a.y1, b.y1);
+  if (x1 <= x0 || y1 <= y0) return 0;
+  const w = x1 - x0, h = y1 - y0;
+  const step = Math.max(w, h) / (Number.isFinite(samples) && samples > 0 ? samples : OVERLAP_GRID);
+  const nx = Math.max(1, Math.ceil(w / step)), ny = Math.max(1, Math.ceil(h / step));
+  const cw = w / nx, ch = h / ny;
+  let hit = 0;
+  for (let iy = 0; iy < ny; iy += 1) {
+    const y = y0 + (iy + 0.5) * ch;
+    for (let ix = 0; ix < nx; ix += 1) {
+      const x = x0 + (ix + 0.5) * cw;
+      if (pointInRegion(x, y, aRings) === 'in' && pointInRegion(x, y, bRings) === 'in') hit += 1;
+    }
+  }
+  return hit * cw * ch;
+}
+
 // ---------------------------------------------------------------------------------------------
 // The engine
 // ---------------------------------------------------------------------------------------------
@@ -300,6 +351,8 @@ export function matchRoomsToRegions(p = {}) {
   });
 
   // ---- per-region geometry --------------------------------------------------------------
+  const roomById = new Map();
+  for (const info of roomInfo) if (info.id != null) roomById.set(info.id, info);
   const regionInfo = regions.map((r, i) => {
     const rings = regionRings(r);
     const closed = !(r && r.closed === false);
@@ -332,6 +385,9 @@ export function matchRoomsToRegions(p = {}) {
 
   // ---- first pass: is a region a candidate at all? --------------------------------------
   const status = new Array(regionInfo.length).fill(null);
+  // Rooms that share ONE open region with a room that was given its area: the drawing leaves them
+  // open to it, so they are open shared space, not a reason to refuse the whole floor (see below).
+  const openSharedRooms = new Set();
   for (let gi = 0; gi < regionInfo.length; gi += 1) {
     const g = regionInfo[gi];
     const detailArea = g.areaM2 == null ? '?' : round2(g.areaM2);
@@ -341,6 +397,21 @@ export function matchRoomsToRegions(p = {}) {
     if (!g.closed) { status[gi] = { code: CODES.open }; continue; }
     if (g.areaM2 == null || g.areaM2 < minArea || g.areaM2 > maxArea) {
       status[gi] = { code: CODES.badArea, detail: detailArea };
+      continue;
+    }
+    // ---- an OPEN AREA: a measured floor the drawing does not enclose -------------------------
+    // js/trace.js emits a region it could not split into separate rooms with `source:'open-area'` and
+    // `roomId` set to the region's PRIMARY name. The product rule for such a space is: count the
+    // measured floor ONCE and give it to that name (the user can move it), never invent a boundary for
+    // the others. So the region is assigned to its own head name, and the OTHER real names sharing it
+    // are recorded as open shared space (reported `open-plan` below) instead of refusing the region as
+    // `shared` and throwing away a correctly measured area. A fitting is never a head.
+    const isOpenArea = !!(g.region && (g.region.source === 'open-area' || g.region.openArea));
+    const headInfo = isOpenArea && g.region.roomId != null ? roomById.get(g.region.roomId) : null;
+    if (headInfo && !headInfo.sub && !headInfo.stair) {
+      if (headInfo.hasArea) { status[gi] = { code: CODES.already }; continue; }
+      status[gi] = { code: null, candidate: true, room: headInfo };
+      for (const m of g.members) if (m.info.i !== headInfo.i && !m.info.sub) openSharedRooms.add(m.info.i);
       continue;
     }
     if (g.members.length === 0) { status[gi] = { code: CODES.unused }; continue; }
@@ -355,10 +426,31 @@ export function matchRoomsToRegions(p = {}) {
   // ---- overlap: two otherwise-valid regions that overlap are both refused -----------------
   const candidates = regionInfo.map((g, i) => (status[i].candidate ? i : -1)).filter((i) => i >= 0);
   const overlapFlag = new Set();
+  const onOverlap = typeof o.onOverlap === "function" ? o.onOverlap : null;
+  const sliverFrac = Number.isFinite(o.overlapSliverFrac) ? o.overlapSliverFrac : OVERLAP_SLIVER_FRAC;
   for (let a = 0; a < candidates.length; a += 1) {
     for (let b = a + 1; b < candidates.length; b += 1) {
       const ga = regionInfo[candidates[a]], gb = regionInfo[candidates[b]];
-      if (ringsOverlap(ga.rings, gb.rings)) { overlapFlag.add(candidates[a]); overlapFlag.add(candidates[b]); }
+      if (ringsOverlap(ga.rings, gb.rings)) {
+        // DIRECTIONAL, not symmetric. Two ADJACENT rooms barely cross: the traced ring of one runs
+        // along the wall centreline and the neighbour's along its own face, so they overlap by a
+        // SLIVER of the smaller room, not by a duplicate. A genuine duplicate (the same floor traced
+        // twice, or one region contained in another) shares a large fraction of the SMALLER region.
+        // So measure the shared area and refuse only the duplicated pair - otherwise three correctly
+        // measured rooms were thrown away because a big neighbour's outline crossed them by a sliver.
+        const sharedPt2 = ringsIntersectionArea(ga.rings, gb.rings, o.overlapGrid);
+        const smallerPt2 = Math.min(ringSetArea(ga.rings), ringSetArea(gb.rings));
+        const sharedFrac = smallerPt2 > 0 ? sharedPt2 / smallerPt2 : 1;
+        const duplicate = sharedFrac >= sliverFrac;
+        if (duplicate) { overlapFlag.add(candidates[a]); overlapFlag.add(candidates[b]); }
+        // Diagnostic hook (no behaviour change): a harness can see WHICH two regions met, how big
+        // each is, HOW MUCH floor they really shared, and whether that was judged a duplicate.
+        if (onOverlap) onOverlap({
+          a: { index: candidates[a], id: ga.id, name: ga.members[0] && ga.members[0].info.name, areaM2: ga.areaM2, rings: ga.rings, memberIds: ga.members.map((m) => m.info.id) },
+          b: { index: candidates[b], id: gb.id, name: gb.members[0] && gb.members[0].info.name, areaM2: gb.areaM2, rings: gb.rings, memberIds: gb.members.map((m) => m.info.id) },
+          sharedPt2, sharedFrac, smallerPt2, duplicate,
+        });
+      }
     }
   }
   for (const gi of overlapFlag) status[gi] = { code: CODES.overlap };
@@ -394,6 +486,9 @@ export function matchRoomsToRegions(p = {}) {
     if (info.stair) { roomReason.set(info.i, { code: CODES.stairwell }); continue; }
     if (info.hasArea) { roomReason.set(info.i, { code: CODES.already }); continue; }
     if (!info.hasPos) { roomReason.set(info.i, { code: CODES.noPosition }); continue; }
+    // This name shares ONE open region whose area was given to another name in it (the product rule
+    // for a space the drawing does not enclose): it is open to that space, not unaccounted for.
+    if (openSharedRooms.has(info.i)) { roomReason.set(info.i, { code: CODES.openPlan }); continue; }
     let chosen = null;
     for (let gi = 0; gi < regionInfo.length; gi += 1) {
       const g = regionInfo[gi];

@@ -352,3 +352,84 @@ TWO THINGS WORTH KEEPING FROM THIS:
 A room the drawing leaves genuinely open cannot be given a "true" boundary by any of this: the honest
 route there is the user's own outline (draw the shape; the area follows it) or the open-area piece as
 shipped (counted once, reassignable).
+
+
+## §6.4 Coverage 60% -> 83.3% — and the 70% figure was a measurement bug, not a plateau (1 Nov 2026)
+
+Owner's goal for this session: **>80% of a plan's real rooms get a CORRECT area**, checked on more than
+one drawing. Measured on L11 (the only drawing in this tree with independent ground truth):
+
+| | filled | correct | WRONG | coverage | medianErr |
+|---|---|---|---|---|---|
+| baseline this session | 19 | 18 | 1 | 60.0% | 0.4% |
+| after §6.4.1 (overlap) | 22 | 22 | 1 | 73.3% | 0.4% |
+| after §6.4.2 (open area) | **25** | **25** | **0** | **83.3%** | 0.4% |
+
+`node tests/run.mjs` → 42/42. Synthetic fixture unchanged: 105/159 filled, 0 WRONG. Match cost rose
+from 15 ms to 637 ms (a 100×100 sample grid on the overlap box), total probe 11.0 s.
+
+### §6.4.0 First: why this tree measured 60% when the ledger said 70%
+
+Three of the 30 "real rooms" have a **ground-truth defect**: `tests/truth/level11.json` gives
+PUBLIC FOYER and BLACK SATURDAY GALLERY the same 305.1 m², LOBBY / SECURITY / PUBLIC LIFT LOBBY the same
+86.4 m², and COURT OPERATOR / HEARING ROOM the same 178.0 m². The truth flood-fill leaked through the
+openings and merged them, so no partition of those rooms could ever score correct — and the earlier
+"70%" ran with a different refusal pattern on the same drawing. **Do not quote a coverage figure from a
+different tree.** Check the truth ring for another room's anchor before trusting a WRONG.
+
+### §6.4.1 The overlap rule was symmetric, and that cost 4 correct rooms
+
+`js/autotrace.js` refused BOTH sides of any overlapping pair. Measured with a diagnostic hook
+(`DUMP_OVERLAP=1`), ANNEXE's outline (134.30 m², truth 130.1) crossed SOUND LOBBY, SECURE STORE and
+EMERGENCY EXIT by **0.00-0.01% of the smaller room** — a shared-wall artifact, because one ring runs on
+the wall centreline and its neighbour's on the wall face. Four correct areas were being thrown away.
+
+Fix: measure the shared floor with a deterministic sample grid (`ringsIntersectionArea`, 100 samples on
+the longer side of the overlap box) and refuse only when the shared area is ≥ `OVERLAP_SLIVER_FRAC`
+(10%) of the SMALLER region — i.e. only a real duplicate or a nested region. Slivers keep both sides.
+After the fix the sheet shows 17 pairs, all ≤0.04% — so the threshold sits two orders of magnitude away
+from every real case, not on a tuning edge. Nothing was lost: 18 → 22 correct, WRONG unchanged.
+
+### §6.4.2 An open area is given to ONE real name, and its siblings are reported as open
+
+An open-plan region that the splitter cannot divide into rooms was previously refused as `shared`
+(whenever it held two or more names), which threw away a **correctly measured** floor along with the
+names. The owner's own rule for the 305 m² gallery blob was already "count it once, to one name, the
+user can reassign" — it just was not applied when the names were all real rooms.
+
+Fix (two files, one rule): `js/trace.js` now emits the whole region as an `open-area` when it holds
+several REAL names and none was accepted, with `memberIds` listing them and the head chosen as the
+largest real piece (**never a fitting** — `isFittingName` gate, so MONITOR / SEATING / ESCAPE ONLY can
+never own an area). `js/autotrace.js` accepts that region for its head name once, and reports every
+other real name in it as `open-plan` — which is the truth: they are open to that space, so the drawing
+gives them no boundary of their own.
+
+That is what turned the centre LOBBY zone from "one 48.73 m² bubble + two refusals" into the whole
+measured 86.4 m², and it is also what made the 1 WRONG disappear (the app's partial bubble, not the
+truth, had been the odd one out).
+
+### §6.4.3 What is still missing (5 of 30, all named)
+
+`PUBLIC FOYER`, `SECURITY`, `PUBLIC LIFT LOBBY`, and one `COURT OPERATOR` are `open-plan`: their area is
+counted once under the room they are open to (GALLERY / LOBBY / HEARING ROOM respectively), which is
+deliberate. The second `COURT OPERATOR` is `bad-area` against a 1.6 m² truth sliver that is almost
+certainly a truth artifact, not a room.
+
+### §6.4.4 The multi-drawing check the owner asked for: the corpus has no free truth
+
+`.cache/corpus/plans/` holds 13 CC/public-domain drawings from Wikimedia Commons. Censused with
+`node tests/qa/corpus-census.mjs` (→ `.cache/corpus/census.json`):
+
+- **Not one of the 13 prints an m² figure** anywhere in its text layer, so the `--blank-printed` route
+  to free truth gives nothing on this corpus.
+- **8 of 13 have no text layer at all** (scanned rasters) — no room names without OCR, so no labels to
+  match and nothing to score.
+- The 5 with labels are Gottlieb House L1 (12 names), Fraser residence (14), 222 Exhibition St (5),
+  Queensland Stock Institute (45, mostly title block) and Plantegning (91). Farmhouse V-001 returns
+  1,569 "rooms" — a whole drawing set, every title-block word read as a label.
+
+So a corpus coverage PERCENTAGE cannot be quoted honestly yet: it needs a hand-measured truth per
+drawing. What the corpus can support today is a **refusal-profile and runtime check** (filled /
+refused-by-code / seconds per plan), which is the next session's first job. Quoting an accuracy number
+over plans with no independent measurement would be exactly the "claim, not a check" this project's
+rules forbid.

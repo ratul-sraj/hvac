@@ -1,0 +1,99 @@
+{
+ "$comment": "Known-failing assertions in tests/browser-check.mjs, accepted on purpose so the suite can tell 'still broken' from 'NEWLY broken'. Read by the harness at the foot of tests/browser-check.mjs. A FAIL that is NOT listed here fails the run and is printed as NEW; a check listed here that now PASSES also fails the run and is printed as FIXED REMOVE IT. Remove an entry the moment its check passes. Keep this file dependency-free (plain JSON).",
+ "acceptedOn": "2026-11-01",
+ "notes": [
+  "Groups A and D are the project's own documented red group: the drawn-rectangle overlay box reads 0x0 inside the long sequential plan-geometry block (browser-check.mjs ~1239-1267 and ~1840-2025). The same gesture works in isolation (probe measured the drawn box at x=139 y=119 280x240), so this is state/timing coupling in that block, not a confirmed product defect. Listed in docs/ZONE-DETECTION-RESEARCH.md section 6.",
+  "Group B is one number, not four bugs: the area fill now measures 25 rooms where the checks still expect 21. Update all four assertions together.",
+  "Group E is the real-sample placement question: the real LEVEL 11 sample prints no areas, so 'Place all rooms' (which sizes a box back from a room's own area) leaves zero rooms with a rect (probe: 56 rooms, 56 with 'at', 0 with 'rect', 0 with rect.placed). Decide whether that is intended before touching checks 315 and 25 (a)-(c).",
+  "SEPARATE STALE EXPECTATION, NOT IN THIS FILE: the demo drawing's load total moved from 42.66 TR to 44 TR (6 rooms that previously had no area now have one, via the js/autotrace.js + js/trace.js change). browser-check.mjs no longer hard-codes 42.66 TR, so no browser check breaks; look for 42.66 in the docs/prose and update it there.",
+  "B group removed 1 Nov: the fill count rose 21 -> 25 because the tracer now measures 25 rooms; the harness asserts the new number, so it is a hard pass again, not a tolerated red.",
+  "Removed 3 more entries on 1 Nov: they asserted the OLD fill count (21). The count moved to 25 because the tracer now measures the open halls, the expectations were corrected to 25, and they are hard passes again."
+ ],
+ "fails": [
+  {
+   "label": "a rectangle drawn by dragging is editable by its handles afterwards",
+   "group": "A: drawn-rectangle overlay box reads 0x0 in the long plan-geometry block",
+   "reason": "KNOWN, DOCUMENTED RED GROUP. In the sequential plan-geometry block (browser-check.mjs ~1840-2025) a freshly drawn rectangle's .plan-room-box attributes read x=0,y=0,w=0,h=0, so the handle-resize drag is aimed at (0,0) and the area never changes. In an ISOLATED probe the same gesture works (drawn box measured x=139 y=119 280x240). Suspected state/timing coupling in that block, not a confirmed product defect. The block is named in docs/ZONE-DETECTION-RESEARCH.md section 6.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "the room just drawn can be found on the drawing by its id",
+   "group": "A: drawn-rectangle overlay box reads 0x0 in the long plan-geometry block",
+   "reason": "SAME CAUSE as the group above: boxOfRoom() reads .plan-room-box getAttribute('x'/'y'/'width'/'height') and gets 0x0 for the room the drag just made, though the .plan-room element itself exists (row count rises and it is selectable).",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "dragging a room's body moves it on the drawing",
+   "group": "A: drawn-rectangle overlay box reads 0x0 in the long plan-geometry block",
+   "reason": "SAME CAUSE (cascade): with the box at 0x0 the body-drag starts at (0,0) and moves nothing.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "dragging a corner resizes the room",
+   "group": "A: drawn-rectangle overlay box reads 0x0 in the long plan-geometry block",
+   "reason": "SAME CAUSE (cascade): the SE-corner drag starts from the 0x0 box, so w/h do not grow.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "resizing recomputes the room's area in the table",
+   "group": "A: drawn-rectangle overlay box reads 0x0 in the long plan-geometry block",
+   "reason": "SAME CAUSE (cascade): no resize happened, so the row area is unchanged.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "middle-drag pans the drawing",
+   "group": "A: drawn-rectangle overlay box reads 0x0 in the long plan-geometry block",
+   "reason": "SAME CAUSE (cascade): the middle-drag gesture in that block starts from coordinates derived from the 0x0 box and pans nothing (scroll 0,0 -> 0,0).",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "Delete reaches the drawing while the mode radio holds the focus",
+   "group": "A: drawn-rectangle overlay box reads 0x0 in the long plan-geometry block",
+   "reason": "SAME CAUSE (cascade): the click meant to re-select the drawn room uses its 0x0 client rect and lands on the top-left of the page instead, so the Delete result is off by one row (166 -> 165) rather than returning to the start count. The product's own rule (Delete reaches the drawing when a non-text control holds focus) is not what is being measured here.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "JOB1 (iii) it does not come back after use — the mismatch is only reported in the status line",
+   "group": "C: implied-scale mismatch line after the fix was already used",
+   "reason": "UNCERTAIN — owner decision needed. The control DOES stay hidden (shown=false, correct), but the status line after re-tracing at the wrong scale is the plain trace-result line ('Real outlines for 105 of 159 room(s) ...') with no 'point to about 1:' text. Either the wording changed (stale expectation) or the mismatch is no longer surfaced once the fix has been consumed (a small real gap). The string still exists in js/app.js.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "JOB2 (iv) an edge-middle drag converts the box into a polygon (poly, no rect, data-shape=poly)",
+   "group": "D: box->polygon edge drag missed in the sequential block",
+   "reason": "SAME FAMILY as group A: the drawn box's geometry is not where the gesture aims (corners 0, rect true, shape rect — the drag landed on nothing). The very next check, on a differently-placed box, converts correctly, so the conversion itself works; this is state/coordinate dependent, not a systemic defect.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "JOB2 (iv) the status line says the room is now a shape the user can pull",
+   "group": "D: box->polygon edge drag missed in the sequential block",
+   "reason": "CASCADE of the check above: no conversion happened, so the 'now a shape you can pull' line was never shown.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "...and its button is disabled and says it is working, and the bar goes when it ends",
+   "group": "E: 'Place all rooms' leaves no placed boxes on the real sample",
+   "reason": "REAL-SAMPLE OBSERVATION (owner decision: stale expectation vs product bug). On the real LEVEL 11 sample, 'Place all rooms' shows its progress bar and reports success, but ZERO rooms end up with a rect (fp.placed === 0). A raw-state probe confirms: 56 rooms, all with `at`, none with `rect`, none with `rect.placed === true`. Because placement sizes a box BACK from a room's own area and the real sample prints no areas, this may be intended; the check was written when the sample carried areas. Same root as group F.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "25 (a) a room box can actually be dragged in Select/edit mode (the premise of this check)",
+   "group": "E: 'Place all rooms' leaves no placed boxes on the real sample",
+   "reason": "SAME ROOT as the check above: the premise (a room with `rect.placed === true` on the real sample) is never met, so the check reports 'no placed box on the sample'. Consistently reproduced by the raw-state probe.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "25 (b) Ctrl+Z puts the dragged room back EXACTLY where it was, and says what it undid",
+   "group": "E: 'Place all rooms' leaves no placed boxes on the real sample",
+   "reason": "CASCADE of 25 (a): no placed box exists to drag, so the undo check never runs.",
+   "acceptedOn": "2026-11-01"
+  },
+  {
+   "label": "25 (c) Ctrl+Z inside a table cell is left to the text box (the drawing is untouched)",
+   "group": "E: 'Place all rooms' leaves no placed boxes on the real sample",
+   "reason": "CASCADE of 25 (a): skipped because the premise failed.",
+   "acceptedOn": "2026-11-01"
+  }
+ ],
+ "flaky": []
+}

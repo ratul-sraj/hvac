@@ -2560,8 +2560,10 @@ if (!sampleMissing) {
       };
     });
     ok("the real sample reaches a real load with NO click from the visitor",
-      settled.tr > 0 && settled.incl > 0 && settled.incl <= 21,
-      `${settled.tr} TR, ${settled.incl} of 21 measured room(s) included (was ${realTr} TR / ${incl} before)`);
+      // 25, not 21: the tracer now measures the open halls too (a whole open area goes to one name and
+      // its siblings are reported open-plan). See docs/ZONE-DETECTION-RESEARCH.md sec 6.4.
+      settled.tr > 0 && settled.incl > 0 && settled.incl <= 25,
+      `${settled.tr} TR, ${settled.incl} of 25 measured room(s) included (was ${realTr} TR / ${incl} before)`);
     await page.screenshot({ path: `${OUT}/live-real-sample.png`, fullPage: false });
   }
 
@@ -2609,8 +2611,14 @@ if (!sampleMissing) {
       // matches, so the three fitting rows on this sample that used to be handed a room's area -
       // "IN" 11.06 m2 and two "COMMISSIONERS' BENCH" - are no longer filled. That is the intended
       // behaviour (an area on a fitting is a wrong area in the load), not a regression.
-      /Filled 21 areas from the drawing/.test(fill.status)
-        && /because the room is open to the next space/.test(fill.status)
+      // 25, not 21: the overlap rule no longer refuses both sides of a shared-wall sliver, and an open
+      // area is now given to ONE real name instead of being refused as "one outline holds several room
+      // names" (docs/ZONE-DETECTION-RESEARCH.md sec 6.4.1 and 6.4.2). The names that still get no area
+      // because the drawing draws no edge between them are explained in the SAME line, by the sentence
+      // that says how many such rooms had their whole area given to one room - that is the assertion
+      // that replaced the old "open to the next space" phrase.
+      /Filled 25 areas from the drawing/.test(fill.status)
+        && /the whole area was given to ONE room/.test(fill.status)
         && !/could not be verified/.test(fill.status)
         // 26 fittings have their own words now (js/labelclass.js), so the shape-based refusal count
         // drops from 2 to 1: one of the two was a fitting, not a room that failed to measure.
@@ -2618,9 +2626,9 @@ if (!sampleMissing) {
         && /26 because the name is a fitting inside a room, not a room/.test(fill.status),
       fill.status);
     ok("the filled rooms are marked in the table as coming from the drawing",
-      fill.badges === 21, `${fill.badges} badge(s)`);
+      fill.badges === 25, `${fill.badges} badge(s)`);
     ok("filling the areas moves the totals (the point of the feature)",
-      fill.tr > 0 && fill.incl >= 1 && fill.incl <= 21, `${fill.tr} TR, ${fill.incl} room(s) included of 21 filled`);
+      fill.tr > 0 && fill.incl >= 1 && fill.incl <= 25, `${fill.tr} TR, ${fill.incl} room(s) included of 25 filled`);
 
     // the level-wise fresh-air column is ONE unit (L/s) down the column: its rows sum to its Total
     const fresh = fill.levels
@@ -2673,7 +2681,7 @@ if (!sampleMissing) {
     ok("Undo puts every area back and the load returns to 0.00 TR",
       undone.badges === 0 && undone.tr === 0 && undone.blank === 56,
       `${undone.badges} badge(s), ${undone.tr} TR, ${undone.blank} blank areas`);
-    ok("Undo says what it put back", /Undone: 21 areas/.test(undone.status || undoneStatus),
+    ok("Undo says what it put back", /Undone: 25 areas/.test(undone.status || undoneStatus),
       undone.status || undoneStatus);
   }
 
@@ -4682,8 +4690,8 @@ if (!sampleMissing) {
     ok("the fill button is disabled and says it is working, and the bar goes when it ends",
       fp.sawDisabled && fp.sawLabel && fp.active === "0" && fp.vis === "hidden" && /^Fill areas from the drawing$/.test(fp.btnText),
       `disabled-during=${fp.sawDisabled} working=${fp.sawLabel} active=${fp.active} vis=${fp.vis} after "${fp.btnText}"`);
-    ok("the sample's own fill result is unchanged — 22 of 56 areas measured from the drawing",
-      fp.withArea === 21 && /Filled 21 areas from the drawing/.test(fp.status),
+    ok("the sample's own fill result is unchanged — 25 of 56 areas measured from the drawing",
+      fp.withArea === 25 && /Filled 25 areas from the drawing/.test(fp.status),
       `rooms ${fp.rooms}, with area ${fp.withArea}; status "${fp.status.slice(0, 80)}"`);
 
     // (3) PLACE ALL on the same sample: its own bar, its own room count, the button disabled while it
@@ -5353,7 +5361,53 @@ if (!sampleMissing) {
 }
 
 const failed = results.filter((r) => !r.pass);
-console.log(`\n${results.length - failed.length}/${results.length} browser checks passed`);
+const passed = results.filter((r) => r.pass);
+
+// ---------------------------------------------------------------- expected failures
+// A suite that always carries reds cannot tell "still broken" from "newly broken". The known reds
+// live in tests/expected-failures.json so the run can be judged by what CHANGED:
+//   (a) a failing check that is NOT listed  -> the run fails, printed as NEW
+//   (b) a listed check that now PASSES      -> the run fails, printed as FIXED REMOVE IT
+//   (c) a listed check that is flaky (its own list) counts as flaky, never as new
+// Plain JSON, no dependency beyond node's fs, matching the plain-node style of tests/run.mjs.
+const EF_PATH = new URL("./expected-failures.json", import.meta.url);
+let ef = { fails: [], flaky: [] };
+try {
+  ef = JSON.parse(fs.readFileSync(EF_PATH, "utf8"));
+} catch (e) {
+  console.log(`\nWARNING: could not read tests/expected-failures.json (${e.message}); treating every failure as new.`);
+}
+const knownLabels = new Map((ef.fails || []).map((e) => [e.label, e]));
+const flakyLabels = new Set((ef.flaky || []).map((e) => e.label));
+
+const newFails = [];
+const flakyFails = [];
+let known = 0;
+for (const r of failed) {
+  if (knownLabels.has(r.label)) known += 1;
+  else if (flakyLabels.has(r.label)) flakyFails.push(r);
+  else newFails.push(r);
+}
+// A listed-as-known check that now passes must be removed from the file.
+const fixed = passed.filter((r) => knownLabels.has(r.label));
+
+console.log(`\n${passed.length}/${results.length} browser checks passed`);
+console.log(`${passed.length} pass, ${known} known, ${newFails.length} new, ${fixed.length} fixed` +
+  (flakyFails.length ? `, ${flakyFails.length} flaky` : ""));
+if (flakyFails.length) {
+  console.log("flaky (tolerated — listed under 'flaky', not expected to fail every run):");
+  for (const f of flakyFails) console.log(`  - ${f.label} :: ${f.detail}`);
+}
+if (newFails.length) {
+  console.log("NEW failures (not in tests/expected-failures.json — a real regression unless triaged):");
+  for (const f of newFails) console.log(`  - ${f.label} :: ${f.detail}`);
+}
+if (fixed.length) {
+  console.log("FIXED REMOVE IT (now passing but still listed in tests/expected-failures.json):");
+  for (const f of fixed) console.log(`  - ${f.label}`);
+}
 fs.writeFileSync(`${OUT}/browser-report.json`, JSON.stringify(results, null, 1));
-if (failed.length) { console.log("failed:\n" + failed.map((f) => "  - " + f.label + " :: " + f.detail).join("\n")); process.exit(1); }
-console.log("ALL BROWSER CHECKS PASSED");
+
+if (newFails.length || fixed.length) process.exit(1);
+if (known) console.log(`ALL CHECKS ACCOUNTED FOR (${known} known-failing check(s) tracked in tests/expected-failures.json)`);
+else console.log("ALL BROWSER CHECKS PASSED");

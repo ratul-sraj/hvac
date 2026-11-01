@@ -29,6 +29,7 @@
 
 import { splitRegion } from './splitregion.js';
 import { closeOpenings } from './portalclose.js';
+import { isFittingName } from './labelclass.js';
 
 // Curve flattening: how many straight pieces one Bezier is cut into. Walls are drawn as lines and
 // rectangles in practice; curves (door swings, rounded corners) only need to be smooth enough that a
@@ -840,19 +841,32 @@ function regionsFromCore(core, p) {
           // piece). A sliver is not a room's worth of floor, so only a piece holding at least a quarter
           // of the region is worth counting - and the slivers' names are not offered as owners either.
           const regionArea = split.parts.reduce((s, x) => s + (Number(x.areaM2) || 0), 0);
+          // A fitting label (MONITOR, SEATING, ESCAPE ONLY, IN/OUT, WITNESS, ...) is an ANNOTATION
+          // inside a room, never a room of its own. It must not decide whether a region is one open
+          // space, and it must never be the name a whole open area is given to.
+          const realParts = split.parts.filter((x) => !isFittingName(x.name));
           // EVERY piece refused: the region itself is the honest unit (a real measured outline, counted
-          // once) - that is the owner's rule for a whole open area, e.g. the 305 m² gallery blob. Some
-          // OTHER piece accepted: the region was mostly rooms and only the substantial refused pieces are
-          // left, so each is given to its own name (this is what lets the centre LOBBY be drawn at all).
-          // The two rules are exclusive, so nothing is ever counted twice.
-          if (split.parts.every((x) => !x.accepted)) {
+          // once) - that is the owner's rule for a whole open area, e.g. the 305 m² gallery blob.
+          // SEVERAL REAL ROOM NAMES, ALL refused: the drawing encloses none of them separately (they
+          // are open to each other), so the region is ONE open space - the same rule applies, which is
+          // what turns the centre LOBBY/SECURITY/LIFT zone from "one small piece + two refusals" into
+          // its own measured whole. Some OTHER piece accepted: the region was mostly rooms and only the
+          // substantial refused pieces are left, so each is given to its own name (this is what lets
+          // the centre LOBBY be drawn at all). The rules are exclusive, so nothing is counted twice.
+          const severalRealNames = realParts.length >= 2;
+          const allRealRefused = realParts.length ? realParts.every((x) => !x.accepted) : false;
+          if (split.parts.every((x) => !x.accepted) || (severalRealNames && allRealRefused)) {
             const wRings = outlineFromRegion(region, w, box, px, { simplifyTolPt: p.simplifyTolPt });
             const wAreaPt2 = outlineAreaPt2(wRings);
             const wAreaM2 = pt2ToM2(wAreaPt2, denom);
             if (wRings.length && wAreaM2 > 0) {
               const r2 = (v) => Math.round(v * 100) / 100;
               const byArea = [...split.parts].sort((a, b) => (b.areaM2 || 0) - (a.areaM2 || 0));
-              const head = byArea[0];
+              // The area is given ONCE, to a REAL room name (the largest real piece), never to a
+              // fitting. The other real names sharing the region are listed so the consumer can mark
+              // them as open shared space rather than refusing the whole floor.
+              const realByArea = [...realParts].sort((a, b) => (b.areaM2 || 0) - (a.areaM2 || 0));
+              const head = realByArea[0] || byArea[0];
               const names = byArea.map((x) => ({ id: x.roomId, name: x.name || '', areaM2: r2(x.areaM2 || 0) }));
               out.push({
                 id: `reg${region.index}open`,
@@ -860,6 +874,7 @@ function regionsFromCore(core, p) {
                 areaM2: r2(wAreaM2), closed: true,
                 cells: region.areaPx, labels: names.length, bbox: region.bbox,
                 source: 'open-area', roomId: head.roomId,
+                memberIds: realParts.map((x) => x.roomId).filter((x) => x != null),
                 openArea: { areaM2: r2(wAreaM2), roomId: head.roomId, inside: names },
               });
               continue;
