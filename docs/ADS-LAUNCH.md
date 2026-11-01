@@ -1,5 +1,33 @@
 # LoadLens — ad launch sheet (Google Search, no video)
 
+## YOUR PART — about 10 minutes, and Google will fight you on one step
+
+Do these in order. Nothing here costs money until step 6, and step 3 is the one that matters most.
+
+1. **Sign in** at **https://ads.google.com** with the Google account you want to own this ad account.
+2. **When Google pushes its guided "Smart" setup, switch it off.** Look for **"Switch to Expert Mode"**
+   (usually a small link at the bottom of the page, or under the ⋮ menu). If offered two options, choose
+   **"Create an account without a campaign"**.
+   Why: the guided path invents a campaign with its own budget, keywords and "optimized targeting" and
+   starts spending. We want to build `g-oct4` ourselves so every setting below actually holds.
+3. **Currency: India (INR). Time zone: India (IST).** These are **permanent** — they cannot be changed
+   after the account is created, and getting them wrong makes every number in the sheet meaningless.
+4. **Billing:** add a card or UPI (`Billing → Settings → Payments profile`). Google may ask for a small
+   verification charge or pre-pay; that is normal. **Account review takes 1-2 days** before ads can serve,
+   so do this now even if you want to start the campaign later.
+5. **Look for a promotional credit before paying anything.** Found on 04 Oct: the account carries a pending
+   **"spend ₹20,000, get ₹20,000"** offer (new advertisers only, confirmed on the payment step). Claim it —
+   it commits nothing — but understand its shape: it is a **match up to ₹20,000**, so it only pays out if
+   ₹20,000 is actually spent. The test in this sheet is ₹600, so the credit buys nothing here and must NOT
+   be a reason to raise the budget. It is there if the experiment ever justifies going bigger.
+   Also worth knowing: **Microsoft Ads** runs matched-spend credits — if Google offers nothing on a
+   different account, that route buys the same validation for less.
+6. **Tell me it is live** and I will build the campaign inside it, with the settings and the three hooks
+   below, pointed at `app.html` with the `g-oct4` tracking URLs.
+
+Do NOT accept anything Google pre-fills for budget, bidding or "Display expansion". Those three settings
+are exactly what turns a ₹600 test into ₹600 of untraceable noise.
+
 **Answer to "do we need video?"** No. The Google Search half is text-only by design, and it is the half
 that answers the only question worth paying for: *is this useful to a stranger?* Meta is the half where
 video helps — and a screen recording of a utility is not a hook, so that route uses the **static card**
