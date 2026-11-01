@@ -113,6 +113,86 @@ fi
 save_state OAC_ID "$OAC_ID"
 
 # ---------------------------------------------------------------------------
+# A SECOND origin access control, of type `lambda`, for the API origin. Without it CloudFront sends
+# UNSIGNED requests to the Function URL, which means the URL's auth type has to be NONE — a public,
+# unthrottled entry point that bypasses this distribution entirely (audit H1). With the OAC below the
+# URL is AWS_IAM and only this distribution can invoke it. Type matters: an `s3` OAC on a Lambda origin
+# is rejected by the API.
+# ---------------------------------------------------------------------------
+log_step "Lambda origin access control '$LAMBDA_OAC_NAME'"
+OAC_LAMBDA_ID="${OAC_LAMBDA_ID:-}"
+if [ -z "$OAC_LAMBDA_ID" ]; then
+  OAC_LAMBDA_ID="$(aws cloudfront list-origin-access-controls \
+      --query "OriginAccessControlList.Items[?Name=='$LAMBDA_OAC_NAME'].Id | [0]" \
+      --output text --no-cli-pager 2>/dev/null | head -n 1)"
+fi
+case "$OAC_LAMBDA_ID" in ""|None) OAC_LAMBDA_ID="" ;; esac
+if [ -z "$OAC_LAMBDA_ID" ]; then
+  OAC_LAMBDA_JSON="$TMP_DIR/oac-lambda.json"
+  mkdir -p "$TMP_DIR"
+  cat > "$OAC_LAMBDA_JSON" <<JSON
+{
+  "Name": "${LAMBDA_OAC_NAME}",
+  "Description": "LoadLens Function URL signer (managed by infra/30-cloudfront.sh)",
+  "SigningProtocol": "sigv4",
+  "SigningBehavior": "always",
+  "OriginAccessControlOriginType": "lambda"
+}
+JSON
+  OAC_LAMBDA_ID="$(aws cloudfront create-origin-access-control \
+      --origin-access-control-config "$(awsfile "$OAC_LAMBDA_JSON")" \
+      --query OriginAccessControl.Id --output text --no-cli-pager)"
+  log_ok "created lambda OAC: $OAC_LAMBDA_ID"
+else
+  log_ok "existing lambda OAC: $OAC_LAMBDA_ID"
+fi
+save_state OAC_LAMBDA_ID "$OAC_LAMBDA_ID"
+
+# ---------------------------------------------------------------------------
+# Security headers (audit M3). CloudFront sets them at the edge, so no page markup changes. No CSP yet:
+# the app uses inline handlers and a wasm worker, so a Content-Security-Policy needs its own tested pass
+# before it can be enforced (a wrong one silently breaks the calculator).
+# ---------------------------------------------------------------------------
+log_step "Response headers policy '$RHP_NAME'"
+RHP_ID="${RHP_ID:-}"
+if [ -z "$RHP_ID" ]; then
+  RHP_ID="$(aws cloudfront list-response-headers-policies \
+      --query "ResponseHeadersPolicyList.Items[?ResponseHeadersPolicy.Name=='$RHP_NAME'].ResponseHeadersPolicy.Id | [0]" \
+      --output text --no-cli-pager 2>/dev/null | head -n 1)"
+fi
+case "$RHP_ID" in ""|None) RHP_ID="" ;; esac
+if [ -z "$RHP_ID" ]; then
+  RHP_JSON="$TMP_DIR/rhp.json"
+  mkdir -p "$TMP_DIR"
+  cat > "$RHP_JSON" <<JSON
+{
+  "Name": "${RHP_NAME}",
+  "Comment": "LoadLens baseline security headers (audit M3)",
+  "SecurityHeadersConfig": {
+    "XSSProtection": { "Override": true, "Protection": true, "ModeBlock": true },
+    "FrameOptions": { "Override": true, "FrameOption": "DENY" },
+    "ReferrerPolicy": { "Override": true, "ReferrerPolicy": "strict-origin-when-cross-origin" },
+    "ContentTypeOptions": { "Override": true },
+    "StrictTransportSecurity": { "Override": true, "IncludeSubdomains": true, "Preload": true, "AccessControlMaxAgeSec": 31536000 }
+  },
+  "CustomHeadersConfig": {
+    "Quantity": 1,
+    "Items": [
+      { "Header": "Permissions-Policy", "Value": "geolocation=(), microphone=(), camera=(), payment=()", "Override": true }
+    ]
+  }
+}
+JSON
+  RHP_ID="$(aws cloudfront create-response-headers-policy \
+      --response-headers-policy-config "$(awsfile "$RHP_JSON")" \
+      --query ResponseHeadersPolicy.Id --output text --no-cli-pager)"
+  log_ok "created response headers policy: $RHP_ID"
+else
+  log_ok "existing response headers policy: $RHP_ID"
+fi
+save_state RHP_ID "$RHP_ID"
+
+# ---------------------------------------------------------------------------
 # 2. create or update: pick the id FIRST so the config can be built correctly
 # ---------------------------------------------------------------------------
 DIST_ID="${DISTRIBUTION_ID:-}"
@@ -162,6 +242,7 @@ cat > "$CFG_FILE" <<JSON
         "DomainName": "${LAMBDA_HOST_ORIGIN}",
         "OriginPath": "",
         "CustomHeaders": { "Quantity": 0 },
+        "OriginAccessControlId": "${OAC_LAMBDA_ID}",
         "CustomOriginConfig": {
           "HTTPPort": 80,
           "HTTPSPort": 443,
@@ -188,6 +269,7 @@ cat > "$CFG_FILE" <<JSON
     "SmoothStreaming": false,
     "FieldLevelEncryptionId": "",
     "CachePolicyId": "${CF_POLICY_CACHING_OPTIMIZED}",
+    "ResponseHeadersPolicyId": "${RHP_ID}",
     "TrustedSigners": { "Enabled": false, "Quantity": 0 },
     "LambdaFunctionAssociations": { "Quantity": 0 },
     "FunctionAssociations": { "Quantity": 0 }

@@ -167,14 +167,19 @@ fi
 # ---------------------------------------------------------------------------
 # 4. the Function URL
 # ---------------------------------------------------------------------------
-log_step "Function URL (auth type NONE — it is a public PDF parser, no secrets involved)"
+log_step "Function URL (auth type AWS_IAM — only CloudFront may invoke it, via an OAC)"
 
 LAMBDA_URL_PRE=""
 if aws lambda get-function-url-config --function-name "$LAMBDA_FUNCTION" --no-cli-pager >/dev/null 2>&1; then
   LAMBDA_URL_PRE="$(aws lambda get-function-url-config --function-name "$LAMBDA_FUNCTION" --query FunctionUrl --output text --no-cli-pager)"
   log_ok "URL exists: $LAMBDA_URL_PRE"
 fi
-URL_ARGS=(--function-name "$LAMBDA_FUNCTION" --auth-type NONE --invoke-mode BUFFERED)
+# AWS_IAM, NOT NONE. A NONE Function URL is a public, unauthenticated, unthrottled entry point that
+# BYPASSES CloudFront entirely — so nothing added at the edge (WAF rate rules, custom headers, caching)
+# protects it. Measured before this change: the raw *.lambda-url host answered 200 to anyone, and at
+# 1024 MB / 30 s the account could be pushed toward the $10 ceiling in ~12-28 h. CloudFront now signs
+# with the OAC below and the raw host answers 403.
+URL_ARGS=(--function-name "$LAMBDA_FUNCTION" --auth-type AWS_IAM --invoke-mode BUFFERED)
 
 # CORS: the app on GitHub Pages (https://<owner>.github.io) calls this API
 # cross-origin, so the function URL must answer the preflight. The allowed list
@@ -222,27 +227,35 @@ esac
 LAMBDA_HOST_ORIGIN="$(printf '%s' "$LAMBDA_URL" | sed -e 's#^https://##' -e 's#/$##')"
 save_state LAMBDA_URL "$LAMBDA_URL" LAMBDA_HOST_ORIGIN "$LAMBDA_HOST_ORIGIN"
 
-# A public Function URL needs TWO resource-policy statements. Since October 2025 AWS requires both
-# lambda:InvokeFunctionUrl AND lambda:InvokeFunction (see docs: lambda/latest/dg/urls-auth.html),
-# and the statement is not reliably added for you — when it is missing, every request gets a bare
-# 403 AccessDeniedException from the front door and never reaches the function.
-ensure_invoke_permission() {
-  local sid="$1" action="$2"; shift 2
-  local policy
+# The ONE resource-policy statement this function needs: CloudFront, signing through the origin access
+# control, for THIS distribution only. Anything that grants `Principal: "*"` — in particular an
+# unconditional `lambda:InvokeFunction` — re-opens the raw host even while the URL's auth type reads
+# AWS_IAM (measured: the host still answered 200 with a Principal "*" InvokeFunction statement present).
+# Keep this the only statement; verify with a curl to the raw host that must answer 403.
+ensure_cloudfront_permission() {
+  local sid="CloudFrontOACInvoke"
+  local policy dist_arn
+  dist_arn="arn:aws:cloudfront::$(ensure_account_id):distribution/$(ensure_distribution_id)"
   policy="$(aws lambda get-policy --function-name "$LAMBDA_FUNCTION" --query Policy --output text --no-cli-pager 2>/dev/null || true)"
   if printf '%s' "$policy" | grep -q "\\\"$sid\\\""; then
     log_ok "permission $sid already present"
   else
     aws lambda add-permission --function-name "$LAMBDA_FUNCTION" --statement-id "$sid" \
-      --action "$action" --principal "*" "$@" --no-cli-pager >/dev/null \
+      --action lambda:InvokeFunctionUrl --principal cloudfront.amazonaws.com \
+      --function-url-auth-type AWS_IAM --source-arn "$dist_arn" --no-cli-pager >/dev/null \
       || die "could not add the $sid permission"
-    log_ok "added permission $sid ($action)"
+    log_ok "added permission $sid (CloudFront OAC from $dist_arn)"
   fi
+  # Drop any statement that would let the raw host be called directly. Removing a statement that is
+  # already gone is harmless, so this is idempotent.
+  for stale in FunctionURLAllowPublicAccess FunctionURLAllowPublicInvoke; do
+    if printf '%s' "$policy" | grep -q "\\\"$stale\\\""; then
+      aws lambda remove-permission --function-name "$LAMBDA_FUNCTION" --statement-id "$stale" \
+        --no-cli-pager >/dev/null 2>&1 && log_ok "removed stale public permission $stale"
+    fi
+  done
 }
-ensure_invoke_permission FunctionURLAllowPublicAccess lambda:InvokeFunctionUrl --function-url-auth-type NONE
-# --function-url-auth-type is rejected for lambda:InvokeFunction (the CLI says it is "only supported
-# for lambda:InvokeFunctionUrl action"), so it is passed for the first statement only.
-ensure_invoke_permission FunctionURLAllowPublicInvoke lambda:InvokeFunction
+ensure_cloudfront_permission
 
 # ---------------------------------------------------------------------------
 log_title "Done"

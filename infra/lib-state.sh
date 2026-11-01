@@ -33,8 +33,15 @@ GITHUB_REPO="${GITHUB_REPO:-ratul-sraj/hvac}"
 # `sub` condition for the OIDC trust policy: repo:<owner>/<name>:<ref-or-environment>
 # "*" here means "any branch, tag, environment or PR of THIS repository" —
 # never a wildcard over repositories (see infra/oidc-github-role.sh).
-GITHUB_SUB="${GITHUB_SUB:-repo:${GITHUB_REPO}:*}"
+GITHUB_SUB="${GITHUB_SUB:-repo:${GITHUB_REPO}:ref:refs/heads/main}"
 GITHUB_PAGES_HOST="${GITHUB_PAGES_HOST:-$(printf '%s' "$GITHUB_REPO" | cut -d/ -f1).github.io}"
+
+# Origin access controls and the edge security-headers policy. The TWO OACs are different TYPES and
+# neither works on the other's origin: `s3` signs the site bucket, `lambda` signs the Function URL
+# (audit H1). Names are stable so re-running the scripts finds what the last run created.
+OAC_NAME="${OAC_NAME:-loadlens-site-oac}"
+LAMBDA_OAC_NAME="${LAMBDA_OAC_NAME:-loadlens-lambda-oac}"
+RHP_NAME="${RHP_NAME:-loadlens-security-headers}"
 
 # S3 bucket holding the static site. Globally unique; default derives from the
 # account id, so prod and re-runs agree without any hand-written config.
