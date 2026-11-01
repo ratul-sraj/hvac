@@ -6,7 +6,7 @@ import { calcProject } from "../js/calc.js";
 import { BASIS_FIELDS, savedBasis, basisGaps, confirmField } from "../js/basis.js";
 import { monteCarlo } from "../js/uncertainty.js";
 import { crossCheck, peakLoadHour } from "../js/crosscheck.js";
-import { buildReportHtml, crossCheckExplain, TERM_LABEL, refusalHtml } from "../js/report.js";
+import { buildReportHtml, crossCheckExplain, TERM_LABEL, refusalHtml, csvCell, toCsv } from "../js/report.js";
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail) => {
@@ -97,5 +97,32 @@ let html = "", confirming = null;
     /NMBE/.test(html) && /Nothing is calibrated/.test(html));
   ok("the sheet still ends with a signature block", /Prepared by/.test(html) && /Checked by/.test(html));
 }
+
+// CSV FORMULA INJECTION: a room name is free text, and the export is opened in a spreadsheet, so a
+// value a spreadsheet would EXECUTE must be neutralised with the standard leading apostrophe — while
+// every safe value (including the numbers and the "-" supply marker) stays byte-identical.
+console.log("report: the CSV neutralises a cell that a spreadsheet would run as a formula");
+{
+  ok("a leading '=' is neutralised", csvCell("=cmd|' /C calc'!A0") === "'=cmd|' /C calc'!A0", csvCell("=cmd|' /C calc'!A0"));
+  ok("a leading '+' is neutralised", csvCell("+1+1") === "'+1+1", csvCell("+1+1"));
+  ok("a leading '@' is neutralised", csvCell("@SUM(A1:A9)") === "'@SUM(A1:A9)", csvCell("@SUM(A1:A9)"));
+  ok("a leading TAB is neutralised", csvCell("\tTABROOM") === "'\tTABROOM");
+  ok("a value containing a comma AND a quote is still quoted/doubled, exactly as before",
+    csvCell('say "hi", then') === '"say ""hi"", then"', csvCell('say "hi", then'));
+  ok("a hostile value that ALSO carries a comma and a quote is neutralised AND quoted",
+    csvCell('=HYPERLINK("a,b")') === '"\'=HYPERLINK(""a,b"")"', csvCell('=HYPERLINK("a,b")'));
+  ok("a genuine negative number is left alone", csvCell(-1.5) === "-1.5" && csvCell("-2.5") === "-2.5");
+  ok("a genuine +number is left alone", csvCell("+2") === "+2");
+  ok("a lone '-' (the export's supply-air-NA marker) is left alone", csvCell("-") === "-");
+  ok("a safe value is byte-identical to before", csvCell("OFFICE 101") === "OFFICE 101" && csvCell("a,b") === '"a,b"');
+
+  // END TO END: the injection really lands in toCsv, in the Name column, and comes out neutralised.
+  const p2 = { ...project, name: "INJ" };
+  const evilRooms = [{ id: "x", name: "=cmd|' /C calc'!A0", level: "L1", number: "1", type: "office", area: 20, height: 3, orient: "N", extWall: 8, glass: 2, roof: false, include: true }];
+  const csv = toCsv(p2, calcProject(evilRooms, p2));
+  const dataRow = csv.split("\r\n").find((l) => l.startsWith("yes,")) || "";
+  ok("the exported Name cell is neutralised, not live", dataRow.split(",")[3] === "'=cmd|' /C calc'!A0", dataRow.slice(0, 40));
+}
+
 console.log(`\nreport: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

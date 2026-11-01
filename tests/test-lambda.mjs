@@ -189,7 +189,52 @@ async function main() {
     assert.ok(/notes\.txt|PDF/.test(j.error), `error explains the rejection: ${j.error}`);
   });
 
-  const total = 3;
+  // 4. one request must not be made artificially expensive (audit M4) ----
+  await check("Function URL POST /api/calc with 2001 rooms -> 413, and 1 room -> 200", async () => {
+    const big = JSON.stringify({ rooms: Array.from({ length: 2001 }, (_, i) => ({ name: `R${i}`, area: 10, type: "office" })) });
+    const res = await invoke(
+      fnUrlEvent({
+        method: "POST",
+        urlPath: "/api/calc",
+        headers: { "content-type": "application/json", "content-length": String(big.length) },
+        body: big,
+      })
+    );
+    assert.equal(res.statusCode, 413, `expected the rooms cap to refuse, got ${res.statusCode}: ${bodyText(res).slice(0, 160)}`);
+    assert.ok(/too many rooms/i.test(jsonOf(res).error || ""), "the refusal says why");
+    const ok = await invoke(
+      fnUrlEvent({
+        method: "POST",
+        urlPath: "/api/calc",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rooms: [{ name: "Office", area: 50, type: "office" }] }),
+      })
+    );
+    assert.equal(ok.statusCode, 200, `the documented single-room call must still work: ${bodyText(ok).slice(0, 160)}`);
+  });
+
+  // 5. the origin gate (audit H1): a request that did not come through CloudFront is refused ---
+  await check("origin gate: no x-origin-auth -> 403, with it -> passes through", async () => {
+    process.env.ORIGIN_SECRET = "test-secret-not-a-real-one";
+    const gated = await import(new URL("../lambda/index.mjs?v=gate", import.meta.url).href);
+    const bare = await gated.handler(fnUrlEvent({ method: "GET", urlPath: "/api/health" }));
+    assert.equal(bare.statusCode, 403, `a direct call must be refused, got ${bare.statusCode}`);
+    assert.ok(/through the LoadLens site/i.test(bare.body || ""), "the refusal says where the API lives");
+    assert.ok(!/ok/.test(bare.body || ""), "the refusal leaks nothing about the function");
+    const through = await gated.handler(fnUrlEvent({
+      method: "GET", urlPath: "/api/health",
+      headers: { "x-origin-auth": "test-secret-not-a-real-one" },
+    }));
+    assert.equal(through.statusCode, 200, `the distribution's call must pass, got ${through.statusCode}`);
+    const wrong = await gated.handler(fnUrlEvent({
+      method: "GET", urlPath: "/api/health",
+      headers: { "x-origin-auth": "not-the-secret" },
+    }));
+    assert.equal(wrong.statusCode, 403, "a wrong secret must be refused");
+    delete process.env.ORIGIN_SECRET;
+  });
+
+  const total = 5;
   console.log(`\n${pass}/${total} lambda checks passed`);
   if (failures.length) {
     console.log("failed:");

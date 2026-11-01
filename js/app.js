@@ -4333,14 +4333,56 @@ async function planCalibrateScale(pdfjs, doc, trace) {
   return cal.calibrateScale({ E1, E2, E3, box });
 }
 
+/** The one line the scale banner shows, as a plain string (pure, so a probe can print it verbatim).
+ *  `applied` = the calibration applied a scale; `currentDenom` = the scale the box shows now (used
+ *  only when nothing could be applied). A conflict stays LOUD and, when a scale IS used, the line
+ *  names THAT number, what it rests on, and — computed from the denominators via `area ∝ denom²`,
+ *  never hardcoded — what following the other estimate would do to every area. */
+function scaleBannerText(cal, applied, currentDenom) {
+  if (!cal) return '';
+  const E1 = cal.estimates ? cal.estimates.E1 : null;
+  const E2 = cal.estimates ? cal.estimates.E2 : null;
+  const note = E1 && E1.denom != null ? E1.denom : null;
+  const how = cal.source === 'E2' ? "the sheet's own printed room areas"
+    : cal.source === 'E1' ? 'the scale note on the sheet'
+      : cal.source === 'E3' ? 'the drawn door swings' : 'the sheet';
+
+  // Nothing usable: the app kept the user's scale. Unchanged amber line.
+  if (cal.denom == null) {
+    return `Scale not applied - the sheet disagrees with itself${cal.conflict ? ': ' + cal.conflict.note : ''}. ` +
+      `Keeping 1:${currentDenom}; set the drawing scale yourself if that is wrong.`;
+  }
+  // A scale is used and nothing disagrees: name it, its basis and the confidence. Unchanged.
+  if (!cal.conflict) {
+    return `${applied ? 'Scale read from the sheet' : 'Scale confirmed'}: 1:${cal.denom} ` +
+      `(from ${how}, ${cal.confidence} confidence). Change it in the Drawing scale box if that is wrong.`;
+  }
+  // A scale IS used but another estimate disagrees — the case the owner hit: the sheet's own printed
+  // room areas beat the title-block note, while the old line named only the loser (the door swings)
+  // and never said what the number used was based on. Name the winner and what the note would do.
+  if (cal.source === 'E2') {
+    const checked = E2 && E2.n ? ` (${E2.n} of the ${E2.total} that could be checked)` : '';
+    const line = `Areas use 1:${cal.denom}, taken from ${how}${checked}.`;
+    if (note != null && note !== cal.denom) {
+      const factor = Math.pow(Math.max(note, cal.denom) / Math.min(note, cal.denom), 2).toFixed(2);
+      const word = note < cal.denom ? 'smaller' : 'larger';   // area scales with denom²: a smaller note shrinks areas
+      return `${line} The scale note says 1:${note}, which would make every area ${factor}x ${word} - ` +
+        `this PDF looks re-plotted. Set the drawing scale yourself if 1:${note} is right.`;
+    }
+    return `${line} Set the drawing scale yourself if 1:${cal.denom} is right.`;
+  }
+  // An E1/E3 winner against a disagreeing estimate: loud and plain, and it still names the number used.
+  return `${applied ? 'Scale read from the sheet' : 'Scale confirmed'}: 1:${cal.denom} (from ${how}), ` +
+    `but the sheet disagrees with itself: ${cal.conflict ? cal.conflict.note : 'the estimates conflict'}. ` +
+    `Check the title block before you rely on it.`;
+}
+
 /** Show what the sheet said about its own scale, on the plan panel. Amber when the evidence
- *  CONFLICTS and the app deliberately did not pick a scale (the user's current one is kept).
- *
- *  The calibration applies a confident scale by itself, but the ONE-CLICK FIX BUTTON is kept as the
- *  override: whenever the drawing's own evidence disagrees with the scale the panel is showing, the
- *  banner also carries `#planScaleFixBtn` ("Use 1:N and trace again") so a user who knows better can
- *  re-assert it in one click. It is single-use per drawing (scaleFixUsedDrawing), so a re-trace after
- *  the button has been used does not re-offer it. */
+ *  CONFLICTS (kept LOUD), whether the app applied a scale anyway or kept the user's current one. The
+ *  ONE-CLICK FIX BUTTON is the override: when the drawing's own evidence disagrees with the scale the
+ *  panel is showing, the banner also carries `#planScaleFixBtn` ("Use 1:N and trace again") so a user
+ *  who knows better can re-assert it in one click. It is single-use per drawing (scaleFixUsedDrawing),
+ *  so a re-trace after the button has been used does not re-offer it. */
 function planShowScaleConfidence(cal, applied) {
   const box = el.planScaleFix;
   if (!box || !cal) return;
@@ -4352,16 +4394,7 @@ function planShowScaleConfidence(cal, applied) {
   box.replaceChildren();
   const text = document.createElement('span');
   text.className = 'plan-scalefix-text';
-  if (conflicting) {
-    text.textContent = `Scale not applied - the sheet disagrees with itself${cal.conflict ? ': ' + cal.conflict.note : ''}. ` +
-      `Keeping 1:${planScaleDenom()}; set the drawing scale yourself if that is wrong.`;
-  } else {
-    const how = cal.source === 'E2' ? "the sheet's printed room areas"
-      : cal.source === 'E1' ? 'the scale note on the sheet'
-        : cal.source === 'E3' ? 'the drawn door swings' : 'the sheet';
-    text.textContent = `${applied ? 'Scale read from the sheet' : 'Scale confirmed'}: 1:${cal.denom} ` +
-      `(from ${how}, ${cal.confidence} confidence). Change it in the Drawing scale box if that is wrong.`;
-  }
+  text.textContent = scaleBannerText(cal, applied, planScaleDenom());
   box.append(text);
   if (offer) {
     const right = String(Math.round(cal.denom));

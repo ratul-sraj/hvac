@@ -89,8 +89,17 @@ export function breakdown(r) {
 
 /* ---------------- CSV ---------------- */
 
-function csvCell(v) {
-  const s = String(v === undefined || v === null ? '' : v);
+// A spreadsheet EXECUTES a cell that begins with = + - @, a TAB or a CR — a room name is free text,
+// and the CSV is the product's primary export, so a value that is NOT a plain number and starts with
+// one of those characters gets the standard apostrophe neutralisation BEFORE the ordinary quoting.
+// A genuine number (-1.5, +2, 1e5, .5) is left exactly as-is, and so is a lone "-" (the export's own
+// "supply air not available" marker — a value the product really writes, and no formula), so every
+// safe value is still byte-identical to before.
+const NUMERIC = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+// Exported so tests/test-report.mjs can pin the injection-neutralisation on the function itself.
+export function csvCell(v) {
+  let s = String(v === undefined || v === null ? '' : v);
+  if (!NUMERIC.test(s) && s !== '-' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 

@@ -95,7 +95,45 @@ export function handleEventRequest(event) {
   return res204;
 }
 
+// ---------------------------------------------------------------------------
+// The origin gate (security audit H1)
+// ---------------------------------------------------------------------------
+// WHY THIS EXISTS, AND WHY IT IS NOT AN IAM/OAC ORIGIN: this API takes POSTs with a body (a 6 MB PDF,
+// a room list). A CloudFront origin access control CANNOT carry a request payload to a Lambda Function
+// URL — measured on this deployment, every request WITH a body came back 403 while bodyless GETs and
+// POSTs worked. So the Function URL has to stay `NONE`, and the protection is a shared secret that only
+// the distribution can add: CloudFront attaches `x-origin-auth` as an origin custom header, and this
+// gate refuses anything that arrives without it. A caller who hits the raw *.lambda-url host directly
+// never has the header and is answered 403 before Express, multer or pdf.js touch the request.
+//
+// It is a cost guardrail, not a data protection boundary: /api/calc and /api/parse hold no data.
+const ORIGIN_HEADER = "x-origin-auth";
+const ORIGIN_SECRET = process.env.ORIGIN_SECRET || "";
+
+function headerOf(event, name) {
+  const h = (event && (event.headers || (event.requestContext && event.requestContext.http && event.requestContext.http.headers))) || {};
+  const want = String(name).toLowerCase();
+  for (const k of Object.keys(h)) if (String(k).toLowerCase() === want) return String(h[k]);
+  return "";
+}
+
+/** Returns a 403 response when the request did not come through the distribution, or null to continue.
+ *  With no ORIGIN_SECRET configured (local dev, tests, a fork's own deployment) the gate is CLOSED FOR
+ *  BUSINESS, i.e. it lets everything through — the secret is an AWS-side setting, not a code contract. */
+function originGate(event) {
+  if (!ORIGIN_SECRET) return null;
+  const got = headerOf(event, ORIGIN_HEADER);
+  if (got && got === ORIGIN_SECRET) return null;
+  return {
+    statusCode: 403,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+    body: JSON.stringify({ error: "this API is served through the LoadLens site; use https://loadlens.net/api/*" }),
+  };
+}
+
 export const handler = async (event, context) => {
+  const gate = originGate(event);
+  if (gate) return gate;
   const counted = handleEventRequest(event);
   if (counted) return counted;
   return expressHandler(event, context);

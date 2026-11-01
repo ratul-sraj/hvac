@@ -192,6 +192,22 @@ else
 fi
 save_state RHP_ID "$RHP_ID"
 
+# The origin gate (audit H1). The Function URL must stay public (a CloudFront OAC cannot carry a POST
+# body to a Lambda URL), so CloudFront proves where a request came from by adding a shared-secret header
+# on the origin request. lambda/index.mjs refuses anything that arrives without it, which is every call
+# to the raw *.lambda-url host. The value lives in infra/.state and in the function's environment only.
+ORIGIN_SECRET="${ORIGIN_SECRET:-}"
+if [ -n "$ORIGIN_SECRET" ]; then
+  # The CloudFront API names these HeaderName / HeaderValue (NOT Header/Value/Override — the CLI
+  # rejects those with a ParamValidation error, and a muted error here silently leaves the origin
+  # headerless, which looks exactly like "the gate is broken").
+  ORIGIN_HEADERS_JSON="{ \"Quantity\": 1, \"Items\": [ { \"HeaderName\": \"x-origin-auth\", \"HeaderValue\": \"${ORIGIN_SECRET}\" } ] }"
+  log_ok "origin gate header attached to the API origin"
+else
+  ORIGIN_HEADERS_JSON='{ "Quantity": 0 }'
+  log_warn "no ORIGIN_SECRET in state — the API origin carries NO gate (run infra/40-lambda.sh first)"
+fi
+
 # ---------------------------------------------------------------------------
 # 2. create or update: pick the id FIRST so the config can be built correctly
 # ---------------------------------------------------------------------------
@@ -241,8 +257,7 @@ cat > "$CFG_FILE" <<JSON
         "Id": "lambda-loadlens-api",
         "DomainName": "${LAMBDA_HOST_ORIGIN}",
         "OriginPath": "",
-        "CustomHeaders": { "Quantity": 0 },
-        "OriginAccessControlId": "${OAC_LAMBDA_ID}",
+        "CustomHeaders": ${ORIGIN_HEADERS_JSON},
         "CustomOriginConfig": {
           "HTTPPort": 80,
           "HTTPSPort": 443,
