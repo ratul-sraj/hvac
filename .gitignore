@@ -30,3 +30,7 @@ tests/samples/headquarters.pdf
 tests/samples/headquarters-scanned.pdf
 tests/samples/hq_p*.txt
 tests/samples/schedule-sample.pdf
+
+# Working handoff for whoever picks this up next. It names private paths and internal state, so it
+# lives in the project folder for convenience but must NEVER be pushed to the public repo.
+HANDOFF.md
