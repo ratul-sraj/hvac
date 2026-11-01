@@ -92,6 +92,7 @@ const STANDALONE_NODE = [
   ["cross-check", "tests/test-crosscheck.mjs"],
   ["printable report", "tests/test-report.mjs"],
   ["scale calibration", "tests/test-scalecal.mjs"],
+  ["area provenance", "tests/test-area-source.mjs"],
 ];
 
 for (const [label, file] of STANDALONE_NODE) {

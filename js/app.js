@@ -1209,6 +1209,52 @@ function areaBadge(raw) {
   return ` <span class="row-badge is-autofill" title="${esc(title)}">area from drawing</span>`;
 }
 
+/** WHERE THIS ROOM'S AREA CAME FROM, in three words, right next to the number.
+ *
+ *  The scale banner can say "areas use 1:228, taken from the sheet's own printed room areas", but that
+ *  sentence is unverifiable on its own: the owner reads a number in the Area column and cannot tell
+ *  whether it was printed on his drawing, measured from its linework, typed by him, or pulled from a
+ *  CSV. Every area now carries its own provenance, so "where did this come from" is answered per row
+ *  instead of once per drawing.
+ *
+ *  Cases: traced fills are covered by areaBadge() ("area from drawing"), so this returns '' there to
+ *  avoid double-badging a row; everything else gets one chip. Unknown source -> no chip, no guessing. */
+function areaSourceOf(raw) {
+  if (!raw) return null;
+  const area = Number(raw.area);
+  if (!Number.isFinite(area) || area <= 0) return null;   // no area, nothing to attribute
+  if (raw.areaFromDrawing) return null;                    // areaBadge() already says it
+  const src = String(raw.source || '').toLowerCase();
+  const page = Number(raw.page) > 0 ? Number(raw.page) : null;
+  if (src === 'manual' || src === 'user') {
+    return { key: 'typed', label: 'typed', title: 'area typed in by hand — not measured and not from the sheet' };
+  }
+  if (src === 'schedule') {
+    return { key: 'sheet', label: 'CSV/Excel', title: 'area imported from the CSV/Excel schedule' };
+  }
+  if (src === 'ocr') {
+    return { key: 'ocr', label: 'OCR', title: 'area read by OCR from the scanned sheet — check it against the scan' };
+  }
+  if (src === 'drawn') {
+    return { key: 'drawn', label: 'drawn', title: "area of the shape drawn on the plan by hand" };
+  }
+  if (src === 'pdf' || src === 'label' || src === 'table') {
+    return {
+      key: 'printed',
+      label: 'printed',
+      title: `area printed on the sheet${page ? ` (page ${page})` : ''} — read from the drawing's own text, not measured`,
+    };
+  }
+  return null;
+}
+
+/** The chip rendered next to the Area input for the cases areaSourceOf() recognises. */
+function areaSourceBadge(raw) {
+  const s = areaSourceOf(raw);
+  if (!s) return '';
+  return ` <span class="row-badge is-source" title="${esc(s.title)}">${esc(s.label)}</span>`;
+}
+
 /** The little badge that says what shape this room has on the plan: a real outline traced from the
  *  drawing's own linework, or a box (placed locator or hand-drawn). Nothing when it has neither.
  *  The title spells out traced-vs-stated, because that difference is the whole point of the trace. */
@@ -1437,7 +1483,7 @@ function rowHtml(idx, calc) {
       ${Object.keys(SPACE_TYPES).map((k) =>
         `<option value="${k}"${room.type === k ? ' selected' : ''}>${esc(SPACE_TYPES[k].label)}</option>`).join('')}
     </select></td>
-    <td class="c-num">${numInput(raw, 'area', room, 'Area m2 of ' + nm)}</td>
+    <td class="c-num">${numInput(raw, 'area', room, 'Area m2 of ' + nm)}${areaSourceBadge(raw)}</td>
     <td class="c-num">${numInput(raw, 'height', room, 'Height m of ' + nm)}</td>
     <td class="c-num">${numInput(raw, 'people', room, 'People in ' + nm)}</td>
     <td class="c-num">${numInput(raw, 'light', room, 'Lighting W/m2 of ' + nm)}</td>

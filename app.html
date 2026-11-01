@@ -21,6 +21,9 @@
   }
   .row-badge.is-outline { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
   .row-badge.is-box { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  /* The area's provenance chip (printed / typed / OCR / CSV) - quieter than the shape badges, because it
+     answers "where did this number come from", not "is this shape real". */
+  .row-badge.is-source { border-style: dashed; color: var(--ink-soft); background: transparent; font-weight: 500; }
 
   /* The Results system control (Metric SI / Imperial IP): a small fieldset inside the project card,
      so a narrow screen (and the hamburger nav) is unaffected - it just wraps onto its own line. */
