@@ -1,9 +1,10 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "LoadLens — cooling load calculation",
+    "title": "LoadLens API — cooling load calculation",
     "version": "1.0.0",
-    "description": "Design-stage cooling load (TR) from room areas and space types, with the full design basis returned so every figure can be checked. A first estimate, not a stamped HAP/Trace calculation. No key, no account, no tracking of the caller. Long form: https://loadlens.net/llms.txt",
+    "summary": "Design cooling load (TR) from room areas and space types, with the full design basis returned. Free, no API key.",
+    "description": "LoadLens turns room dimensions and space types into a design cooling load in tons of refrigeration (TR), with the design basis returned alongside every figure so the number can be checked. It is **free and needs no API key**, no account and no cookie. It runs on **AWS** (Lambda behind a Function URL / API Gateway) and is served from https://loadlens.net. One call may carry a building of **up to 2000 rooms**; more is refused with HTTP 413 rather than truncated. This HTTP API is for **agents and programmatic use**: the tool's browser path (/app.html) reads a floor-plan PDF entirely in the browser and **never uploads the PDF** to a server — POST /parse here is the optional server-side parse, for a caller that has a PDF and no browser. This is a first-estimate / design-stage check, not a substitute for a stamped HAP or Trace calculation; say so if you pass its numbers on. Long form for agents: https://loadlens.net/llms.txt",
     "contact": {
       "name": "Ratul S Raj",
       "email": "ratul.sraj@gmail.com",
@@ -16,16 +17,73 @@
   },
   "servers": [
     {
-      "url": "https://loadlens.net",
-      "description": "production"
+      "url": "https://loadlens.net/api",
+      "description": "production — the static site and this API share the host; no key required"
+    }
+  ],
+  "tags": [
+    {
+      "name": "calc",
+      "description": "Cooling load from rooms"
+    },
+    {
+      "name": "climates",
+      "description": "Outdoor design conditions the tool ships"
+    },
+    {
+      "name": "parse",
+      "description": "Server-side floor-plan PDF parsing (optional; browser path never uploads)"
+    },
+    {
+      "name": "health",
+      "description": "Liveness"
     }
   ],
   "paths": {
-    "/api/calc": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "health",
+        "summary": "Liveness check",
+        "description": "Cheap liveness probe. Returns the app name, version and runtime facts.",
+        "responses": {
+          "200": {
+            "description": "The service is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "examples": {
+                  "live": {
+                    "summary": "Real response from a running server",
+                    "value": {
+                      "ok": true,
+                      "app": "LoadLens",
+                      "version": "1.0.0-server",
+                      "node": "v22.23.2",
+                      "uptimeSec": 7110,
+                      "maxUploadMb": 25,
+                      "serverSideParse": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/calc": {
       "post": {
-        "summary": "Cooling load for one or more rooms",
-        "description": "Give rooms; get per-room and total load. Absent room fields are filled from the space-type table and the filled values are echoed back in results[].room, so the basis of every number is visible. Units: W, TR, L/s (CFM also returned).",
+        "tags": [
+          "calc"
+        ],
         "operationId": "calculateLoad",
+        "summary": "Cooling load for one or more rooms (up to 2000 per call)",
+        "description": "Give rooms; get back per-room sensible/latent breakdown, per-room TR and project totals. Absent room fields are filled from the space-type table and the filled values are **echoed back in results[].room**, so the basis of every number is visible — read that echo instead of assuming. Units: W for power, TR for cooling load, L/s for airflow (CFM and *Btuh fields also returned). More than 2000 rooms is refused with 413.",
         "requestBody": {
           "required": true,
           "content": {
@@ -34,7 +92,7 @@
                 "$ref": "#/components/schemas/CalcRequest"
               },
               "examples": {
-                "one office": {
+                "oneOffice": {
                   "summary": "50 m² office, everything else defaulted",
                   "value": {
                     "rooms": [
@@ -46,7 +104,7 @@
                     ]
                   }
                 },
-                "with basis": {
+                "withBasis": {
                   "summary": "Override the design basis and the construction",
                   "value": {
                     "rooms": [
@@ -66,7 +124,7 @@
                       "inRh": 50,
                       "uWall": 0.4,
                       "uRoof": 0.33,
-                      "uGlass": 3.0,
+                      "uGlass": 3,
                       "sc": 0.31,
                       "safety": 10
                     }
@@ -78,24 +136,220 @@
         },
         "responses": {
           "200": {
-            "description": "Load computed",
+            "description": "Load computed for every room, plus project totals.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CalcResponse"
+                },
+                "examples": {
+                  "oneOffice": {
+                    "summary": "Real response: 50 m² office, all other inputs defaulted",
+                    "value": {
+                      "results": [
+                        {
+                          "room": {
+                            "name": "Office",
+                            "area": 50,
+                            "type": "office",
+                            "height": 3,
+                            "people": 5,
+                            "light": 10,
+                            "equip": 15,
+                            "orient": "W",
+                            "extWall": 21.21,
+                            "glass": 6.36,
+                            "roof": false,
+                            "include": true
+                          },
+                          "warnings": [],
+                          "sensible": {
+                            "glassSolar": 1793.5200000000002,
+                            "glassCond": 405.768,
+                            "wall": 445.50000000000006,
+                            "roof": 0,
+                            "partition": 0,
+                            "people": 375,
+                            "lighting": 500,
+                            "equipment": 750,
+                            "infiltration": 281.87499999999994
+                          },
+                          "latent": {
+                            "people": 275,
+                            "infiltration": 738.6156187467307
+                          },
+                          "rsh": 5006.829300000001,
+                          "rlh": 1114.9771806214037,
+                          "oaSens": 372.07500000000005,
+                          "oaLat": 974.9726167456846,
+                          "oaLs": 27.5,
+                          "safetyW": 556.5278618746736,
+                          "totalW": 7468.85409736709,
+                          "tr": 2.1236434738035515,
+                          "shf": 0.8178679472879669,
+                          "supplyLs": 370.0539024390245,
+                          "supplyOk": true,
+                          "supplyDt": 11,
+                          "cfm": 784.0998128000002,
+                          "oaCfm": 58.2692,
+                          "rshBtuh": 17084.012541360604,
+                          "rlhBtuh": 3804.4604670398776,
+                          "oaSensBtuh": 1269.57273465,
+                          "oaLatBtuh": 3326.7450144478535,
+                          "totalBtuh": 25484.790757498333,
+                          "safetyBtuh": 1898.9520916727724,
+                          "areaFt2": 538.1954999999999,
+                          "m2PerTr": 23.54444171857506,
+                          "sqftPerTr": 253.43001621457006
+                        }
+                      ],
+                      "warnings": [],
+                      "totals": {
+                        "rooms": 1,
+                        "area": 50,
+                        "areaSqft": 538.1949999999999,
+                        "totalW": 7468.85409736709,
+                        "tr": 2.1236434738035515,
+                        "ls": 370.0539024390245,
+                        "oaLs": 27.5,
+                        "cfm": 784.0998128000002,
+                        "oaCfm": 58.2692,
+                        "rsh": 5006.829300000001,
+                        "rlh": 1114.9771806214037,
+                        "oaSens": 372.07500000000005,
+                        "oaLat": 974.9726167456846,
+                        "safetyW": 556.5278618746736,
+                        "safetyPct": 10,
+                        "sqftPerTr": 253.43001621457006,
+                        "m2PerTr": 23.54444171857506,
+                        "totalBtuh": 25484.790757498333,
+                        "rshBtuh": 17084.012541360604,
+                        "rlhBtuh": 3804.4604670398776,
+                        "oaSensBtuh": 1269.57273465,
+                        "oaLatBtuh": 3326.7450144478535,
+                        "safetyBtuh": 1898.9520916727724,
+                        "units": "si",
+                        "wOut": 0.021054786555566456,
+                        "wIn": 0.009276198615419255,
+                        "outRh": 59.06200507223111,
+                        "supplyOk": true,
+                        "supplyDt": 11
+                      }
+                    }
+                  },
+                  "withBasis": {
+                    "summary": "Real response: 30 m² conference room with overridden basis",
+                    "value": {
+                      "results": [
+                        {
+                          "room": {
+                            "name": "Meeting",
+                            "area": 30,
+                            "type": "conference",
+                            "orient": "W",
+                            "glass": 9,
+                            "height": 3,
+                            "people": 12,
+                            "light": 12,
+                            "equip": 5,
+                            "extWall": 16.43,
+                            "roof": false,
+                            "include": true
+                          },
+                          "warnings": [],
+                          "sensible": {
+                            "glassSolar": 1311.3,
+                            "glassCond": 297,
+                            "wall": 44.58,
+                            "roof": 0,
+                            "partition": 0,
+                            "people": 900,
+                            "lighting": 360,
+                            "equipment": 150,
+                            "infiltration": 169.125
+                          },
+                          "latent": {
+                            "people": 660,
+                            "infiltration": 443.16937124803843
+                          },
+                          "rsh": 3555.2055000000005,
+                          "rlh": 1213.4863083728424,
+                          "oaSens": 527.67,
+                          "oaLat": 1382.68843829388,
+                          "oaLs": 39,
+                          "safetyW": 433.51743712480425,
+                          "totalW": 6679.050246666723,
+                          "tr": 1.8990759871102425,
+                          "shf": 0.745530565375978,
+                          "supplyLs": 262.7646341463415,
+                          "supplyOk": true,
+                          "supplyDt": 11,
+                          "cfm": 556.7667280000001,
+                          "oaCfm": 82.63632,
+                          "rshBtuh": 12130.866005181,
+                          "rlhBtuh": 4140.587599223927,
+                          "oaSensBtuh": 1800.4849691399997,
+                          "oaLatBtuh": 4717.929293216956,
+                          "totalBtuh": 22789.867866761884,
+                          "safetyBtuh": 1479.2230549459036,
+                          "areaFt2": 322.91729999999995,
+                          "m2PerTr": 15.79715619786755,
+                          "sqftPerTr": 170.0390095982265
+                        }
+                      ],
+                      "warnings": [],
+                      "totals": {
+                        "rooms": 1,
+                        "area": 30,
+                        "areaSqft": 322.917,
+                        "totalW": 6679.050246666723,
+                        "tr": 1.8990759871102425,
+                        "ls": 262.7646341463415,
+                        "oaLs": 39,
+                        "cfm": 556.7667280000001,
+                        "oaCfm": 82.63632,
+                        "rsh": 3555.2055000000005,
+                        "rlh": 1213.4863083728424,
+                        "oaSens": 527.67,
+                        "oaLat": 1382.68843829388,
+                        "safetyW": 433.51743712480425,
+                        "safetyPct": 10,
+                        "sqftPerTr": 170.0390095982265,
+                        "m2PerTr": 15.79715619786755,
+                        "totalBtuh": 22789.867866761884,
+                        "rshBtuh": 12130.866005181,
+                        "rlhBtuh": 4140.587599223927,
+                        "oaSensBtuh": 1800.4849691399997,
+                        "oaLatBtuh": 4717.929293216956,
+                        "safetyBtuh": 1479.2230549459036,
+                        "units": "si",
+                        "wOut": 0.021054786555566456,
+                        "wIn": 0.009276198615419255,
+                        "outRh": 59.06200507223111,
+                        "supplyOk": true,
+                        "supplyDt": 11
+                      }
+                    }
+                  }
                 }
               }
             }
           },
           "400": {
-            "description": "rooms was not an array",
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "413": {
+            "description": "More than 2000 rooms in one call.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "tooMany": {
+                    "summary": "Real 413 response",
+                    "value": {
+                      "error": "too many rooms: 2001 (limit 2000). Split the building across requests."
                     }
                   }
                 }
@@ -105,84 +359,50 @@
         }
       }
     },
-    "/api/climates": {
+    "/climates": {
       "get": {
-        "summary": "Design conditions the tool ships, by country and city",
-        "description": "Use this to choose honest outdoor design conditions rather than assuming them. Country -> city -> {db, wb} in degrees C.",
+        "tags": [
+          "climates"
+        ],
         "operationId": "listClimates",
+        "summary": "Outdoor design conditions the tool ships, by country and city",
+        "description": "Use this to choose honest outDb/outWb rather than assuming them. `countries` is country → city → {db, wb} (°C); `cities` is the same data flattened, city → {db, wb, country} (42 cities, 12 countries).",
         "responses": {
           "200": {
             "description": "countries and cities",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "countries",
-                    "cities"
-                  ],
-                  "properties": {
-                    "countries": {
-                      "type": "object",
-                      "description": "country -> { city -> {db, wb} }, degrees C",
-                      "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "object",
-                          "required": [
-                            "db",
-                            "wb"
-                          ],
-                          "properties": {
-                            "db": {
-                              "type": "number"
-                            },
-                            "wb": {
-                              "type": "number"
-                            }
-                          }
-                        }
-                      }
-                    },
-                    "cities": {
-                      "type": "object",
-                      "description": "city -> {db, wb, country}, the same data flattened",
-                      "additionalProperties": {
-                        "type": "object",
-                        "required": [
-                          "db",
-                          "wb",
-                          "country"
-                        ],
-                        "properties": {
-                          "db": {
-                            "type": "number"
-                          },
-                          "wb": {
-                            "type": "number"
-                          },
-                          "country": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    }
-                  }
+                  "$ref": "#/components/schemas/Climates"
                 },
-                "example": {
-                  "countries": {
-                    "India": {
-                      "Kochi": {
-                        "db": 35,
-                        "wb": 28
+                "examples": {
+                  "live": {
+                    "summary": "Real response, abridged to a few cities",
+                    "value": {
+                      "countries": {
+                        "India": {
+                          "Kochi": {
+                            "db": 35,
+                            "wb": 28
+                          },
+                          "Delhi": {
+                            "db": 43,
+                            "wb": 24
+                          }
+                        }
+                      },
+                      "cities": {
+                        "Kochi": {
+                          "db": 35,
+                          "wb": 28,
+                          "country": "India"
+                        },
+                        "Delhi": {
+                          "db": 43,
+                          "wb": 24,
+                          "country": "India"
+                        }
                       }
-                    }
-                  },
-                  "cities": {
-                    "Kochi": {
-                      "db": 35,
-                      "wb": 28,
-                      "country": "India"
                     }
                   }
                 }
@@ -192,29 +412,14 @@
         }
       }
     },
-    "/api/health": {
-      "get": {
-        "summary": "Liveness",
-        "operationId": "health",
-        "responses": {
-          "200": {
-            "description": "ok",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/parse": {
+    "/parse": {
       "post": {
-        "summary": "Read rooms from a floor-plan PDF (multipart upload)",
-        "description": "Built for a human in a browser. Agents that already know the room areas should call /api/calc instead: it is deterministic and does not depend on reading drawing linework.",
+        "tags": [
+          "parse"
+        ],
         "operationId": "parseDrawing",
+        "summary": "Read rooms from a floor-plan PDF (multipart upload)",
+        "description": "Multipart upload of one or more floor-plan PDFs; returns the rooms it can read, per file. Built for a human in a browser — the browser path parses the PDF locally and never uploads it. Agents that already know the room areas should call /calc instead: it is deterministic and does not depend on reading drawing linework. Send files under the field name `files` (or `file`).",
         "requestBody": {
           "required": true,
           "content": {
@@ -222,41 +427,225 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    },
+                    "minItems": 1,
+                    "description": "one or more PDFs"
+                  },
                   "file": {
                     "type": "string",
-                    "format": "binary"
+                    "format": "binary",
+                    "description": "a single PDF (alternative to `files`)"
                   }
                 },
-                "required": [
-                  "file"
-                ]
+                "description": "Send at least one PDF under `files` (or a single `file`)."
+              },
+              "examples": {
+                "oneFile": {
+                  "summary": "Upload one floor plan",
+                  "value": {
+                    "files": [
+                      "level-11-floor-plan.pdf"
+                    ]
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "rooms read from the drawing",
+            "description": "Rooms read from the drawing(s), per file and flattened.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/ParseResponse"
+                },
+                "examples": {
+                  "live": {
+                    "summary": "Real response, abridged to the first file and two rooms",
+                    "value": {
+                      "files": [
+                        {
+                          "name": "level-11-floor-plan.pdf",
+                          "pages": 1,
+                          "rooms": [
+                            {
+                              "id": "r1",
+                              "name": "MEETING ROOM",
+                              "level": "L11 Floor",
+                              "area": null,
+                              "type": "conference",
+                              "include": false,
+                              "source": "label",
+                              "page": 1,
+                              "areaUnknown": true,
+                              "at": {
+                                "x": 653.33,
+                                "y": 1118.49
+                              },
+                              "sourceFile": "level-11-floor-plan.pdf"
+                            },
+                            {
+                              "id": "r2",
+                              "name": "MEETING ROOM",
+                              "level": "L11 Floor",
+                              "area": null,
+                              "type": "conference",
+                              "include": false,
+                              "source": "label",
+                              "page": 1,
+                              "areaUnknown": true,
+                              "at": {
+                                "x": 972.52,
+                                "y": 1118.49
+                              },
+                              "sourceFile": "level-11-floor-plan.pdf"
+                            }
+                          ],
+                          "warnings": [
+                            "level-11-floor-plan.pdf: Page 1: no printed areas found - 56 room names detected. Their areas are unknown, so they are left out of the load; set each area by tracing the plan or typing it in the table, then tick its Include box."
+                          ],
+                          "levelCount": 1,
+                          "roomCount": 56,
+                          "ms": 13
+                        }
+                      ],
+                      "rooms": [
+                        {
+                          "id": "r1",
+                          "name": "MEETING ROOM",
+                          "level": "L11 Floor",
+                          "area": null,
+                          "type": "conference",
+                          "include": false,
+                          "source": "label",
+                          "page": 1,
+                          "areaUnknown": true,
+                          "at": {
+                            "x": 653.33,
+                            "y": 1118.49
+                          },
+                          "sourceFile": "level-11-floor-plan.pdf"
+                        },
+                        {
+                          "id": "r2",
+                          "name": "MEETING ROOM",
+                          "level": "L11 Floor",
+                          "area": null,
+                          "type": "conference",
+                          "include": false,
+                          "source": "label",
+                          "page": 1,
+                          "areaUnknown": true,
+                          "at": {
+                            "x": 972.52,
+                            "y": 1118.49
+                          },
+                          "sourceFile": "level-11-floor-plan.pdf"
+                        }
+                      ],
+                      "warnings": [
+                        "level-11-floor-plan.pdf: Page 1: no printed areas found - 56 room names detected. Their areas are unknown, so they are left out of the load; set each area by tracing the plan or typing it in the table, then tick its Include box."
+                      ],
+                      "ms": 13
+                    }
+                  }
                 }
               }
             }
+          },
+          "400": {
+            "description": "No file, or a file that is not a PDF.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "noFile": {
+                    "summary": "Real 400 response",
+                    "value": {
+                      "error": "no file in the request (send one or more files under the field name \"files\")"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
           }
         }
       }
     }
   },
   "components": {
+    "responses": {
+      "PayloadTooLarge": {
+        "description": "Too large: more than 2000 rooms in one /calc call, or an upload past the per-file size limit.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "examples": {
+              "tooManyRooms": {
+                "summary": "Real /calc 413 response",
+                "value": {
+                  "error": "too many rooms: 2001 (limit 2000). Split the building across requests."
+                }
+              }
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "The request was malformed (e.g. `rooms` was not an array, or the JSON body did not parse).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "examples": {
+              "notArray": {
+                "summary": "Real 400 response",
+                "value": {
+                  "error": "rooms must be an array"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "Every error response is this shape: a single `error` string, HTTP status on the response.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "Room": {
         "type": "object",
-        "description": "Only area is required. Anything absent is filled from the space-type table and echoed back with the same key.",
+        "description": "Only `area` is required. Anything absent is filled from the space-type table and echoed back in results[].room with the same key. Unknown keys are ignored; an unknown `type` falls back to `general`.",
+        "required": [
+          "area"
+        ],
         "properties": {
           "name": {
             "type": "string",
+            "default": "Room",
             "description": "label only; never used in the maths"
           },
           "area": {
@@ -265,6 +654,7 @@
           },
           "type": {
             "type": "string",
+            "default": "general",
             "enum": [
               "office",
               "conference",
@@ -280,7 +670,6 @@
               "gym",
               "general"
             ],
-            "default": "general",
             "description": "space type; unknown values fall back to general"
           },
           "height": {
@@ -294,14 +683,15 @@
           },
           "light": {
             "type": "number",
-            "description": "lighting, W/m²"
+            "description": "lighting, W/m²; per type if absent"
           },
           "equip": {
             "type": "number",
-            "description": "equipment/plug load, W/m²"
+            "description": "equipment/plug load, W/m²; per type if absent"
           },
           "orient": {
             "type": "string",
+            "default": "W",
             "enum": [
               "N",
               "NE",
@@ -312,34 +702,31 @@
               "W",
               "NW"
             ],
-            "default": "W"
+            "description": "facing of the exposed wall"
           },
           "glass": {
             "type": "number",
-            "description": "glazing area m²; overrides the % of exposed wall"
+            "description": "glazing area, m²; overrides the % of exposed wall"
           },
           "extWall": {
             "type": "number",
-            "description": "exposed wall area m²; derived from area if absent"
+            "description": "exposed wall area, m²; derived from area if absent"
           },
           "roof": {
             "type": "boolean",
             "default": false,
-            "description": "has an exposed roof"
+            "description": "true if this room has an exposed roof"
           },
           "include": {
             "type": "boolean",
             "default": true,
-            "description": "false leaves it out of the total (toilets, shafts)"
+            "description": "false leaves the room out of the total (toilets, shafts)"
           }
-        },
-        "required": [
-          "area"
-        ]
+        }
       },
       "Project": {
         "type": "object",
-        "description": "The design basis. Every field is optional and defaults to general Indian practice — override anything the building actually is, and say which values you used. Note the tool's default wall U (2.0 W/m²K) and roof U (2.0) are starting values; ECBC 2017 warm-humid asks for 0.40 and 0.33.",
+        "description": "The design basis. Every field is optional and defaults to general Indian practice — override anything the building actually is, and say which values you used. Note the tool's default wall U (2.0 W/m²K) and roof U (2.0) are starting values; ECBC 2017 (warm-humid) asks for 0.40 and 0.33.",
         "properties": {
           "name": {
             "type": "string",
@@ -356,7 +743,7 @@
           "outDb": {
             "type": "number",
             "default": 35,
-            "description": "outdoor dry bulb, °C"
+            "description": "outdoor design dry bulb, °C"
           },
           "outWb": {
             "type": "number",
@@ -375,7 +762,7 @@
           },
           "uWall": {
             "type": "number",
-            "default": 2.0,
+            "default": 2,
             "description": "W/m²K — 230 mm brick, plastered"
           },
           "uGlass": {
@@ -390,13 +777,13 @@
           },
           "uRoof": {
             "type": "number",
-            "default": 2.0,
+            "default": 2,
             "description": "W/m²K — RCC slab with waterproofing"
           },
           "roofEtd": {
             "type": "number",
             "default": 22,
-            "description": "roof equivalent ΔT, K"
+            "description": "roof equivalent temperature difference, K"
           },
           "uPart": {
             "type": "number",
@@ -411,7 +798,7 @@
           "safety": {
             "type": "number",
             "default": 10,
-            "description": "safety factor, %"
+            "description": "safety factor, % (0–100)"
           },
           "supplyDt": {
             "type": "number",
@@ -425,11 +812,11 @@
           },
           "units": {
             "type": "string",
+            "default": "si",
             "enum": [
               "si",
               "ip"
             ],
-            "default": "si",
             "description": "display only; the maths is always SI"
           }
         }
@@ -442,97 +829,143 @@
         "properties": {
           "rooms": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 2000,
             "items": {
               "$ref": "#/components/schemas/Room"
             },
-            "minItems": 1
+            "description": "up to 2000 rooms; more is refused with 413"
           },
           "project": {
             "$ref": "#/components/schemas/Project"
           }
         }
       },
+      "RoomResult": {
+        "type": "object",
+        "properties": {
+          "room": {
+            "$ref": "#/components/schemas/Room",
+            "description": "the room as the engine used it, with every default filled in"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sensible": {
+            "type": "object",
+            "description": "W: glassSolar, glassCond, wall, roof, partition, people, lighting, equipment, infiltration"
+          },
+          "latent": {
+            "type": "object",
+            "description": "W: people, infiltration"
+          },
+          "rsh": {
+            "type": "number",
+            "description": "room sensible heat, W"
+          },
+          "rlh": {
+            "type": "number",
+            "description": "room latent heat, W"
+          },
+          "oaSens": {
+            "type": "number"
+          },
+          "oaLat": {
+            "type": "number"
+          },
+          "oaLs": {
+            "type": "number",
+            "description": "outdoor air, L/s"
+          },
+          "safetyW": {
+            "type": "number"
+          },
+          "totalW": {
+            "type": "number",
+            "description": "total cooling load, W"
+          },
+          "tr": {
+            "type": "number",
+            "description": "total cooling load, tons of refrigeration"
+          },
+          "shf": {
+            "type": "number",
+            "description": "sensible heat factor"
+          },
+          "supplyLs": {
+            "type": "number"
+          },
+          "supplyOk": {
+            "type": "boolean"
+          },
+          "supplyDt": {
+            "type": "number"
+          },
+          "cfm": {
+            "type": "number"
+          },
+          "oaCfm": {
+            "type": "number"
+          },
+          "totalBtuh": {
+            "type": "number"
+          },
+          "m2PerTr": {
+            "type": "number"
+          },
+          "sqftPerTr": {
+            "type": "number"
+          }
+        }
+      },
+      "Totals": {
+        "type": "object",
+        "description": "Project totals: rooms, area, areaSqft, totalW, tr, ls, oaLs, cfm, shf-ish fields, units.",
+        "properties": {
+          "rooms": {
+            "type": "integer"
+          },
+          "area": {
+            "type": "number"
+          },
+          "areaSqft": {
+            "type": "number"
+          },
+          "totalW": {
+            "type": "number"
+          },
+          "tr": {
+            "type": "number"
+          },
+          "ls": {
+            "type": "number"
+          },
+          "oaLs": {
+            "type": "number"
+          },
+          "cfm": {
+            "type": "number"
+          },
+          "units": {
+            "type": "string"
+          }
+        }
+      },
       "CalcResponse": {
         "type": "object",
+        "required": [
+          "results",
+          "warnings",
+          "totals"
+        ],
         "properties": {
           "results": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "room": {
-                  "type": "object",
-                  "description": "the room as the engine used it, with every default filled in"
-                },
-                "warnings": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "sensible": {
-                  "type": "object",
-                  "description": "glassSolar, glassCond, wall, roof, partition, people, lighting, equipment, infiltration — W"
-                },
-                "latent": {
-                  "type": "object",
-                  "description": "people, infiltration — W"
-                },
-                "rsh": {
-                  "type": "number",
-                  "description": "room sensible heat, W"
-                },
-                "rlh": {
-                  "type": "number",
-                  "description": "room latent heat, W"
-                },
-                "oaSens": {
-                  "type": "number"
-                },
-                "oaLat": {
-                  "type": "number"
-                },
-                "oaLs": {
-                  "type": "number",
-                  "description": "outdoor air, L/s"
-                },
-                "safetyW": {
-                  "type": "number"
-                },
-                "totalW": {
-                  "type": "number",
-                  "description": "total cooling load, W"
-                },
-                "tr": {
-                  "type": "number",
-                  "description": "total cooling load, tons of refrigeration"
-                },
-                "shf": {
-                  "type": "number",
-                  "description": "sensible heat factor"
-                },
-                "supplyLs": {
-                  "type": "number"
-                },
-                "supplyDt": {
-                  "type": "number"
-                },
-                "cfm": {
-                  "type": "number"
-                },
-                "oaCfm": {
-                  "type": "number"
-                },
-                "totalBtuh": {
-                  "type": "number"
-                },
-                "m2PerTr": {
-                  "type": "number"
-                },
-                "sqftPerTr": {
-                  "type": "number"
-                }
-              }
+              "$ref": "#/components/schemas/RoomResult"
             }
           },
           "warnings": {
@@ -542,34 +975,195 @@
             }
           },
           "totals": {
+            "$ref": "#/components/schemas/Totals"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "ok",
+          "app",
+          "version"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "app": {
+            "type": "string",
+            "description": "application name"
+          },
+          "version": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "uptimeSec": {
+            "type": "integer"
+          },
+          "maxUploadMb": {
+            "type": "number"
+          },
+          "serverSideParse": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Climates": {
+        "type": "object",
+        "required": [
+          "countries",
+          "cities"
+        ],
+        "properties": {
+          "countries": {
             "type": "object",
-            "description": "project totals: rooms, area, areaSqft, totalW, tr, ls, oaLs, cfm",
-            "properties": {
-              "rooms": {
-                "type": "integer"
-              },
-              "area": {
-                "type": "number"
-              },
-              "areaSqft": {
-                "type": "number"
-              },
-              "totalW": {
-                "type": "number"
-              },
-              "tr": {
-                "type": "number"
-              },
-              "ls": {
-                "type": "number"
-              },
-              "oaLs": {
-                "type": "number"
-              },
-              "cfm": {
-                "type": "number"
+            "description": "country → { city → {db, wb} }, degrees C",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "db",
+                  "wb"
+                ],
+                "properties": {
+                  "db": {
+                    "type": "number"
+                  },
+                  "wb": {
+                    "type": "number"
+                  }
+                }
               }
             }
+          },
+          "cities": {
+            "type": "object",
+            "description": "city → {db, wb, country}, the same data flattened",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "db",
+                "wb",
+                "country"
+              ],
+              "properties": {
+                "db": {
+                  "type": "number"
+                },
+                "wb": {
+                  "type": "number"
+                },
+                "country": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ParsedRoom": {
+        "type": "object",
+        "description": "A room read from a drawing. `area` may be null when no printed area was found; such rooms are flagged (areaUnknown) and left out of the load.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "area": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          },
+          "include": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "areaUnknown": {
+            "type": "boolean"
+          },
+          "sourceFile": {
+            "type": "string"
+          }
+        }
+      },
+      "ParseResponse": {
+        "type": "object",
+        "required": [
+          "files",
+          "rooms",
+          "warnings",
+          "ms"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "pages": {
+                  "type": "integer"
+                },
+                "rooms": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ParsedRoom"
+                  }
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "levelCount": {
+                  "type": "integer"
+                },
+                "roomCount": {
+                  "type": "integer"
+                },
+                "ms": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "rooms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParsedRoom"
+            },
+            "description": "all rooms across all files, flattened"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ms": {
+            "type": "number",
+            "description": "slowest file, ms"
           }
         }
       }

@@ -6,6 +6,29 @@ stamped HAP or Trace calculation on a real project. Say so if you pass its numbe
 
 Everything below is live and callable without a key. No account, no cookie, no tracking of the caller.
 
+## Machine use (APIs and agents)
+
+No key is needed for any of these — call them directly. Base URL: `https://loadlens.net/api`.
+
+    GET  /api/health    liveness
+    POST /api/calc      rooms -> per-room and total cooling load (the one that does the work)
+    POST /api/parse     multipart floor-plan PDF -> rooms (server-side; the browser path never uploads the PDF)
+    GET  /api/climates  outdoor design conditions, by country and city
+
+One call carries a building of **up to 2000 rooms**; more is refused with HTTP 413, not truncated.
+OpenAPI spec: https://loadlens.net/openapi.json
+
+**MCP server (for Claude, Cursor, ChatGPT connectors and any MCP client):**
+`https://loadlens.net/mcp` — Streamable HTTP, POST, JSON-RPC 2.0, no auth.
+Tools: `calculate_cooling_load` (rooms -> total and per-room TR), `list_indian_cities`
+(outdoor design conditions), `explain_calculation` (the method and constants actually used).
+
+    curl -s -X POST https://loadlens.net/api/calc \
+      -H 'content-type: application/json' \
+      -d '{"rooms":[{"name":"Office","area":50,"type":"office"}]}'
+
+→ `totals.tr` comes back **2.12** (a 50 m² office, defaults elsewhere). Field-by-field detail below.
+
 ## The one call that does the work: POST /api/calc
 
 Give it rooms; it gives back per-room and total cooling load.

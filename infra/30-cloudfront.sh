@@ -337,6 +337,35 @@ node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.
   || die "the generated CloudFront config is not valid JSON — this is a bug in infra/30-cloudfront.sh"
 
 # ---------------------------------------------------------------------------
+# 2b. /mcp must reach the Lambda origin too (the remote MCP server)
+# ---------------------------------------------------------------------------
+# The behaviours above only route /api/* to the API. The MCP server answers at POST /mcp — a top-level
+# path, so without its own behaviour CloudFront serves it from S3 and the SPA fallback (403/404 ->
+# /index.html, status 200) hands an agent an HTML page that looks like a valid 200 response. Cloned
+# from the /api/* behaviour rather than written out again, so the two can never drift: same origin,
+# same CachingDisabled policy, same AllViewer origin-request policy, POST allowed.
+CFG_FILE="$(node - "$(nativepath "$CFG_FILE")" <<'NODE'
+const fs = require("fs");
+const file = process.argv[2];
+const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+const items = (cfg.CacheBehaviors && cfg.CacheBehaviors.Items) || [];
+const api = items.find((b) => b.PathPattern === "/api/*");
+if (!api) { console.error("no /api/* behaviour to clone"); process.exit(1); }
+if (!items.some((b) => b.PathPattern === "/mcp")) {
+  const mcp = JSON.parse(JSON.stringify(api));
+  mcp.PathPattern = "/mcp";
+  items.unshift(mcp);
+  cfg.CacheBehaviors.Items = items;
+  cfg.CacheBehaviors.Quantity = items.length;
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
+}
+console.log(file);
+NODE
+)" || die "/mcp behaviour could not be added to the distribution config"
+log_ok "mcp behaviour present: $(node -e 'const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(c.CacheBehaviors.Items.map(b=>b.PathPattern).join(" "))' "$(nativepath "$CFG_FILE")")"
+
+
+# ---------------------------------------------------------------------------
 # 3. hand it to CloudFront
 # ---------------------------------------------------------------------------
 if [ -n "$DIST_ID" ]; then

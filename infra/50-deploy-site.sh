@@ -22,7 +22,8 @@
 #                                                      an immutable copy would never be replaced —
 #                                                      an upgraded pdf.js/tesseract would never reach
 #                                                      a warm browser. Treat it like code.)
-# Then: CloudFront invalidation of / , /index.html , /*.html , /js/* , /css/* , /samples/*
+# Then: CloudFront invalidation of / , /index.html , /*.html , /js/* , /css/* , /img/* , /samples/* ,
+# /robots.txt , /sitemap.xml , /llms.txt , /openapi.json
 #
 # Environment: SITE_BUCKET, DISTRIBUTION_ID, AWS_REGION, SKIP_INVALIDATION=1
 set -euo pipefail
@@ -183,7 +184,7 @@ for _f in robots.txt sitemap.xml llms.txt openapi.json; do
     esac
     aws s3 sync "$SRC_NATIVE" "s3://$BUCKET" --exclude "*" --include "$_f" \
       --content-type "$_ct" --cache-control "$CACHE_HTML" --no-progress
-    log_ok "$_f -> $_ct, cache-control: $CACHE_SHORT"
+    log_ok "$_f -> $_ct, cache-control: $CACHE_HTML"
   else
     log_warn "$_f not found — crawlers will not be told about the site"
   fi
@@ -282,14 +283,17 @@ else
     log_info "If 30-cloudfront.sh has not been run yet, that is expected."
     log_info "Set DISTRIBUTION_ID=... or run:  bash infra/30-cloudfront.sh"
   else
-    log_step "Invalidating / , /index.html , /*.html , /js/* , /css/* , /img/* , /samples/* , /robots.txt , /sitemap.xml on $DIST_ID"
+    log_step "Invalidating / , /index.html , /*.html , /js/* , /css/* , /img/* , /samples/* , /robots.txt , /sitemap.xml , /llms.txt , /openapi.json on $DIST_ID"
     # /js/* and /css/* MUST be here: their filenames are not content-hashed, so an edge that cached
     # an earlier copy keeps serving it (this hid a fixed js/app.js behind a stale edge copy).
+    # /llms.txt and /openapi.json are agent-facing and, like robots.txt, sit at the root: the root
+    # sync uploads *.html only, so without a path here a stale edge copy of the spec would outlive
+    # the deploy that fixed it.
     INVALIDATION_ID="$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" \
-      --paths "/" "/index.html" "/*.html" "/js/*" "/css/*" "/img/*" "/samples/*" "/robots.txt" "/sitemap.xml" \
+      --paths "/" "/index.html" "/*.html" "/js/*" "/css/*" "/img/*" "/samples/*" "/robots.txt" "/sitemap.xml" "/llms.txt" "/openapi.json" \
       --query 'Invalidation.Id' --output text --no-cli-pager)"
-    log_ok "invalidation $INVALIDATION_ID requested (9 path groups)"
-    log_info "The first 1,000 invalidation paths each month are free; this uses 9."
+    log_ok "invalidation $INVALIDATION_ID requested (11 path groups)"
+    log_info "The first 1,000 invalidation paths each month are free; this uses 11."
   fi
 fi
 

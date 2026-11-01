@@ -93,6 +93,12 @@ const STANDALONE_NODE = [
   ["printable report", "tests/test-report.mjs"],
   ["scale calibration", "tests/test-scalecal.mjs"],
   ["area provenance", "tests/test-area-source.mjs"],
+  // LoadLens as a remote MCP server (POST /mcp): mounts the real app and drives
+  // the JSON-RPC handshake, tools/list and tools/call over HTTP.
+  ["remote MCP", "tests/test-mcp.mjs"],
+  // The published OpenAPI spec must describe exactly the routes lib/app.js serves — a spec that
+  // documents a route the app does not have sends an agent to a 404.
+  ["openapi spec", "tests/test-openapi.mjs"],
 ];
 
 for (const [label, file] of STANDALONE_NODE) {

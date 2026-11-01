@@ -132,8 +132,33 @@ JSON
 
 if aws lambda get-function --function-name "$LAMBDA_FUNCTION" --no-cli-pager >/dev/null 2>&1; then
   log_ok "function exists — updating code and configuration"
-  aws lambda update-function-code --function-name "$LAMBDA_FUNCTION" \
-    --zip-file "$(awsbin "$LAMBDA_ZIP")" --no-cli-pager >/dev/null
+  # --zip-file posts the whole archive in one request, and on a home uplink that request is dropped
+  # often enough to be worth a fallback: the update then fails with "Connection was closed before we
+  # received a valid response". Uploading the same bytes to a bucket in THIS region first and pointing
+  # the update at the object survives a flaky link (S3 retries each part) and is what actually
+  # deployed the MCP build. The bucket must be in the function's region — CloudFront's log bucket is
+  # in us-east-1 and Lambda rejects a cross-region object with a PermanentRedirect.
+  deploy_code() {
+    local updated=0
+    if aws lambda update-function-code --function-name "$LAMBDA_FUNCTION" \
+        --zip-file "$(awsbin "$LAMBDA_ZIP")" --no-cli-pager >/dev/null 2>&1; then
+      updated=1
+    else
+      log_warn "--zip-file upload failed (flaky link?) — retrying via S3 in $AWS_REGION"
+      local bucket="${LAMBDA_BUILD_BUCKET:-loadlens-build-395298786586}"
+      aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 \
+        || aws s3api create-bucket --bucket "$bucket" --region "$AWS_REGION" \
+             --create-bucket-configuration "LocationConstraint=$AWS_REGION" >/dev/null
+      aws s3 cp "$LAMBDA_ZIP" "s3://$bucket/loadlens-lambda.zip" --region "$AWS_REGION" --only-show-errors >/dev/null \
+        || die "could not upload the zip to s3://$bucket"
+      aws lambda update-function-code --function-name "$LAMBDA_FUNCTION" \
+        --s3-bucket "$bucket" --s3-key loadlens-lambda.zip --no-cli-pager >/dev/null \
+        || die "could not update the function code from S3"
+      updated=1
+    fi
+    [ "$updated" = 1 ] || die "could not update the function code"
+  }
+  deploy_code
   aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION"
   # NOTE: --architectures is create-only — update-function-configuration rejects it, which is
   # fine because a function's architecture cannot change after creation anyway.

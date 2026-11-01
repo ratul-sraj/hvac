@@ -46,6 +46,35 @@ const get = async (url) => {
 const stripTags = (s) => s.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
+// ---- the agent-facing API surface -----------------------------------------
+// OpenAPI resolves an operation's URL as server.url + path, so a spec that uses
+// server "https://loadlens.net/api" with path "/calc" and one that uses server
+// "https://loadlens.net" with path "/api/calc" both describe GET/POST /api/calc.
+// Resolve every documented path against the server base(s) before comparing, so a
+// spec is judged by the endpoints it actually describes, not by its spelling.
+const REQUIRED_API_PATHS = ["/api/health", "/api/calc", "/api/parse", "/api/climates"];
+function resolvedApiPaths(spec) {
+  const bases = (spec.servers && spec.servers.length ? spec.servers : [{ url: "" }]).map((s) =>
+    String(s.url || "").replace(/\/+$/, "")
+  );
+  const out = new Set();
+  for (const p of Object.keys(spec.paths || {})) {
+    for (const b of bases) {
+      try { out.add(new URL(b + p).pathname); } catch { out.add(p); }
+    }
+  }
+  return out;
+}
+// One body of checks shared by the local (disk) and live (deployed) modes.
+function checkOpenApi(spec, label) {
+  ok(`${label}: openapi is 3.x`, /^3\.\d+\.\d+$/.test(spec.openapi || ""), spec.openapi || "missing");
+  const paths = resolvedApiPaths(spec);
+  const missing = REQUIRED_API_PATHS.filter((p) => !paths.has(p));
+  ok(`${label}: documents all four API paths (health, calc, parse, climates)`,
+    missing.length === 0,
+    missing.length ? `missing ${missing.join(", ")}` : `${paths.size} path(s) resolved`);
+}
+
 // ---- what pages exist? ----------------------------------------------------
 const PUBLIC_HTML = fs
   .readdirSync(ROOT)
@@ -307,6 +336,29 @@ if (dc && dc.status === 200) {
   ok("design-conditions.html: is served (HTTP 200)", false, dc ? `HTTP ${dc.status}` : "no response");
 }
 
+// ---- 9. the agent-facing files: openapi.json and llms.txt (local) ----------
+// These live at the repo root. Locally they are read straight from disk: the dev
+// server only exposes a fixed set of root extensions and does NOT serve .json, so
+// fetching /openapi.json here would 404. Putting them on the live site is the deploy
+// pipeline's job — that half is checked under --live below.
+if (!process.argv.includes("--live")) {
+  console.log("\n--- agent files (local) ---");
+  let spec = null;
+  try {
+    spec = JSON.parse(fs.readFileSync(path.join(ROOT, "openapi.json"), "utf8"));
+  } catch (e) {
+    ok("local openapi.json parses as JSON", false, e.message);
+  }
+  if (spec) {
+    ok("local openapi.json parses as JSON", true, "openapi " + (spec.openapi || "?"));
+    checkOpenApi(spec, "local openapi.json");
+  }
+  let llms = "";
+  try { llms = fs.readFileSync(path.join(ROOT, "llms.txt"), "utf8"); } catch (e) { /* reported below */ }
+  ok("local llms.txt is readable", llms.length > 0, llms ? `${llms.length} chars` : "missing");
+  ok("local llms.txt mentions /api/calc", /\/api\/calc/.test(llms), "POST /api/calc documented");
+}
+
 // ---- optional: --live verifies the DEPLOYED site, not just the local files -----
 // Local files can be perfect while the deploy pipeline silently drops them: the root S3 sync
 // uploads *.html only, and CloudFront answers a missing key with /index.html — so a request for
@@ -349,6 +401,26 @@ if (process.argv.includes("--live")) {
   const rep = await get("js/report.js");
   ok(`live js/report.js carries the export credit`,
     !!rep && /Calculated with LoadLens/.test(rep.body), rep ? "credit present" : "no response");
+
+  // the agent-facing files must actually be DEPLOYED — a missing key is answered with /index.html,
+  // a 200 that serves HTML, so a status-code-only check would pass a broken spec URL.
+  const specRes = await get("openapi.json");
+  ok(`live /openapi.json is served`, !!specRes && specRes.status === 200, specRes ? `HTTP ${specRes.status}` : "no response");
+  ok(`live /openapi.json is really JSON, not the app's HTML fallback`,
+    !!specRes && !/<!DOCTYPE html>/i.test(specRes.body) && !/text\/html/i.test(specRes.type),
+    specRes ? (specRes.type || "no content-type") + ", body starts: " + JSON.stringify(specRes.body.slice(0, 40)) : "no response");
+  let liveSpec = null;
+  try { liveSpec = JSON.parse(specRes ? specRes.body : ""); } catch (e) { ok("live /openapi.json parses as JSON", false, e.message); }
+  if (liveSpec) {
+    ok("live /openapi.json parses as JSON", true, "openapi " + (liveSpec.openapi || "?"));
+    checkOpenApi(liveSpec, "live openapi.json");
+  }
+
+  const ll = await get("llms.txt");
+  ok(`live /llms.txt is served`, !!ll && ll.status === 200, ll ? `HTTP ${ll.status}` : "no response");
+  ok(`live /llms.txt is really text, not the app's HTML fallback`,
+    !!ll && !/<!DOCTYPE html>/i.test(ll.body), ll ? "body starts: " + JSON.stringify(ll.body.slice(0, 40)) : "no response");
+  ok(`live /llms.txt mentions /api/calc`, !!ll && /\/api\/calc/.test(ll.body), "POST /api/calc documented");
 }
 
 // ---- summary --------------------------------------------------------------
