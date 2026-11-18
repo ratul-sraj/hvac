@@ -63,12 +63,20 @@ ok("even a shaded wall still receives diffuse and ground-reflected light (it is 
   `${surfaceIrradiance(febAfternoon, 90, 0, 900, 700, 150).toFixed(0)} W/m²`);
 ok("a horizontal surface takes the file's own measured GHI, not a decomposition of it",
   surfaceIrradiance(noon, 0, 0, 900, 700, 150) === 900, String(surfaceIrradiance(noon, 0, 0, 900, 700, 150)));
-ok("the default design hour is the highest moist-air enthalpy, not the sunniest hour", (() => {
-  const epwText = fs.readFileSync("tests/qa/epw/IND_KL_Nedumbassery.Cochin.Int.AP.433360_TMYx.2009-2023.epw", "utf8");
-  const dflt = designHourFromEpw(epwText);
-  const sunny = designHourFromEpw(epwText, "peakSun");
-  return dflt.picked === "peakEnthalpy" && dflt.dpt > sunny.dpt + 8;
-})(), "a humid design hour, not a dry sunny one");
+// The full multi-year file lives in tests/qa/, which is gitignored (1.6 MB of climate data is not
+// redistributed with the repo). CI therefore has no such file, so skip the assertion there instead of
+// throwing — this check reads a WHOLE YEAR by design and the 24-hour fixture cannot stand in for it.
+const EPW_YEAR = new URL("./qa/epw/IND_KL_Nedumbassery.Cochin.Int.AP.433360_TMYx.2009-2023.epw", import.meta.url);
+if (fs.existsSync(EPW_YEAR)) {
+  ok("the default design hour is the highest moist-air enthalpy, not the sunniest hour", (() => {
+    const epwText = fs.readFileSync(EPW_YEAR, "utf8");
+    const dflt = designHourFromEpw(epwText);
+    const sunny = designHourFromEpw(epwText, "peakSun");
+    return dflt.picked === "peakEnthalpy" && dflt.dpt > sunny.dpt + 8;
+  })(), "a humid design hour, not a dry sunny one");
+} else {
+  console.log("  skip  the default design hour (needs the full-year EPW in tests/qa/, which is not in the repo)");
+}
 
 // The zones both methods are judged on: office, meeting, cabin, reception and general space, four
 // orientations, a quarter of them under the roof.
