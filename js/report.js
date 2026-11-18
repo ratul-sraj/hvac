@@ -2,7 +2,7 @@
 // Pure string builders: no DOM access at import time, no DOM access when called.
 // Both exports take (project, calcResult) where calcResult = calcProject(rooms, project).
 
-import { SPACE_TYPES } from './calc.js';
+import { SPACE_TYPES, num } from './calc.js';
 import {
   normSystem, systemLabel, conversionNote,
   area, areaUnit, air, airUnit, power, powerUnit,
@@ -141,7 +141,10 @@ export function toCsv(project, calcResult) {
   const rows = [head];
   for (const r of res) {
     const room = r.room;
-    const a = parseFloat(room.area) || 0;
+    // The area cell must state the SAME number the load was computed from (calc.js's own parser), not
+    // whatever parseFloat makes of the typed text: parseFloat reads "1,249.3" as 1 and "12.345" as a
+    // decimal, which used to print an area beside a tonnage that belonged to a different room size.
+    const a = num(room.area);
     rows.push([
       room.include ? 'yes' : 'no',
       room.level || '',

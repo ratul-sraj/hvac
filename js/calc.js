@@ -175,6 +175,10 @@ export const DEFAULT_PROJECT = {
 //   "12,5"    -> 12.5     a comma followed by 1-2 digits is a decimal comma
 //   "1,249"   -> 1249     ambiguous (also 1.249 in Europe): a 3-digit group is read as thousands,
 //                         which is what a room-area schedule means
+//   "0.125"   -> 0.125    a dot on its own is ALWAYS the decimal point
+//   "1.234"   -> 1.234    ...so a bare dot group is not thousands: the European form needs BOTH
+//                         separators ("1.249,3"). Requiring the comma is what keeps a plain
+//                         three-decimal value (0.125, 2.750, 12.345) from being multiplied by 1000.
 // A comma AND a dot where the comma follows the dot means thousands; a lone comma with 1-2 digits
 // after it means a decimal comma. parseFloat alone stops at the comma and reads 1,249.3 as 1.
 export function num(v, d = 0) {
@@ -182,7 +186,7 @@ export function num(v, d = 0) {
   let t = String(v == null ? "" : v).replace(/\s+/g, "");
   if (!t) return d;
   if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, "");
-  else if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, "").replace(",", ".");
+  else if (/^-?\d{1,3}(\.\d{3})+,\d+$/.test(t)) t = t.replace(/\./g, "").replace(",", ".");
   else t = t.replace(/,/g, ".");
   const n = parseFloat(t);
   return Number.isFinite(n) ? n : d;
